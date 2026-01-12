@@ -1,0 +1,24 @@
+<policies>
+<inbound>
+    <base />
+    <set-variable name="amlHeaders" value="@{
+        var amlHeaders = context.Request.Headers
+            .Where(h => h.Key.StartsWith("x-aml-", StringComparison.OrdinalIgnoreCase))
+            .Select(h => $"{h.Key}={string.Join(",", h.Value)}");
+        var result = string.Join("; ", amlHeaders);
+        return result.Length > 256 ? result.Substring(0, 256) : result;
+    }" />
+    <emit-metric name="x-aml-request" value="1" namespace="apim-mcp">
+        <dimension name="x-aml-headers" value="@((string)context.Variables["amlHeaders"])" />
+    </emit-metric>
+</inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>

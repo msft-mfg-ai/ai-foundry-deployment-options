@@ -5,17 +5,21 @@
 // 3. Two AI Projects with the capability hosts - in Foundry Standard mode
 targetScope = 'resourceGroup'
 
+import { apiType } from '../modules/apps/apps-private-link.bicep'
+
 param location string = resourceGroup().location
 param openAiApiBase string
 param openAiResourceId string
 param openAiLocation string = location
 param existingFoundryName string?
 param projectsCount int = 3
+param apiServices apiType[] = [] // Array of MCP service definitions
+param apimPublicEnabled bool = false
 
 var tags = {
   'created-by': 'option-ai-gateway'
   'hidden-title': 'Foundry - APIM v2 Standard with PE'
-  // SecurityControl: 'Ignore'
+  SecurityControl: 'Ignore'
 }
 
 var valid_config = empty(openAiApiBase) || empty(openAiResourceId)
@@ -116,6 +120,7 @@ module foundry '../modules/ai/ai-foundry.bicep' = if (empty(existingFoundryName)
     location: location
     managedIdentityResourceId: foundry_identity.outputs.MANAGED_IDENTITY_RESOURCE_ID
     name: foundryName
+    disableLocalAuth: false // enable local auth because AI Foundry needs it
     publicNetworkAccess: 'Enabled'
     agentSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId // Use the first agent subnet
     deployments: [] // no models
@@ -178,6 +183,7 @@ module ai_gateway '../modules/apim/ai-gateway-pe.bicep' = {
   params: {
     tags: tags
     location: location
+    apimPublicEnabled: apimPublicEnabled
     resourceToken: resourceToken
     aiFoundryName: foundryName
     subnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.apimv2Subnet.resourceId
@@ -258,6 +264,21 @@ module models_policy_assignment '../modules/policy/models-policy-assignment.bice
   params: {
     cognitiveServicesPolicyDefinitionId: models_policy.outputs.cognitiveServicesPolicyDefinitionId
     allowedCognitiveServicesModels: []
+  }
+}
+
+module mcp_apis '../modules/apps/apps-private-link.bicep' = {
+  name: 'mcp-apis-private-link-${resourceToken}'
+  params: {
+    tags: tags
+    location: location
+    vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
+    peSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+    apimServiceName: ai_gateway.outputs.apimName
+    apimGatewayUrl: ai_gateway.outputs.apimGatewayUrl
+    apimAppInsightsLoggerId: ai_gateway.outputs.apimAppInsightsLoggerId
+    aiFoundryName: foundryName
+    externalApis: apiServices
   }
 }
 

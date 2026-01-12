@@ -81,12 +81,36 @@ module inference_api 'v2/inference-api.bicep' = {
   }
 }
 
+// OpenAI v1 API has more than 100 Operations and requires Premium or Standardv2 SKU
+// https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-subscription-service-limits?toc=%2Fazure%2Fapi-management%2Ftoc.json&bc=%2Fazure%2Fapi-management%2Fbreadcrumb%2Ftoc.json#limits---api-management-v2-tiers
+module openAiv2Api 'v2/inference-api.bicep' = if (apimSku == 'Premium' || apimSku == 'Standardv2') {
+  name: 'openai-v2-api-deployment'
+  params: {
+    policyXml: updatedInferencePolicyXml
+    apiManagementName: apim.outputs.name
+    apimLoggerId: apim.outputs.loggerId
+    aiServicesConfig: aiServicesConfig
+    inferenceAPIType: 'OpenAI'
+    inferenceAPIPath: 'openai-v1'
+    inferenceAPIDescription: 'OpenAI API v1 for AI Gateway'
+    inferenceAPIDisplayName: 'OpenAI API v1'
+    inferenceAPIName: 'openai-api-v1'
+    configureCircuitBreaker: true
+    resourceSuffix: resourceSuffix
+    enableModelDiscovery: true
+    appInsightsInstrumentationKey: appInsightsInstrumentationKey
+    appInsightsId: appInsightsId
+  }
+}
+
 output apimResourceId string = apim.outputs.id
 output apimName string = apim.outputs.name
 output inferenceApiId string = inference_api.outputs.apiId
 output inferenceApiName string = inference_api.outputs.apiName
 output subscriptions array = apim.outputs.apimSubscriptions
 output apimPrincipalId string = apim.outputs.principalId
+output apimAppInsightsLoggerId string = apim.outputs.appInsightsLoggerId
 output apimPrivateIp string = apim.outputs.apimPrivateIp
 output apimPublicIp string = apim.outputs.apimPublicIp
+output apimGatewayUrl string = apim.outputs.gatewayUrl
 output apiUrl string = '${apim.outputs.gatewayUrl}/${inference_api.outputs.apiPath}'

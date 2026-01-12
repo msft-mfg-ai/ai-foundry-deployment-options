@@ -196,6 +196,7 @@ output name string = apimService.name
 output principalId string = (apimManagedIdentityType == 'SystemAssigned') ? apimService.identity.principalId : ''
 output gatewayUrl string = apimService.properties.gatewayUrl
 output loggerId string = (length(lawId) > 0) ? apimLogger.id : ''
+output appInsightsLoggerId string = (!empty(appInsightsId) && !empty(appInsightsInstrumentationKey)) ? apimAppInsightsLogger.id : ''
 output apimPrivateIp string = apimService.properties.privateIPAddresses != null && length(apimService.properties.privateIPAddresses) > 0
   ? apimService.properties.privateIPAddresses[0]
   : ''

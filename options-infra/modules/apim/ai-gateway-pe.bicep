@@ -15,6 +15,8 @@ param staticModels ModelType[] = []
 param aiServicesConfig aiServiceConfigType[] = []
 param subnetResourceId string
 param peSubnetResourceId string
+@description('Flag to enable public access to the API Management service')
+param apimPublicEnabled bool = false
 
 var connection_per_project = !empty(aiFoundryProjectNames)
 var subscriptions subscriptionType[] = connection_per_project
@@ -58,7 +60,8 @@ module apim_pe 'apim-pe.bicep' = {
   }
 }
 
-module apim_update 'apim.bicep' = {
+// run update to disable public access if needed
+module apim_update 'apim.bicep' = if (!apimPublicEnabled) {
   name: 'apim-update-deployment'
   params: {
     tags: tags
@@ -145,6 +148,15 @@ module aiGatewayProjectConnectionDynamic '../ai/connection-apim-gateway.bicep' =
   }
 ]
 
+module public_mcps './public-mcps.bicep' = {
+  name: 'public-mcps-deployment'
+  params: {
+    apimServiceName: apim.outputs.apimName
+    aiFoundryName: aiFoundryName
+    apimAppInsightsLoggerId: apim.outputs.apimAppInsightsLoggerId
+  }
+}
+
 // module modelGatewayConnectionStatic '../ai/connection-modelgateway-static.bicep' = if (!empty(staticModels)) {
 //   name: 'model-gateway-connection-static'
 //   params: {
@@ -179,4 +191,6 @@ module aiGatewayProjectConnectionDynamic '../ai/connection-apim-gateway.bicep' =
 
 output apimResourceId string = apim.outputs.apimResourceId
 output apimName string = apim.outputs.apimName
+output apimGatewayUrl string = apim.outputs.apimGatewayUrl
 output apimPrincipalId string = apim.outputs.apimPrincipalId
+output apimAppInsightsLoggerId string = apim.outputs.apimAppInsightsLoggerId

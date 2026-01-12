@@ -73,7 +73,8 @@ resource newApplicationInsightsResource 'Microsoft.Insights/components@2020-02-0
     WorkspaceResourceId: newLogAnalyticsResource.id
     publicNetworkAccessForIngestion: publicNetworkAccessForIngestion
     publicNetworkAccessForQuery: publicNetworkAccessForQuery
-    DisableLocalAuth: true
+    // enable local auth for APIM integration
+    DisableLocalAuth: false
   }
 }
 

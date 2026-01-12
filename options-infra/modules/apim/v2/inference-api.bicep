@@ -48,6 +48,7 @@ param inferenceBackendPoolName string = 'inference-backend-pool'
   'AzureOpenAI'
   'AzureAI'
   'OpenAI'
+  'Other'
 ])
 param inferenceAPIType string = 'AzureOpenAI'
 
@@ -84,7 +85,7 @@ type aiServiceConfigType = {
 // ------------------
 
 var logSettings = {
-  headers: [ 'Content-type', 'User-agent', 'x-ms-region', 'x-ratelimit-remaining-tokens' , 'x-ratelimit-remaining-requests' ]
+  headers: [ 'Content-type', 'User-agent', 'x-ms-region', 'x-ratelimit-remaining-tokens' , 'x-ratelimit-remaining-requests', 'x-aml-data-proxy-url', 'x-aml-vnet-identifier', 'x-aml-static-ingress-ip' ]
   body: { bytes: 8192 }
 }
 
@@ -98,7 +99,28 @@ resource apimService 'Microsoft.ApiManagement/service@2024-06-01-preview' existi
   name: apiManagementName
 }
 
-var endpointPath = (inferenceAPIType == 'AzureOpenAI') ? 'openai' : (inferenceAPIType == 'AzureAI') ? 'models' : ''
+var endpointPaths = {
+  AzureOpenAI: 'openai'
+  AzureAI: 'models'
+  OpenAI: ''
+}
+var endpointPath = endpointPaths[inferenceAPIType]
+
+var apiDefinitions = {
+  AzureOpenAI: string(loadJsonContent('./specs/AIFoundryOpenAI.json'))
+  AzureAI: string(loadJsonContent('./specs/AIFoundryOpenAI.json'))
+  OpenAI: 'https://raw.githubusercontent.com/msft-mfg-ai/ai-foundry-config-testing/refs/heads/ai-gateway/options-infra/modules/apim/v2/specs/azure-v1-v1-generated.json'
+  Other: string(loadJsonContent('./specs/PassThrough.json'))
+}
+var apiFormats = {
+  AzureOpenAI: 'openapi+json'
+  AzureAI: 'openapi+json'
+  OpenAI: 'openapi+json-link'
+  Other: 'openapi+json'
+}
+
+var apiDefinition = apiDefinitions[inferenceAPIType]
+var apiFormat = apiFormats[inferenceAPIType]
 
 // https://learn.microsoft.com/azure/templates/microsoft.apimanagement/service/apis
 resource api 'Microsoft.ApiManagement/service/apis@2024-06-01-preview' = {
@@ -108,7 +130,7 @@ resource api 'Microsoft.ApiManagement/service/apis@2024-06-01-preview' = {
     apiType: 'http'
     description: inferenceAPIDescription
     displayName: inferenceAPIDisplayName
-    format: 'openapi+json'
+    format: apiFormat
     path: '${inferenceAPIPath}/${endpointPath}'
     protocols: [
       'https'
@@ -119,7 +141,7 @@ resource api 'Microsoft.ApiManagement/service/apis@2024-06-01-preview' = {
     }
     subscriptionRequired: true
     type: 'http'
-    value: string((inferenceAPIType == 'AzureOpenAI') ? loadJsonContent('./specs/AIFoundryOpenAI.json') : (inferenceAPIType == 'AzureAI') ? loadJsonContent('./specs/AIFoundryAzureAI.json') : (inferenceAPIType == 'OpenAI') ? loadJsonContent('./specs/AIFoundryAzureAI.json') : loadJsonContent('./specs/PassThrough.json'))
+    value: apiDefinition
   }
 }
 // https://learn.microsoft.com/azure/templates/microsoft.apimanagement/service/apis/policies
@@ -286,12 +308,7 @@ resource apiDiagnostics 'Microsoft.ApiManagement/service/apis/diagnostics@2024-0
       percentage: json('100')
     }
     frontend: {
-      request: {
-        headers: []
-        body: {
-          bytes: 0
-        }
-      }
+      request: logSettings
       response: {
         headers: []
         body: {
@@ -306,12 +323,7 @@ resource apiDiagnostics 'Microsoft.ApiManagement/service/apis/diagnostics@2024-0
           bytes: 0
         }
       }
-      response: {
-        headers: []
-        body: {
-          bytes: 0
-        }
-      }
+      response: logSettings
     }
     largeLanguageModel: {
       logs: 'enabled'
