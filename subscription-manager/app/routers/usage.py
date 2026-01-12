@@ -1,6 +1,5 @@
 """API routes for usage tracking and metrics."""
 
-from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, Query, Request
@@ -22,7 +21,7 @@ async def get_usage_stats_html(request: Request):
     """Get usage statistics as HTML partial (HTMX endpoint)."""
     service = get_usage_service()
     stats = await service.get_usage_stats()
-    
+
     return templates.TemplateResponse(
         request=request,
         name="partials/stats_cards.html",
@@ -45,7 +44,7 @@ async def get_chart_data_html(
     """Get chart data as HTML with embedded chart (HTMX endpoint)."""
     service = get_usage_service()
     chart_data = await service.get_chart_data(days)
-    
+
     return templates.TemplateResponse(
         request=request,
         name="partials/usage_chart.html",
@@ -74,7 +73,7 @@ async def get_top_consumers_html(
     """Get top token consumers as HTML partial (HTMX endpoint)."""
     service = get_usage_service()
     consumers = await service.get_top_consumers(days, limit)
-    
+
     return templates.TemplateResponse(
         request=request,
         name="partials/top_consumers.html",
@@ -101,7 +100,7 @@ async def get_subscription_chart_html(
     """Get subscription-specific chart as HTML (HTMX endpoint)."""
     service = get_usage_service()
     chart_data = await service.get_subscription_chart_data(subscription_id, days)
-    
+
     # Return chart HTML with multiple datasets
     return templates.TemplateResponse(
         request=request,
@@ -125,7 +124,7 @@ async def get_subscription_daily_usage_html(
     """Get daily usage table for a subscription (HTMX endpoint)."""
     service = get_usage_service()
     usage = await service.get_subscription_usage(subscription_id, days)
-    
+
     return templates.TemplateResponse(
         request=request,
         name="partials/daily_usage_table.html",

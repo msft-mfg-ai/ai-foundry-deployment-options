@@ -10,7 +10,6 @@ from app.models.subscription import (
     Subscription,
     SubscriptionCreate,
     SubscriptionListResponse,
-    SubscriptionState,
     SubscriptionUpdate,
     TokenLimit,
 )
@@ -57,7 +56,7 @@ async def get_recent_subscriptions_html(
         page=1,
         page_size=limit,
     )
-    
+
     return templates.TemplateResponse(
         request=request,
         name="partials/recent_subscriptions.html",
@@ -80,12 +79,12 @@ async def list_subscriptions_html(
         page=page,
         page_size=50,
     )
-    
+
     # Add mock usage data for display
     for sub in subscriptions:
         # This would normally come from the usage service
         sub.usage_today = 0  # Will be populated by usage service
-    
+
     return templates.TemplateResponse(
         request=request,
         name="partials/subscriptions_table.html",
@@ -103,10 +102,10 @@ async def get_subscription_html(request: Request, subscription_id: str):
     """Get subscription details as HTML partial (HTMX endpoint)."""
     service = get_apim_service()
     subscription = await service.get_subscription(subscription_id)
-    
+
     if not subscription:
         raise HTTPException(status_code=404, detail="Subscription not found")
-    
+
     return templates.TemplateResponse(
         request=request,
         name="partials/subscription_detail.html",
@@ -119,10 +118,10 @@ async def get_subscription_json(subscription_id: str):
     """Get subscription details as JSON."""
     service = get_apim_service()
     subscription = await service.get_subscription(subscription_id)
-    
+
     if not subscription:
         raise HTTPException(status_code=404, detail="Subscription not found")
-    
+
     return subscription
 
 
@@ -138,14 +137,14 @@ async def create_subscription(
 ):
     """Create a new subscription and return updated table."""
     service = get_apim_service()
-    
+
     token_limit = None
     if max_tokens_per_day or max_tokens_per_month:
         token_limit = TokenLimit(
             max_tokens_per_day=max_tokens_per_day,
             max_tokens_per_month=max_tokens_per_month,
         )
-    
+
     data = SubscriptionCreate(
         display_name=display_name,
         scope=scope,
@@ -153,12 +152,12 @@ async def create_subscription(
         token_limit=token_limit,
         notes=notes,
     )
-    
+
     await service.create_subscription(data)
-    
+
     # Return updated subscriptions list
     subscriptions, total_count = await service.list_subscriptions(page=1, page_size=50)
-    
+
     return templates.TemplateResponse(
         request=request,
         name="partials/subscriptions_table.html",
@@ -176,10 +175,10 @@ async def update_subscription(subscription_id: str, data: SubscriptionUpdate):
     """Update an existing subscription."""
     service = get_apim_service()
     subscription = await service.update_subscription(subscription_id, data)
-    
+
     if not subscription:
         raise HTTPException(status_code=404, detail="Subscription not found")
-    
+
     return subscription
 
 
@@ -188,13 +187,13 @@ async def suspend_subscription(request: Request, subscription_id: str):
     """Suspend a subscription and return updated table."""
     service = get_apim_service()
     subscription = await service.suspend_subscription(subscription_id)
-    
+
     if not subscription:
         raise HTTPException(status_code=404, detail="Subscription not found")
-    
+
     # Return updated subscriptions list
     subscriptions, total_count = await service.list_subscriptions(page=1, page_size=50)
-    
+
     return templates.TemplateResponse(
         request=request,
         name="partials/subscriptions_table.html",
@@ -212,13 +211,13 @@ async def activate_subscription(request: Request, subscription_id: str):
     """Activate a suspended subscription and return updated table."""
     service = get_apim_service()
     subscription = await service.activate_subscription(subscription_id)
-    
+
     if not subscription:
         raise HTTPException(status_code=404, detail="Subscription not found")
-    
+
     # Return updated subscriptions list
     subscriptions, total_count = await service.list_subscriptions(page=1, page_size=50)
-    
+
     return templates.TemplateResponse(
         request=request,
         name="partials/subscriptions_table.html",
@@ -241,19 +240,19 @@ async def update_subscription_limits(
 ):
     """Update subscription token limits."""
     service = get_apim_service()
-    
+
     token_limit = TokenLimit(
         max_tokens_per_day=max_tokens_per_day,
         max_tokens_per_month=max_tokens_per_month,
         max_requests_per_minute=max_requests_per_minute,
     )
-    
+
     data = SubscriptionUpdate(token_limit=token_limit)
     subscription = await service.update_subscription(subscription_id, data)
-    
+
     if not subscription:
         raise HTTPException(status_code=404, detail="Subscription not found")
-    
+
     return templates.TemplateResponse(
         request=request,
         name="partials/subscription_detail.html",

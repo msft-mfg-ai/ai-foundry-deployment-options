@@ -29,7 +29,9 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 # Include routers
-app.include_router(subscriptions.router, prefix="/api/subscriptions", tags=["subscriptions"])
+app.include_router(
+    subscriptions.router, prefix="/api/subscriptions", tags=["subscriptions"]
+)
 app.include_router(usage.router, prefix="/api/usage", tags=["usage"])
 
 

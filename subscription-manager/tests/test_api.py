@@ -158,6 +158,7 @@ class TestModels:
     def test_subscription_model(self):
         """Test Subscription model validation."""
         from datetime import datetime
+
         from app.models.subscription import Subscription, SubscriptionState
 
         sub = Subscription(

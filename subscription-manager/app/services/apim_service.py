@@ -1,7 +1,7 @@
 """Azure API Management service for subscription management."""
 
-from datetime import datetime
 import logging
+from datetime import datetime
 
 from azure.identity import DefaultAzureCredential
 from azure.mgmt.apimanagement import ApiManagementClient
@@ -9,6 +9,8 @@ from azure.mgmt.apimanagement.models import (
     SubscriptionContract,
     SubscriptionCreateParameters,
     SubscriptionUpdateParameters,
+)
+from azure.mgmt.apimanagement.models import (
     SubscriptionState as AzureSubscriptionState,
 )
 
@@ -16,8 +18,8 @@ from app.config import get_settings
 from app.models.subscription import (
     Subscription,
     SubscriptionCreate,
-    SubscriptionUpdate,
     SubscriptionState,
+    SubscriptionUpdate,
     TokenLimit,
 )
 
@@ -61,7 +63,11 @@ class APIMService:
             name=contract.name or "",
             display_name=contract.display_name or "",
             scope=contract.scope or "",
-            state=self._convert_state(contract.state) if contract.state else SubscriptionState.ACTIVE,
+            state=(
+                self._convert_state(contract.state)
+                if contract.state
+                else SubscriptionState.ACTIVE
+            ),
             primary_key=contract.primary_key,
             secondary_key=contract.secondary_key,
             created_date=contract.created_date,
@@ -73,11 +79,11 @@ class APIMService:
         )
 
     async def list_subscriptions(
-        self, 
-        search: str | None = None, 
+        self,
+        search: str | None = None,
         state: str | None = None,
         page: int = 1,
-        page_size: int = 50
+        page_size: int = 50,
     ) -> tuple[list[Subscription], int]:
         """List all subscriptions with optional filtering."""
         if self.use_mock:
@@ -86,7 +92,7 @@ class APIMService:
         try:
             subscriptions = []
             skip = (page - 1) * page_size
-            
+
             # Build filter
             filter_parts = []
             if search:
@@ -94,7 +100,7 @@ class APIMService:
             if state:
                 filter_parts.append(f"state eq '{state}'")
             filter_str = " and ".join(filter_parts) if filter_parts else None
-            
+
             result = self.client.subscription.list(
                 resource_group_name=self.resource_group,
                 service_name=self.service_name,
@@ -102,17 +108,17 @@ class APIMService:
                 skip=skip,
                 top=page_size,
             )
-            
+
             for contract in result:
                 subscriptions.append(self._convert_to_model(contract))
-            
+
             # Get total count (Azure doesn't provide this directly, so we estimate)
             total_count = len(subscriptions) + skip
             if len(subscriptions) == page_size:
                 total_count += 1  # Indicate there might be more
-            
+
             return subscriptions, total_count
-            
+
         except Exception as e:
             logger.error(f"Error listing subscriptions: {e}")
             raise
@@ -141,14 +147,15 @@ class APIMService:
         try:
             # Generate a unique ID
             import uuid
+
             subscription_id = str(uuid.uuid4())[:8]
-            
+
             params = SubscriptionCreateParameters(
                 display_name=data.display_name,
                 scope=data.scope,
                 state=AzureSubscriptionState.ACTIVE,
             )
-            
+
             contract = self.client.subscription.create_or_update(
                 resource_group_name=self.resource_group,
                 service_name=self.service_name,
@@ -160,7 +167,9 @@ class APIMService:
             logger.error(f"Error creating subscription: {e}")
             raise
 
-    async def update_subscription(self, subscription_id: str, data: SubscriptionUpdate) -> Subscription | None:
+    async def update_subscription(
+        self, subscription_id: str, data: SubscriptionUpdate
+    ) -> Subscription | None:
         """Update an existing subscription."""
         if self.use_mock:
             return self._update_mock_subscription(subscription_id, data)
@@ -171,14 +180,7 @@ class APIMService:
                 params.display_name = data.display_name
             if data.state:
                 params.state = AzureSubscriptionState(data.state.value)
-            
-            # Get the current ETag
-            current = self.client.subscription.get(
-                resource_group_name=self.resource_group,
-                service_name=self.service_name,
-                sid=subscription_id,
-            )
-            
+
             contract = self.client.subscription.update(
                 resource_group_name=self.resource_group,
                 service_name=self.service_name,
@@ -194,24 +196,18 @@ class APIMService:
     async def suspend_subscription(self, subscription_id: str) -> Subscription | None:
         """Suspend a subscription."""
         return await self.update_subscription(
-            subscription_id, 
-            SubscriptionUpdate(state=SubscriptionState.SUSPENDED)
+            subscription_id, SubscriptionUpdate(state=SubscriptionState.SUSPENDED)
         )
 
     async def activate_subscription(self, subscription_id: str) -> Subscription | None:
         """Activate a suspended subscription."""
         return await self.update_subscription(
-            subscription_id, 
-            SubscriptionUpdate(state=SubscriptionState.ACTIVE)
+            subscription_id, SubscriptionUpdate(state=SubscriptionState.ACTIVE)
         )
 
     # Mock data methods for development
     def _get_mock_subscriptions(
-        self, 
-        search: str | None, 
-        state: str | None,
-        page: int,
-        page_size: int
+        self, search: str | None, state: str | None, page: int, page_size: int
     ) -> tuple[list[Subscription], int]:
         """Return mock subscription data."""
         mock_subs = [
@@ -224,7 +220,9 @@ class APIMService:
                 primary_key="pk-xxxxx-xxxxx-xxxxx",
                 created_date=datetime(2024, 1, 15),
                 owner_email="team-a@example.com",
-                token_limit=TokenLimit(max_tokens_per_day=1000000, max_tokens_per_month=25000000),
+                token_limit=TokenLimit(
+                    max_tokens_per_day=1000000, max_tokens_per_month=25000000
+                ),
             ),
             Subscription(
                 id="sub-002",
@@ -256,7 +254,9 @@ class APIMService:
                 primary_key="pk-aaaaa-aaaaa-aaaaa",
                 created_date=datetime(2024, 4, 5),
                 owner_email="partner@external.com",
-                token_limit=TokenLimit(max_tokens_per_day=2000000, max_tokens_per_month=50000000),
+                token_limit=TokenLimit(
+                    max_tokens_per_day=2000000, max_tokens_per_month=50000000
+                ),
             ),
             Subscription(
                 id="sub-005",
@@ -270,17 +270,19 @@ class APIMService:
                 token_limit=TokenLimit(max_tokens_per_month=10000000),
             ),
         ]
-        
+
         # Apply filters
         if search:
-            mock_subs = [s for s in mock_subs if search.lower() in s.display_name.lower()]
+            mock_subs = [
+                s for s in mock_subs if search.lower() in s.display_name.lower()
+            ]
         if state:
             mock_subs = [s for s in mock_subs if s.state.value == state]
-        
+
         total = len(mock_subs)
         start = (page - 1) * page_size
         end = start + page_size
-        
+
         return mock_subs[start:end], total
 
     def _get_mock_subscription(self, subscription_id: str) -> Subscription | None:
@@ -294,6 +296,7 @@ class APIMService:
     def _create_mock_subscription(self, data: SubscriptionCreate) -> Subscription:
         """Create a mock subscription."""
         import uuid
+
         return Subscription(
             id=f"sub-{str(uuid.uuid4())[:8]}",
             name=data.display_name,
@@ -307,7 +310,9 @@ class APIMService:
             notes=data.notes,
         )
 
-    def _update_mock_subscription(self, subscription_id: str, data: SubscriptionUpdate) -> Subscription | None:
+    def _update_mock_subscription(
+        self, subscription_id: str, data: SubscriptionUpdate
+    ) -> Subscription | None:
         """Update a mock subscription."""
         sub = self._get_mock_subscription(subscription_id)
         if sub:
