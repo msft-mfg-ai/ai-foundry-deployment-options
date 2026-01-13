@@ -140,6 +140,15 @@ module aiGatewayProjectConnectionDynamic '../ai/connection-apim-gateway.bicep' =
 //   }
 // }
 
+module public_mcps './public-mcps.bicep' = {
+  name: 'public-mcps-deployment'
+  params: {
+    apimServiceName: apim.outputs.apimName
+    aiFoundryName: aiFoundryName
+    apimAppInsightsLoggerId: apim.outputs.apimAppInsightsLoggerId
+  }
+}
+
 output apimResourceId string = apim.outputs.apimResourceId
 output apimName string = apim.outputs.apimName
 output apimPrincipalId string = apim.outputs.apimPrincipalId

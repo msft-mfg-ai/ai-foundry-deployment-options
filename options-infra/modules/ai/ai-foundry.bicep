@@ -138,7 +138,7 @@ resource existingKeyVault 'Microsoft.KeyVault/vaults@2024-11-01' existing = if (
   scope: resourceGroup(keyVaultSubscriptionId!, keyVaultResourceGroupName!)
 }
 
-resource foundry_project 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-preview' = {
+resource foundry_project 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-preview' = if (addKeyVault && !useExistingService) {
   parent: account
   name: 'project-for-keyvault'
   tags: tags

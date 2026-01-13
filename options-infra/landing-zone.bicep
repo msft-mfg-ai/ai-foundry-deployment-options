@@ -10,7 +10,7 @@ param aiServicesPublicName string = 'foundry-landing-zone-${location}-PUBLIC-${r
 // Foundry doesn't support cross-subscription VNet injection or cross subscription resources, so we need to deploy it in the same subscription
 var doesFoundrySupportsCrossSubscriptionVnet = false
 
-module identity 'br/public:avm/res/managed-identity/user-assigned-identity:0.4.3' = {
+module identity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.0' = {
   name: 'mgmtidentity-${uniqueString(deployment().name, location)}'
   params: {
     name: 'landing-zone-identity-${resourceToken}'
