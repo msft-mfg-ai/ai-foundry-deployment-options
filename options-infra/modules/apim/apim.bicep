@@ -45,6 +45,13 @@ param publicNetworkAccess string = 'Enabled'
 param apimUserAssignedManagedIdentityResourceId string?
 @description('Custom domain hostname configurations for the API Management service')
 param hostnameConfigurations hostnameConfigurationType[] = []
+@description('The type of managed identity to by used with API Management')
+@allowed([
+  'SystemAssigned'
+  'UserAssigned'
+  'SystemAssigned, UserAssigned'
+])
+param apimManagedIdentityType string = apimUserAssignedManagedIdentityResourceId != null ? 'UserAssigned' : 'SystemAssigned'
 
 module apim 'v2/apim.bicep' = {
   name: 'apim-v2'
@@ -61,7 +68,7 @@ module apim 'v2/apim.bicep' = {
     subnetResourceId: subnetResourceId
     publicNetworkAccess: publicNetworkAccess
     apimUserAssignedManagedIdentityResourceId: apimUserAssignedManagedIdentityResourceId
-    apimManagedIdentityType: apimUserAssignedManagedIdentityResourceId != null ? 'UserAssigned' : 'SystemAssigned'
+    apimManagedIdentityType: apimManagedIdentityType
     hostnameConfigurations: hostnameConfigurations
   }
 }

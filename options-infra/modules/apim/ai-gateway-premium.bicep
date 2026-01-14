@@ -18,10 +18,11 @@ param vnetResourceIdsForDnsLink string[] = []
 @description('The user-assigned managed identity ID to be used with API Management')
 param apimUserAssignedManagedIdentityResourceId string?
 param certificateKeyVaultUri string?
+param keyVaultName string?
 param customDomain string?
 
-var custom_domain_setup_valid = !empty(customDomain) && (empty(certificateKeyVaultUri) || empty(apimUserAssignedManagedIdentityResourceId))
-  ? fail('Custom domain requires both certificateKeyVaultUri and apimUserAssignedManagedIdentityResourceId to be set.')
+var custom_domain_setup_valid = !empty(customDomain) && (empty(certificateKeyVaultUri) || empty(apimUserAssignedManagedIdentityResourceId) || empty(keyVaultName))
+  ? fail('Custom domain requires both certificateKeyVaultUri, apimUserAssignedManagedIdentityResourceId, and keyVaultName to be set.')
   : true
 
 var hostnameConfigurations hostnameConfigurationType[] = custom_domain_setup_valid
@@ -69,31 +70,30 @@ module apim 'apim.bicep' = {
     publicNetworkAccess: null
     subscriptions: subscriptions
     apimUserAssignedManagedIdentityResourceId: apimUserAssignedManagedIdentityResourceId
+    apimManagedIdentityType: 'SystemAssigned, UserAssigned'
   }
 }
 
-// run update to update custom domains if applicable
-module apim_update 'apim.bicep' = if (custom_domain_setup_valid) {
-  name: 'apim-update-deployment'
+// run lightweight update to update custom domains only (avoids re-deploying full APIM with APIs)
+module apim_update 'apim-hostname-update.bicep' = if (custom_domain_setup_valid && !empty(hostnameConfigurations)) {
+  name: 'apim-hostname-update-deployment'
   params: {
     tags: tags
     location: location
-    logAnalyticsWorkspaceId: logAnalyticsWorkspaceId
-    appInsightsInstrumentationKey: appInsightsInstrumentationKey
-    appInsightsId: appInsightsId
     resourceSuffix: resourceToken
-    aiServicesConfig: aiServicesConfig
     apimSku: 'Premiumv2'
     virtualNetworkType: 'Internal'
     subnetResourceId: subnetResourceId
     // NotSupported: Blocking all public network access by setting property `publicNetworkAccess` of API Management service apim-xxxx is not enabled during service creation.
     publicNetworkAccess: null
-    subscriptions: subscriptions
     apimUserAssignedManagedIdentityResourceId: apimUserAssignedManagedIdentityResourceId
-    // update custom domains
+    apimManagedIdentityType: 'SystemAssigned, UserAssigned'
+    apimPrincipalId: apim.outputs.apimPrincipalId
+    // update only the hostname configurations
     hostnameConfigurations: hostnameConfigurations
+    keyVaultName: keyVaultName!
   }
-  dependsOn: [apim, apim_dns, apim_custom_dns]
+  dependsOn: [apim_dns, apim_custom_dns]
 }
 
 module apim_dns 'apim-dns.bicep' = {

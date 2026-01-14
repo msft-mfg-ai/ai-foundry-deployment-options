@@ -124,7 +124,7 @@ var custom_domain_check = !empty(hostnameConfigurations) && empty(apimUserAssign
 // Setting up custom domains for SkuType PremiumV2 currently is only supported for 'Proxy' and 'DeveloperPortal' hostname type.
 var effective_hostname_configurations = map(
   hostnameConfigurations,
-  (config) => union(config, { identityClientId: apimUserAssignedManagedIdentityResourceId })
+  (config) => union(config, { identityClientId: apim_identity.?properties.clientId })
 )
 // ------------------
 //    RESOURCES
@@ -160,7 +160,7 @@ resource apimService 'Microsoft.ApiManagement/service@2024-05-01' = {
   }
   identity: {
     type: apimManagedIdentityType
-    userAssignedIdentities: apimManagedIdentityType == 'UserAssigned' && !empty(apimUserAssignedManagedIdentityResourceId)
+    userAssignedIdentities: contains(apimManagedIdentityType, 'UserAssigned') && !empty(apimUserAssignedManagedIdentityResourceId)
       ? {
           // BCP037: Not yet added to latest API:
           '${apimUserAssignedManagedIdentityResourceId}': {}

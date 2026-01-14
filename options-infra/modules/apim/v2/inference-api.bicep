@@ -106,12 +106,12 @@ var endpointPaths = {
 }
 var endpointPath = endpointPaths[inferenceAPIType]
 
-var apiDefinitions = {
-  AzureOpenAI: string(loadJsonContent('./specs/AIFoundryOpenAI.json'))
-  AzureAI: string(loadJsonContent('./specs/AIFoundryOpenAI.json'))
-  OpenAI: 'https://raw.githubusercontent.com/msft-mfg-ai/ai-foundry-config-testing/refs/heads/ai-gateway/options-infra/modules/apim/v2/specs/azure-v1-v1-generated.json'
-  Other: string(loadJsonContent('./specs/PassThrough.json'))
-}
+// var apiDefinitions = {
+//   AzureOpenAI: string(loadJsonContent('./specs/AIFoundryOpenAI.json'))
+//   AzureAI: string(loadJsonContent('./specs/AIFoundryOpenAI.json'))
+//   OpenAI: 'https://raw.githubusercontent.com/msft-mfg-ai/ai-foundry-config-testing/refs/heads/ai-gateway/options-infra/modules/apim/v2/specs/azure-v1-v1-generated.json'
+//   Other: string(loadJsonContent('./specs/PassThrough.json'))
+// }
 var apiFormats = {
   AzureOpenAI: 'openapi+json'
   AzureAI: 'openapi+json'
@@ -119,7 +119,10 @@ var apiFormats = {
   Other: 'openapi+json'
 }
 
-var apiDefinition = apiDefinitions[inferenceAPIType]
+var apiDefinition = inferenceAPIType == 'AzureOpenAI' ? string(loadJsonContent('./specs/AIFoundryOpenAI.json'))
+  : inferenceAPIType == 'AzureAI' ? string(loadJsonContent('./specs/AIFoundryOpenAI.json'))
+  : inferenceAPIType == 'Other' ? string(loadJsonContent('./specs/PassThrough.json'))
+  : 'https://raw.githubusercontent.com/msft-mfg-ai/ai-foundry-config-testing/refs/heads/ai-gateway/options-infra/modules/apim/v2/specs/azure-v1-v1-generated.json'
 var apiFormat = apiFormats[inferenceAPIType]
 
 // https://learn.microsoft.com/azure/templates/microsoft.apimanagement/service/apis

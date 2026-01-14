@@ -100,7 +100,7 @@ module virtualNetwork 'br/public:avm/res/network/virtual-network:0.7.2' = {
       ? null
       : [
           customDNS
-        ]
+      ]
     subnets: [
       {
         name: apimv2SubnetName

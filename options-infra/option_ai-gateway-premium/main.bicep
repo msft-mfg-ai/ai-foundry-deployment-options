@@ -76,6 +76,15 @@ module apim_vnet '../modules/networking/vnet-apim.bicep' = {
   }
 }
 
+module dns_zone_linking '../modules/networking/dns-zones.bicep' = {
+  name: 'dns-zone-linking-deployment'
+  params: {
+    vnetResourceIds: [
+      apim_vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
+    ]
+  }
+}
+
 module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
   name: 'ai-dependencies-with-dns'
   params: {
@@ -125,16 +134,34 @@ module keyVault '../modules/kv/key-vault.bicep' = {
     name: take('kv-foundry-${resourceToken}', 24)
     logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
     doRoleAssignments: true
-    secrets: [
-      { name: 'customdomaincert', value: certFileBase64, contentType: 'application/x-pkcs12' }
-    ]
+    secrets: []
     userAssignedManagedIdentityPrincipalIds: [
       foundry_identity.outputs.MANAGED_IDENTITY_PRINCIPAL_ID
-      apim_identity.outputs.MANAGED_IDENTITY_PRINCIPAL_ID
     ]
     publicAccessEnabled: false
     privateEndpointSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
     privateEndpointName: 'pe-kv-foundry-${resourceToken}'
+    privateDnsZoneResourceId: ai_dependencies.outputs.DNS_ZONES['privatelink.vaultcore.azure.net']!.resourceId
+  }
+}
+
+module keyVault_for_apim '../modules/kv/key-vault.bicep' = {
+  name: 'key-vault-deployment-for-apim'
+  params: {
+    tags: tags
+    location: apimLocation
+    name: take('kv-apim-${resourceToken}', 24)
+    logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
+    doRoleAssignments: true
+    secrets: [
+      { name: 'customdomaincert', value: certFileBase64, contentType: 'application/x-pkcs12' }
+    ]
+    userAssignedManagedIdentityPrincipalIds: [
+      apim_identity.outputs.MANAGED_IDENTITY_PRINCIPAL_ID
+    ]
+    publicAccessEnabled: false
+    privateEndpointSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+    privateEndpointName: 'pe-kv-apim-${resourceToken}'
     privateDnsZoneResourceId: ai_dependencies.outputs.DNS_ZONES['privatelink.vaultcore.azure.net']!.resourceId
   }
 }
@@ -219,7 +246,8 @@ module ai_gateway '../modules/apim/ai-gateway-premium.bicep' = {
     appInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
     appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
     apimUserAssignedManagedIdentityResourceId: apim_identity.outputs.MANAGED_IDENTITY_RESOURCE_ID
-    certificateKeyVaultUri: keyVault.outputs.KEY_VAULT_SECRETS_URIS[0]
+    certificateKeyVaultUri: keyVault_for_apim.outputs.KEY_VAULT_SECRETS_URIS[0]
+    keyVaultName: keyVault_for_apim.outputs.KEY_VAULT_NAME
     customDomain: customDomain
     staticModels: [
       {
@@ -262,7 +290,7 @@ module ai_gateway '../modules/apim/ai-gateway-premium.bicep' = {
       }
     ]
   }
-  dependsOn: [foundry ?? fake_foundry]
+  dependsOn: [foundry ?? fake_foundry, dns_zone_linking]
 }
 
 module apim_role_assignment '../modules/iam/role-assignment-cognitiveServices.bicep' = {

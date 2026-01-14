@@ -31,6 +31,14 @@ var readerAssignments = [
   }
 ]
 
+var certificateUserAssignments = [
+  for principalIdItem in userAssignedManagedIdentityPrincipalIds: {
+    principalId: principalIdItem
+    principalType: 'ServicePrincipal'
+    roleDefinitionIdOrName: 'Key Vault Certificate User'
+  }
+]
+
 module vault 'br/public:avm/res/key-vault/vault:0.13.3' = {
   name: 'vault-${name}'
   params: {
@@ -58,6 +66,7 @@ module vault 'br/public:avm/res/key-vault/vault:0.13.3' = {
       ? union(
           secretsUserAssignments,
           readerAssignments,
+          certificateUserAssignments,
           empty(principalId)
             ? []
             : [
