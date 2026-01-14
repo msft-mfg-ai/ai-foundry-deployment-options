@@ -33,6 +33,7 @@ param publisherName string = 'Microsoft'
   'Standard'
   'Standardv2'
   'Premium'
+  'Premiumv2'
 ])
 param apimSku string = 'Basicv2'
 
@@ -45,7 +46,7 @@ param apimSku string = 'Basicv2'
 param apimManagedIdentityType string = 'SystemAssigned'
 
 @description('The user-assigned managed identity ID to be used with API Management')
-param apimUserAssignedManagedIdentityId string = ''
+param apimUserAssignedManagedIdentityResourceId string?
 
 @description('Configuration array for APIM subscriptions')
 param apimSubscriptionsConfig subscriptionType[] = []
@@ -80,7 +81,10 @@ param virtualNetworkType string = 'None'
 ])
 param publicNetworkAccess string = 'Enabled'
 param subnetResourceId string?
+@description('Custom domain hostname configurations for the API Management service')
+param hostnameConfigurations hostnameConfigurationType[] = []
 param tags object = {}
+
 // ------------------
 //    TYPE DEFINITIONS
 // ------------------
@@ -92,16 +96,48 @@ type subscriptionType = {
   displayName: string
 }
 
+@export()
+type hostnameConfigurationType = {
+  @description('The type of hostname configuration.')
+  type: 'Management' | 'Portal' | 'Proxy' | 'Scm' | 'DeveloperPortal'
+  @description('The custom host name.')
+  hostName: string
+  @description('The source of the certificate.')
+  certificateSource: 'KeyVault' | 'Default'
+  @description('The Key Vault ID containing the certificate.')
+  keyVaultId: string
+}
+
 // ------------------
 //    VARIABLES
 // ------------------
 
+// split managed identity resource ID to get the name
+var identityParts = split(apimUserAssignedManagedIdentityResourceId ?? '', '/')
+// get the name of the managed identity
+var managedIdentityName = length(identityParts) > 0 ? identityParts[length(identityParts) - 1] : ''
+
+var custom_domain_check = !empty(hostnameConfigurations) && empty(apimUserAssignedManagedIdentityResourceId)
+  ? fail('If hostnameConfigurations with customDomain are provided - apimUserAssignedManagedIdentityResourceId must also be provided.')
+  : true
+
+// Setting up custom domains for SkuType PremiumV2 currently is only supported for 'Proxy' and 'DeveloperPortal' hostname type.
+var effective_hostname_configurations = map(
+  hostnameConfigurations,
+  (config) => union(config, { identityClientId: apimUserAssignedManagedIdentityResourceId })
+)
 // ------------------
 //    RESOURCES
 // ------------------
 
+resource apim_identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-07-31-preview' existing = if (!empty(apimUserAssignedManagedIdentityResourceId)) {
+  name: managedIdentityName
+}
+
 // https://learn.microsoft.com/azure/templates/microsoft.apimanagement/service
-resource apimService 'Microsoft.ApiManagement/service@2024-06-01-preview' = {
+// 2025-03-01-preview?  
+// https://learn.microsoft.com/en-us/azure/templates/microsoft.apimanagement/2025-03-01-preview/service?pivots=deployment-language-bicep
+resource apimService 'Microsoft.ApiManagement/service@2024-05-01' = {
   name: apiManagementName
   location: location
   tags: tags
@@ -114,17 +150,22 @@ resource apimService 'Microsoft.ApiManagement/service@2024-06-01-preview' = {
     publisherName: publisherName
     releaseChannel: releaseChannel
     virtualNetworkType: virtualNetworkType
-    virtualNetworkConfiguration: empty(subnetResourceId) ? null : {
-      subnetResourceId: subnetResourceId
-    }
+    virtualNetworkConfiguration: empty(subnetResourceId)
+      ? null
+      : {
+          subnetResourceId: subnetResourceId
+        }
     publicNetworkAccess: publicNetworkAccess
+    hostnameConfigurations: effective_hostname_configurations
   }
   identity: {
     type: apimManagedIdentityType
-    userAssignedIdentities: apimManagedIdentityType == 'UserAssigned' && apimUserAssignedManagedIdentityId != '' ? {
-      // BCP037: Not yet added to latest API:
-      '${apimUserAssignedManagedIdentityId}': {}
-    } : null
+    userAssignedIdentities: apimManagedIdentityType == 'UserAssigned' && !empty(apimUserAssignedManagedIdentityResourceId)
+      ? {
+          // BCP037: Not yet added to latest API:
+          '${apimUserAssignedManagedIdentityResourceId}': {}
+        }
+      : null
   }
 }
 
@@ -193,16 +234,21 @@ resource apimSubscription 'Microsoft.ApiManagement/service/subscriptions@2024-06
 
 output id string = apimService.id
 output name string = apimService.name
-output principalId string = (apimManagedIdentityType == 'SystemAssigned') ? apimService.identity.principalId : ''
+output principalId string = contains(apimManagedIdentityType, 'SystemAssigned')
+  ? apimService.identity.principalId
+  : apim_identity.?properties.principalId ?? ''
 output gatewayUrl string = apimService.properties.gatewayUrl
 output loggerId string = (length(lawId) > 0) ? apimLogger.id : ''
-output appInsightsLoggerId string = (!empty(appInsightsId) && !empty(appInsightsInstrumentationKey)) ? apimAppInsightsLogger.id : ''
+output appInsightsLoggerId string = (!empty(appInsightsId) && !empty(appInsightsInstrumentationKey))
+  ? apimAppInsightsLogger.id
+  : ''
 output apimPrivateIp string = apimService.properties.privateIPAddresses != null && length(apimService.properties.privateIPAddresses) > 0
   ? apimService.properties.privateIPAddresses[0]
   : ''
 output apimPublicIp string = apimService.properties.publicIPAddresses != null && length(apimService.properties.publicIPAddresses) > 0
   ? apimService.properties.publicIPAddresses[0]
   : ''
+output apimCustomDomainSetupOk bool = custom_domain_check
 
 #disable-next-line outputs-should-not-contain-secrets
 output apimSubscriptions array = [

@@ -1,16 +1,12 @@
 param tags object = {}
-param vnetResourceId string
+param vnetResourceIds string[]
 param apimIpAddress string
 param apimName string
 param zoneName string = 'azure-api.net'
 
-var vnetLinks = empty(vnetResourceId)
+var vnetLinks = empty(vnetResourceIds)
   ? []
-  : [
-      {
-        virtualNetworkResourceId: vnetResourceId
-      }
-    ]
+  : map(vnetResourceIds, vnetResourceId => { virtualNetworkResourceId: vnetResourceId })
 
 module azure_api_net_DnsZone 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
   name: replace('${zoneName}-privateDnsZoneDeployment', '.', '-')

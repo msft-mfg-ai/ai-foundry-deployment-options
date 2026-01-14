@@ -19,7 +19,7 @@ var vnetAddress = empty(vnetAddressPrefix) ? defaultVnetAddressPrefix : vnetAddr
 var agentSubnet = empty(agentSubnetPrefix) ? cidrSubnet(vnetAddress, 24, 0) : agentSubnetPrefix
 var peSubnet = empty(peSubnetPrefix) ? cidrSubnet(vnetAddress, 24, 1) : peSubnetPrefix
 
-module virtualNetwork 'br/public:avm/res/network/virtual-network:0.7.0' = {
+module virtualNetwork 'br/public:avm/res/network/virtual-network:0.7.2' = {
   name: '${name}-virtual-network-deployment'
   params: {
     addressPrefixes: [vnetAddress]

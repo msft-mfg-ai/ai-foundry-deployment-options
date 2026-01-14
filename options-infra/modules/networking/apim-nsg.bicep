@@ -1,5 +1,5 @@
 @description('Name of the Network Security Group')
-param nsgName string = 'apim-nsg'
+param name string = 'apim-nsg'
 
 @description('Location for the NSG')
 param location string = resourceGroup().location
@@ -19,7 +19,7 @@ var isExternal = vnetType == 'External'
 module apimNetworkSecurityGroup 'br/public:avm/res/network/network-security-group:0.5.2' = {
   name: 'apimNetworkSecurityGroup-deployment'
   params: {
-    name: nsgName
+    name: name
     location: location
     tags: tags
     securityRules: concat(

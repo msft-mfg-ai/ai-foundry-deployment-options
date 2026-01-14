@@ -1,5 +1,5 @@
 import { aiServiceConfigType } from 'v2/inference-api.bicep'
-import { subscriptionType } from 'v2/apim.bicep'
+import { subscriptionType, hostnameConfigurationType } from 'v2/apim.bicep'
 
 param location string = resourceGroup().location
 param tags object = {}
@@ -33,6 +33,7 @@ param subnetResourceId string?
   'Standard'
   'Standardv2'
   'Premium'
+  'Premiumv2'
 ])
 param apimSku string = 'Basicv2'
 @allowed([
@@ -40,6 +41,10 @@ param apimSku string = 'Basicv2'
   'Disabled'
 ])
 param publicNetworkAccess string = 'Enabled'
+@description('The user-assigned managed identity ID to be used with API Management')
+param apimUserAssignedManagedIdentityResourceId string?
+@description('Custom domain hostname configurations for the API Management service')
+param hostnameConfigurations hostnameConfigurationType[] = []
 
 module apim 'v2/apim.bicep' = {
   name: 'apim-v2'
@@ -55,6 +60,9 @@ module apim 'v2/apim.bicep' = {
     virtualNetworkType: virtualNetworkType
     subnetResourceId: subnetResourceId
     publicNetworkAccess: publicNetworkAccess
+    apimUserAssignedManagedIdentityResourceId: apimUserAssignedManagedIdentityResourceId
+    apimManagedIdentityType: apimUserAssignedManagedIdentityResourceId != null ? 'UserAssigned' : 'SystemAssigned'
+    hostnameConfigurations: hostnameConfigurations
   }
 }
 

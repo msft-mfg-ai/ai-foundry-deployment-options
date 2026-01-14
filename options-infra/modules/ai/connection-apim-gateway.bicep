@@ -11,6 +11,7 @@ param connectionName string = ''
 
 // APIM resource parameters  
 param apimResourceId string
+param apimCustomDomainGatewayUrl string?
 param apiName string
 param apimSubscriptionName string = 'master'
 
@@ -161,7 +162,7 @@ resource connectionApiKey 'Microsoft.CognitiveServices/accounts/connections@2025
   parent: aiFoundry
   properties: {
     category: 'ApiManagement'
-    target: '${existingApim.properties.gatewayUrl}/${apimApi.properties.path}'
+    target: '${apimCustomDomainGatewayUrl ?? existingApim.properties.gatewayUrl}/${apimApi.properties.path}'
     authType: 'ApiKey'
     isSharedToAll: isSharedToAll
     credentials: {
@@ -177,7 +178,7 @@ resource connectionProjectApiKey 'Microsoft.CognitiveServices/accounts/projects/
   parent: aiProject
   properties: {
     category: 'ApiManagement'
-    target: '${existingApim.properties.gatewayUrl}/${apimApi.properties.path}'
+    target: '${apimCustomDomainGatewayUrl ?? existingApim.properties.gatewayUrl}/${apimApi.properties.path}'
     authType: 'ApiKey'
     isSharedToAll: isSharedToAll
     credentials: {
