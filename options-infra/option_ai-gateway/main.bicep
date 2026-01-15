@@ -154,6 +154,8 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
       location: location
       foundryName: foundryName
       projectId: i
+      project_description: 'AI Project ${i} ${resourceToken}'
+      display_name: 'AI Project ${i} ${resourceToken}'
       aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
       existingAiResourceId: null
       managedIdentityResourceId: identities[i - 1].outputs.MANAGED_IDENTITY_RESOURCE_ID

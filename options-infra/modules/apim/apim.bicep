@@ -122,6 +122,7 @@ output apimResourceId string = apim.outputs.id
 output apimName string = apim.outputs.name
 output inferenceApiId string = inference_api.outputs.apiId
 output inferenceApiName string = inference_api.outputs.apiName
+output inferenceApiPath string = inference_api.outputs.apiPath
 output subscriptions array = apim.outputs.apimSubscriptions
 output apimPrincipalId string = apim.outputs.principalId
 output apimAppInsightsLoggerId string = apim.outputs.appInsightsLoggerId

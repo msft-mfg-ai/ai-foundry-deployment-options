@@ -110,7 +110,7 @@ module apim_custom_dns 'apim-dns.bicep' = if (!empty(customDomain)) {
   name: 'apim-custom-dns-deployment'
   params: {
     vnetResourceIds: union(vnetResourceIdsForDnsLink, [vnetResourceId])
-    apimName: 'apim-${resourceToken}'
+    apimName: 'apim'
     apimIpAddress: apim.outputs.apimPrivateIp
     zoneName: customDomain
   }
@@ -129,7 +129,7 @@ module aiGatewayConnectionDynamic '../ai/connection-apim-gateway.bicep' = if (!c
     getModelEndpoint: '/deployments/{deploymentName}'
     deploymentProvider: 'AzureOpenAI'
     inferenceAPIVersion: '2025-03-01-preview'
-    apimCustomDomainGatewayUrl: customDomain != null ? 'https://apim-${resourceToken}.${customDomain}/' : null
+    // apim connection doesn't support custom domain
   }
 }
 
@@ -144,7 +144,7 @@ module aiGatewayConnectionStatic '../ai/connection-apim-gateway.bicep' = if (!co
     isSharedToAll: true
     staticModels: staticModels
     inferenceAPIVersion: '2025-03-01-preview'
-    apimCustomDomainGatewayUrl: customDomain != null ? 'https://apim-${resourceToken}.${customDomain}/' : null
+    // apim connection doesn't support custom domain
   }
 }
 
@@ -161,6 +161,7 @@ module aiGatewayProjectConnectionStatic '../ai/connection-apim-gateway.bicep' = 
       isSharedToAll: false
       staticModels: staticModels
       inferenceAPIVersion: '2025-03-01-preview'
+      apimCustomDomainGatewayUrl: apim.outputs.apimGatewayUrl
     }
   }
 ]
@@ -180,6 +181,7 @@ module aiGatewayProjectConnectionDynamic '../ai/connection-apim-gateway.bicep' =
       getModelEndpoint: '/deployments/{deploymentName}'
       deploymentProvider: 'AzureOpenAI'
       inferenceAPIVersion: '2025-03-01-preview'
+      apimCustomDomainGatewayUrl: customDomain != null ? 'https://apim.${customDomain}/' : null
     }
   }
 ]
@@ -193,37 +195,40 @@ module public_mcps './public-mcps.bicep' = {
   }
 }
 
-// module modelGatewayConnectionStatic '../ai/connection-modelgateway-static.bicep' = if (!empty(staticModels)) {
-//   name: 'model-gateway-connection-static'
-//   params: {
-//     aiFoundryName: aiFoundryName
-//     connectionName: 'model-gateway-${resourceToken}-static'
-//     apiKey: apim.outputs.subscriptionValue
-//     isSharedToAll: true
-//     gatewayName: 'apim'
-//     staticModels: staticModels
-//     inferenceAPIVersion: '2025-03-01-preview'
-//     targetUrl: apim.outputs.apiUrl
-//     deploymentInPath: 'true'
-//   }
-// }
+module modelGatewayConnectionStatic '../ai/connection-modelgateway-static.bicep' = [
+for projectName in aiFoundryProjectNames: if (connection_per_project && !empty(staticModels)) {
+  name: 'model-gateway-connection-static-${projectName}'
+  params: {
+    aiFoundryName: aiFoundryName
+    aiFoundryProjectName: projectName
+    connectionName: 'model-gateway-${resourceToken}-static-for-${projectName}'
+    apiKey: first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).key
+    isSharedToAll: false
+    gatewayName: 'apim'
+    staticModels: staticModels
+    inferenceAPIVersion: '2025-03-01-preview'
+    targetUrl: customDomain != null ? 'https://apim.${customDomain}/${apim.outputs.inferenceApiPath}' : apim.outputs.apiUrl
+    deploymentInPath: 'true'
+  }
+}]
 
-// module modelGatewayConnectionDynamic '../ai/connection-modelgateway-dynamic.bicep' = {
-//   name: 'model-gateway-connection-dynamic'
-//   params: {
-//     aiFoundryName: aiFoundryName
-//     connectionName: 'model-gateway-${resourceToken}-dynamic'
-//     apiKey: apim.outputs.subscriptionValue
-//     isSharedToAll: true
-//     gatewayName: 'apim'
-//     targetUrl: apim.outputs.apiUrl
-//     listModelsEndpoint: '/deployments'
-//     getModelEndpoint: '/deployments/{deploymentName}'
-//     deploymentProvider: 'AzureOpenAI'
-//     inferenceAPIVersion: '2025-03-01-preview'
-//     deploymentInPath: 'true'
-//   }
-// }
+module modelGatewayConnectionDynamic '../ai/connection-modelgateway-dynamic.bicep' = [
+for projectName in aiFoundryProjectNames: if (connection_per_project && !empty(staticModels)) {
+  name: 'model-gateway-connection-dynamic-${projectName}'
+  params: {
+    aiFoundryName: aiFoundryName
+    connectionName: 'model-gateway-${resourceToken}-dynamic-for-${projectName}'
+    apiKey: first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).key
+    isSharedToAll: false
+    gatewayName: 'apim'
+    targetUrl: customDomain != null ? 'https://apim.${customDomain}/${apim.outputs.inferenceApiPath}' : apim.outputs.apiUrl
+    listModelsEndpoint: '/deployments'
+    getModelEndpoint: '/deployments/{deploymentName}'
+    deploymentProvider: 'AzureOpenAI'
+    inferenceAPIVersion: '2025-03-01-preview'
+    deploymentInPath: 'true'
+  }
+}]
 
 output customDomainSetupValid bool = custom_domain_setup_valid
 output apimResourceId string = apim.outputs.apimResourceId

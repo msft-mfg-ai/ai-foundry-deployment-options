@@ -41,7 +41,7 @@ param inferenceAPIDescription string = 'Inferencing API'
 param inferenceAPIDisplayName string = 'Inference API'
 
 @description('The name of the Inference backend pool.')
-param inferenceBackendPoolName string = 'inference-backend-pool'
+param inferenceBackendPoolName string = 'inference-backend-pool-${inferenceAPIType}'
 
 @description('The inference API type')
 @allowed([
@@ -242,10 +242,10 @@ resource getDeploymentPolicy 'Microsoft.ApiManagement/service/apis/operations/po
 
 // https://learn.microsoft.com/azure/templates/microsoft.apimanagement/service/backends
 resource inferenceBackend 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' =  [for (config, i) in aiServicesConfig: if(length(aiServicesConfig) > 0) {
-  name: config.name
+  name: '${config.name}-${inferenceAPIType}-backend'
   parent: apimService
   properties: {
-    description: 'Inference backend'
+    description: 'Inference backend for ${config.name} API Type: ${inferenceAPIType}'
     url: '${config.endpoint}${endpointPath}'
     protocol: 'http'
     circuitBreaker: (configureCircuitBreaker) ? {

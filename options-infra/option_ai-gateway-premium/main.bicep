@@ -223,6 +223,8 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
       tags: tags
       location: location
       foundryName: foundryName
+      project_description: 'AI Project ${i} ${resourceToken}'
+      display_name: 'AI Project ${i} ${resourceToken}'
       projectId: i
       aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
       existingAiResourceId: null
@@ -249,6 +251,7 @@ module ai_gateway '../modules/apim/ai-gateway-premium.bicep' = {
     certificateKeyVaultUri: keyVault_for_apim.outputs.KEY_VAULT_SECRETS_URIS[0]
     keyVaultName: keyVault_for_apim.outputs.KEY_VAULT_NAME
     customDomain: customDomain
+    aiFoundryProjectNames: [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
     staticModels: [
       {
         name: 'gpt-4.1-mini'

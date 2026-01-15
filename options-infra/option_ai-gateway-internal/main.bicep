@@ -164,6 +164,8 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
       tags: tags
       location: location
       foundryName: foundryName
+      project_description: 'AI Project ${i} ${resourceToken}'
+      display_name: 'AI Project ${i} ${resourceToken}'
       projectId: i
       aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
       existingAiResourceId: null
@@ -185,6 +187,7 @@ module ai_gateway '../modules/apim/ai-gateway-internal.bicep' = {
     logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
     appInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
     appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
+    aiFoundryProjectNames: [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
     staticModels: [
       {
         name: 'gpt-4.1-mini'
