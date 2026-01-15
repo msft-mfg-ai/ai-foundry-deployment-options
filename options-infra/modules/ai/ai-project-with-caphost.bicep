@@ -81,7 +81,7 @@ module aiSearchRoleAssignments '../iam/ai-search-role-assignments.bicep' = {
   scope: resourceGroup(aiDependencies.aiSearch.subscriptionId, aiDependencies.aiSearch.resourceGroupName)
   params: {
     aiSearchName: aiDependencies.aiSearch.name
-    projectPrincipalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
+    principalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
   }
 }
 
