@@ -70,7 +70,7 @@ module keyVault '../kv/key-vault.bicep' = {
       { name: 'openaiapikey', value: openAiApiKey }
       { name: 'litelllmasterkey', value: litelllmasterkey }
     ]
-    userAssignedManagedIdentityPrincipalId: userAssignedIdentity.properties.principalId
+    userAssignedManagedIdentityPrincipalIds: [userAssignedIdentity.properties.principalId]
     principalId: null
     doRoleAssignments: true
     logAnalyticsWorkspaceId: logAnalyticsWorkspaceResourceId

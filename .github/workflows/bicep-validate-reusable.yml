@@ -29,6 +29,10 @@ jobs:
           echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDummyKeyForCIValidation ci@github-actions" > ~/.ssh/id_rsa.pub
           echo "✅ Created dummy SSH public key for CI validation"
 
+          # Create dummy cert .ssh/cloud.karpala.pfx
+          echo "DummyPfxContentForCIValidation" > ~/.ssh/cloud.karpala.pfx
+          echo "✅ Created dummy PFX file for CI validation"
+
       - name: Install Bicep CLI
         run: |
           # Download and install Bicep CLI directly
