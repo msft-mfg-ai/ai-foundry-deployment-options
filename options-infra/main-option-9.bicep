@@ -18,7 +18,7 @@ module identity 'modules/aml/user-assigned-managed-identity.bicep' = {
 module roleAssignments 'modules/aml/role-assignment.bicep' = {
   name: 'aml-role-assignments-deployment'
   params: {
-    principalId: identity.outputs.AZURE_RESOURCE_USER_ASSIGNED_IDENTITY_PRINCIPAL_ID
+    principalId: identity.outputs.USER_ASSIGNED_IDENTITY_PRINCIPAL_ID
   }
 }
 
@@ -54,8 +54,8 @@ module vault 'modules/aml/key-vault.bicep' = {
   params: {
     location: location
     name: 'aml-kv-${resourceToken}'
-    logAnalyticsWorkspaceId: monitoring.outputs.AZURE_RESOURCE_MONITORING_LOG_ANALYTICS_ID
-    userAssignedManagedIdentityPrincipalId: identity.outputs.AZURE_RESOURCE_USER_ASSIGNED_IDENTITY_PRINCIPAL_ID
+    logAnalyticsWorkspaceId: monitoring.outputs.MONITORING_LOG_ANALYTICS_ID
+    userAssignedManagedIdentityPrincipalId: identity.outputs.USER_ASSIGNED_IDENTITY_PRINCIPAL_ID
     secrets: []
     
     privateEndpointName: 'aml-kv-pe'
@@ -69,8 +69,8 @@ module storage 'modules/aml/storage-account.bicep' = {
   params: {
     location: location
     name: 'amlstorage${resourceToken}'
-    userAssignedManagedIdentityPrincipalId: identity.outputs.AZURE_RESOURCE_USER_ASSIGNED_IDENTITY_PRINCIPAL_ID
-    logAnalyticsWorkspaceId: monitoring.outputs.AZURE_RESOURCE_MONITORING_LOG_ANALYTICS_ID
+    userAssignedManagedIdentityPrincipalId: identity.outputs.USER_ASSIGNED_IDENTITY_PRINCIPAL_ID
+    logAnalyticsWorkspaceId: monitoring.outputs.MONITORING_LOG_ANALYTICS_ID
 
     blobPrivateDnsZoneResourceId: dns.outputs.dnsZonesOutput.storageBlobDnsZoneResourceId
     filePrivateDnsZoneResourceId: dns.outputs.dnsZonesOutput.storageFileDnsZoneResourceId
@@ -83,7 +83,7 @@ module acr 'modules/aml/container-registry.bicep' = {
   params: {
     location: location
     name: 'amlacr${resourceToken}'
-    logAnalyticsWorkspaceId: monitoring.outputs.AZURE_RESOURCE_MONITORING_LOG_ANALYTICS_ID
+    logAnalyticsWorkspaceId: monitoring.outputs.MONITORING_LOG_ANALYTICS_ID
 
     privateEndpointName: 'aml-acr-pe'
     privateEndpointSubnetId: vnet.outputs.AZURE_VIRTUAL_NETWORK_PRIVATE_ENDPOINTS_SUBNET_ID
@@ -118,7 +118,7 @@ module aiFoundry 'br/public:avm/ptn/ai-ml/ai-foundry:0.4.0' = {
       disableLocalAuth: true
       roleAssignments: [
         {
-          principalId: identity.outputs.AZURE_RESOURCE_USER_ASSIGNED_IDENTITY_PRINCIPAL_ID
+          principalId: identity.outputs.USER_ASSIGNED_IDENTITY_PRINCIPAL_ID
           principalType: 'ServicePrincipal'
           // roleDefinitionIdOrName: 'Azure AI User'
           roleDefinitionIdOrName: '/providers/Microsoft.Authorization/roleDefinitions/53ca6127-db72-4b80-b1b0-d745d6d5456d'
@@ -140,12 +140,12 @@ module aml_workspace 'modules/aml/aml.bicep' = {
   params: {
     location: location
     name: 'aml-workspace-${resourceToken}'
-    userAssignedManagedIdentityId: identity.outputs.AZURE_RESOURCE_USER_ASSIGNED_IDENTITY_ID
-    applicationInsightsId: monitoring.outputs.AZURE_RESOURCE_MONITORING_APP_INSIGHTS_ID
-    logAnalyticsWorkspaceId: monitoring.outputs.AZURE_RESOURCE_MONITORING_LOG_ANALYTICS_ID
+    userAssignedManagedIdentityId: identity.outputs.USER_ASSIGNED_IDENTITY_ID
+    applicationInsightsId: monitoring.outputs.MONITORING_APP_INSIGHTS_ID
+    logAnalyticsWorkspaceId: monitoring.outputs.MONITORING_LOG_ANALYTICS_ID
     storageAccountId: storage.outputs.AZURE_STORAGE_ACCOUNT_ID
-    containerRegistryId: acr.outputs.AZURE_RESOURCE_REGISTRY_ID
-    keyVaultId: vault.outputs.AZURE_RESOURCE_KEY_VAULT_ID
+    containerRegistryId: acr.outputs.REGISTRY_ID
+    keyVaultId: vault.outputs.KEY_VAULT_ID
     privateEndpointsSubnetResourceId: vnet.outputs.AZURE_VIRTUAL_NETWORK_PRIVATE_ENDPOINTS_SUBNET_ID
     amlPrivateDnsZoneResourceId: dns.outputs.dnsZonesOutput.amlWorkspaceDnsZoneResourceId
     notebooksPrivateDnsZoneResourceId: dns.outputs.dnsZonesOutput.notebooksDnsZoneResourceId

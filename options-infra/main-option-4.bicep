@@ -32,8 +32,8 @@ module vnet './modules/networking/vnet.bicep' = {
 module ai_dependencies './modules/ai/ai-dependencies-with-dns.bicep' = {
   name: 'ai-dependencies-with-dns'
   params: {
-    peSubnetName: vnet.outputs.peSubnetName
-    vnetResourceId: vnet.outputs.virtualNetworkId
+    peSubnetName: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.name
+    vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     resourceToken: resourceToken
     aiServicesName: '' // create AI serviced PE later
     aiAccountNameResourceGroupName: ''
@@ -55,12 +55,11 @@ module logAnalytics './modules/monitor/loganalytics.bicep' = {
 module foundry './modules/ai/ai-foundry.bicep' = {
   name: 'foundry-deployment'
   params: {
-    managedIdentityId: '' // Use System Assigned Identity
+    managedIdentityResourceId: '' // Use System Assigned Identity
     name: 'ai-foundry-${resourceToken}'
     location: location
-    appInsightsId: logAnalytics.outputs.applicationInsightsId
     publicNetworkAccess: 'Enabled'
-    agentSubnetId: vnet.outputs.agentSubnetId // Use the first agent subnet
+    agentSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId // Use the first agent subnet
     deployments: [
       {
         name: 'gpt-4.1-mini'
@@ -83,45 +82,46 @@ module foundry './modules/ai/ai-foundry.bicep' = {
 module project1 './modules/ai/ai-project-with-caphost.bicep' = {
   name: 'ai-project-1-with-caphost-${resourceToken}'
   params: {
-    foundryName: foundry.outputs.name
+    foundryName: foundry.outputs.FOUNDRY_NAME
     location: location
     projectId: 1
-    aiDependencies: ai_dependencies.outputs.aiDependencies
+    aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
+    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
   }
 }
 
 module project2 './modules/ai/ai-project-with-caphost.bicep' = {
   name: 'ai-project-2-with-caphost-${resourceToken}'
   params: {
-    foundryName: foundry.outputs.name
+    foundryName: foundry.outputs.FOUNDRY_NAME
     location: location
     projectId: 2
-    aiDependencies: ai_dependencies.outputs.aiDependencies
+    aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
   }
   dependsOn: [
     project1 // Ensure project1 is created before project2
   ]
 }
 
-module dnsSites 'br/public:avm/res/network/private-dns-zone:0.7.1' = {
+module dnsSites 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
   name: 'dns-sites'
   params: {
     name: 'privatelink.azurewebsites.net'
     virtualNetworkLinks: [
       {
-        virtualNetworkResourceId: vnet.outputs.virtualNetworkId
+        virtualNetworkResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
       }
     ]
   }
 }
 
-module dnsAca 'br/public:avm/res/network/private-dns-zone:0.7.1' = {
+module dnsAca 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
   name: 'dns-aca'
   params: {
     name: 'privatelink.${location}.azurecontainerapps.io'
     virtualNetworkLinks: [
       {
-        virtualNetworkResourceId: vnet.outputs.virtualNetworkId
+        virtualNetworkResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
       }
     ]
   }
@@ -139,7 +139,7 @@ module privateEndpoints './modules/networking/private-endpoint.bicep' = [
     params: {
       privateEndpointName: 'pe-${api.name}'
       location: location
-      subnetId: vnet.outputs.peSubnetId // Use the private endpoint subnet
+      subnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId // Use the private endpoint subnet
       targetResourceId: api.resourceId
       groupIds: [api.type] // Use the type as group ID
       zoneConfigs: [
@@ -152,9 +152,5 @@ module privateEndpoints './modules/networking/private-endpoint.bicep' = [
   }
 ]
 
-output capability1HostUrl string = project1.outputs.capabilityHostUrl
-output capability2HostUrl string = project2.outputs.capabilityHostUrl
-output ai1ConnectionUrl string = project1.outputs.aiConnectionUrl
-output ai2ConnectionUrl string = project2.outputs.aiConnectionUrl
-output foundry1_connection_string string = project1.outputs.foundry_connection_string
-output foundry2_connection_string string = project2.outputs.foundry_connection_string
+output FOUNDRY_PROJECT_1_CONNECTION_STRING string = project1.outputs.FOUNDRY_PROJECT_CONNECTION_STRING
+output FOUNDRY_PROJECT_2_CONNECTION_STRING string = project2.outputs.FOUNDRY_PROJECT_CONNECTION_STRING

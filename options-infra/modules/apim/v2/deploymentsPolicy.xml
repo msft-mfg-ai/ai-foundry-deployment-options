@@ -1,0 +1,42 @@
+<!--
+    - Policies are applied in the order they appear.
+    - Position <base/> inside a section to inherit policies from the outer scope.
+    - Comments within policies are not preserved.
+-->
+<!-- Add policies as children to the <inbound>, <outbound>, <backend>, and <on-error> elements -->
+<policies>
+    <!-- Throttle, authorize, validate, cache, or transform the requests -->
+    <inbound>
+        <!-- CORS policy to allow Azure AI Foundry portal -->
+        <cors allow-credentials="true">
+            <allowed-origins>
+                <origin>https://ai.azure.com</origin>
+            </allowed-origins>
+            <allowed-methods preflight-result-max-age="300">
+                <method>*</method>
+            </allowed-methods>
+            <allowed-headers>
+                <header>*</header>
+            </allowed-headers>
+            <expose-headers>
+                <header>*</header>
+            </expose-headers>
+        </cors>
+        <authentication-managed-identity resource="https://management.azure.com/" />
+        <rewrite-uri template="/deployments?api-version=2023-05-01" copy-unmatched-params="false" />
+        <!--Azure Resource Manager-->
+        <set-backend-service base-url="https://management.azure.comFOUNDRY_ID" />
+    </inbound>
+    <!-- Control if and how the requests are forwarded to services  -->
+    <backend>
+        <base />
+    </backend>
+    <!-- Customize the responses -->
+    <outbound>
+        <base />
+    </outbound>
+    <!-- Handle exceptions and customize error responses  -->
+    <on-error>
+        <base />
+    </on-error>
+</policies>

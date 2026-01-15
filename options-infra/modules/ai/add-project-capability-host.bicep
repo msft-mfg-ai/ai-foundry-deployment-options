@@ -39,6 +39,4 @@ resource projectCapabilityHostStandard 'Microsoft.CognitiveServices/accounts/pro
   properties: properties
 }
 
-output capabilityHostName string = projectCapHost
-output capabilityHostUrl string = 'https://portal.azure.com/#/resource/${project.id}/capabilityHosts/${projectCapHost}/overview'
-
+output AI_PROJECT_CAPABILITY_HOST_NAME string = projectCapHost

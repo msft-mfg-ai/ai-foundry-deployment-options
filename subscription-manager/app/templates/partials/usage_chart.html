@@ -1,0 +1,58 @@
+<!-- Usage Chart Partial - rendered by /api/usage/chart-data -->
+<canvas id="usageChart" class="w-full h-full"></canvas>
+<script>
+    (function() {
+        const ctx = document.getElementById('usageChart');
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: {{ labels | tojson }},
+                datasets: [{
+                    label: 'Total Tokens',
+                    data: {{ values | tojson }},
+                    borderColor: 'rgb(79, 70, 229)',
+                    backgroundColor: 'rgba(79, 70, 229, 0.1)',
+                    tension: 0.3,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                let value = context.parsed.y;
+                                if (value >= 1000000) return (value / 1000000).toFixed(2) + 'M tokens';
+                                if (value >= 1000) return (value / 1000).toFixed(2) + 'K tokens';
+                                return value + ' tokens';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                if (value >= 1000000) return (value / 1000000).toFixed(1) + 'M';
+                                if (value >= 1000) return (value / 1000).toFixed(1) + 'K';
+                                return value;
+                            }
+                        }
+                    },
+                    x: {
+                        ticks: {
+                            maxRotation: 45,
+                            minRotation: 45
+                        }
+                    }
+                }
+            }
+        });
+    })();
+</script>

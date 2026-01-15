@@ -1,8 +1,8 @@
 param appInsightsName string
-param foundry_name string
+param foundryName string
 
 resource foundry 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
-  name: foundry_name
+  name: foundryName
   scope: resourceGroup()
 }
 
@@ -32,6 +32,5 @@ resource connection 'Microsoft.CognitiveServices/accounts/connections@2025-06-01
   }
   dependsOn: [
     foundry
-    appInsights
   ]
 }

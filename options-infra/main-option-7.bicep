@@ -22,7 +22,7 @@ module dns_zones './modules/networking/dns-zones.bicep' = {
   name: 'dns-zones-deployment'
   params: {
     vnetResourceIds: [
-      vnet.outputs.virtualNetworkId
+      vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     ]
   }
 }
@@ -75,12 +75,12 @@ module cosmosPE 'br/public:avm/res/network/private-endpoint:0.11.1' = {
     // Required parameters
     name: '${cosmosDB.name}-pe'
     location: location
-    subnetResourceId: vnet.outputs.peSubnetId
+    subnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
     // Non-required parameters
     privateDnsZoneGroup: {
       privateDnsZoneGroupConfigs: [
         {
-          privateDnsZoneResourceId: dns_zones.outputs.cosmosDBPrivateDnsZoneId
+          privateDnsZoneResourceId: dns_zones.outputs.COSMOS_DB_PRIVATE_DNS_ZONE_RESOURCE_ID
         }
       ]
     }
@@ -100,22 +100,23 @@ module cosmosPE 'br/public:avm/res/network/private-endpoint:0.11.1' = {
 
 // https://github.com/Azure/bicep-avm-ptn-aiml-landing-zone
 // https://github.com/Azure/bicep-registry-modules/tree/main/avm/ptn/ai-ml/ai-foundry
-module aiFoundry 'br/public:avm/ptn/ai-ml/ai-foundry:0.5.0' = {
+module aiFoundry 'br/public:avm/ptn/ai-ml/ai-foundry:0.6.0' = {
   name: 'aiFoundryDeployment'
   dependsOn: [cosmosPE]
   params: {
     // Required parameters
     baseName: 'foundry'
     // Non-required parameters
+    #disable-next-line what-if-short-circuiting
     aiFoundryConfiguration: {
       allowProjectManagement: true
       createCapabilityHosts: true
       location: location
       networking: {
-        agentServiceSubnetResourceId: vnet.outputs.agentSubnetId
-        aiServicesPrivateDnsZoneResourceId: dns_zones.outputs.aiServicesPrivateDnsZoneId
-        cognitiveServicesPrivateDnsZoneResourceId: dns_zones.outputs.cognitiveServicesPrivateDnsZoneId
-        openAiPrivateDnsZoneResourceId: dns_zones.outputs.openAiPrivateDnsZoneId
+        agentServiceSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId
+        aiServicesPrivateDnsZoneResourceId: dns_zones.outputs.AI_SERVICES_PRIVATE_DNS_ZONE_RESOURCE_ID
+        cognitiveServicesPrivateDnsZoneResourceId: dns_zones.outputs.COGNITIVE_SERVICES_PRIVATE_DNS_ZONE_RESOURCE_ID
+        openAiPrivateDnsZoneResourceId: dns_zones.outputs.OPENAI_PRIVATE_DNS_ZONE_RESOURCE_ID
       }
       project: {
         name: 'ai-project-1'
@@ -148,7 +149,7 @@ module aiFoundry 'br/public:avm/ptn/ai-ml/ai-foundry:0.5.0' = {
     ]
     aiSearchConfiguration: {
       // name: '<name>'
-      privateDnsZoneResourceId: dns_zones.outputs.aiSearchPrivateDnsZoneId
+      privateDnsZoneResourceId: dns_zones.outputs.AI_SEARCH_PRIVATE_DNS_ZONE_RESOURCE_ID
       // roleAssignments: [
       //   {
       //     principalId: '<principalId>'
@@ -160,7 +161,7 @@ module aiFoundry 'br/public:avm/ptn/ai-ml/ai-foundry:0.5.0' = {
     cosmosDbConfiguration: {
       existingResourceId: isLowCapacityRegion ? cosmosDB.id : ''
       // name: '<name>'
-      privateDnsZoneResourceId: dns_zones.outputs.cosmosDBPrivateDnsZoneId
+      privateDnsZoneResourceId: dns_zones.outputs.COSMOS_DB_PRIVATE_DNS_ZONE_RESOURCE_ID
       // roleAssignments: [
       //   {
       //     principalId: '<principalId>'
@@ -172,7 +173,7 @@ module aiFoundry 'br/public:avm/ptn/ai-ml/ai-foundry:0.5.0' = {
     includeAssociatedResources: true
     keyVaultConfiguration: {
       // name: '<name>'
-      privateDnsZoneResourceId: dns_zones.outputs.keyVaultPrivateDnsZoneId
+      privateDnsZoneResourceId: dns_zones.outputs.KEY_VAULT_PRIVATE_DNS_ZONE_RESOURCE_ID
       // roleAssignments: [
       //   {
       //     principalId: '<principalId>'
@@ -186,9 +187,9 @@ module aiFoundry 'br/public:avm/ptn/ai-ml/ai-foundry:0.5.0' = {
       kind: 'CanNotDelete'
       name: 'Please do not delete'
     }
-    privateEndpointSubnetResourceId: vnet.outputs.peSubnetId
+    privateEndpointSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
     storageAccountConfiguration: {
-      blobPrivateDnsZoneResourceId: dns_zones.outputs.storagePrivateDnsZoneId
+      blobPrivateDnsZoneResourceId: dns_zones.outputs.STORAGE_PRIVATE_DNS_ZONE_RESOURCE_ID
       // name: '<name>'
       // roleAssignments: [
       //   {
@@ -207,7 +208,7 @@ module aiFoundry 'br/public:avm/ptn/ai-ml/ai-foundry:0.5.0' = {
   }
 }
 
-module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.18.0' = if (false) {
+module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.21.0' = if (false) {
   name: 'virtualMachineDeployment'
   params: {
     // Required parameters
@@ -231,7 +232,7 @@ module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.18.0' = if (f
         ipConfigurations: [
           {
             name: 'ipconfig01'
-            subnetResourceId: vnet.outputs.peSubnetId
+            subnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
             pipConfiguration: {
               publicIpNameSuffix: '-pip-01'
             }
@@ -261,4 +262,4 @@ module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.18.0' = if (f
   }
 }
 
-output ai_project_name string = aiFoundry.outputs.aiProjectName
+output FOUNDRY_PROJECT_NAME string = aiFoundry.outputs.aiProjectName

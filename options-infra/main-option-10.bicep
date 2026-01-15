@@ -86,7 +86,7 @@ module app_vnet './modules/networking/vnet-with-peering.bicep' = {
     name: 'app-vnet'
     location: appLocation
     vnetAddressPrefix: '172.18.0.0/22'
-    peeringResourceIds: [foundry_vnet.outputs.virtualNetworkId]
+    peeringResourceIds: [foundry_vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID]
   }
   dependsOn: [app_rg]
 }
@@ -97,7 +97,7 @@ module dns_zones './modules/networking/dns-zones.bicep' = {
   params: {
     vnetResourceIds: [
       app_vnet.outputs.virtualNetworkId
-      foundry_vnet.outputs.virtualNetworkId
+      foundry_vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     ]
   }
   dependsOn: [dns_rg]
@@ -111,16 +111,10 @@ module ai_dependencies './modules/ai-dependencies/standard-dependent-resources.b
     aiSearchName: 'project-search-${resourceToken}'
     cosmosDBName: 'project-cosmosdb-${resourceToken}'
     // AI Search Service parameters
-    aiSearchResourceId: ''
-    aiSearchExists: false
 
     // Storage Account
-    azureStorageAccountResourceId: ''
-    azureStorageExists: false
 
     // Cosmos DB Account
-    cosmosDBResourceId: ''
-    cosmosDBExists: false
   }
 }
 
@@ -129,25 +123,42 @@ module privateEndpointAndDNS './modules/networking/private-endpoint-and-dns.bice
   scope: resourceGroup(appSubscriptionId, appResourceGroupName)
   params: {
     // provide existing DNS zones
-    existingDnsZones: dns_zones.outputs.DNSZones
-
-    aiAccountName: foundry.outputs.name
-    aiSearchName: ai_dependencies.outputs.aiSearchName // AI Search to secure
-    storageName: ai_dependencies.outputs.azureStorageName // Storage to secure
-    cosmosDBName: ai_dependencies.outputs.cosmosDBName
+    #disable-next-line what-if-short-circuiting
+    existingDnsZones: dns_zones.outputs.DNS_ZONES
+    #disable-next-line what-if-short-circuiting
+    aiAccountName: foundry.outputs.FOUNDRY_NAME
+    #disable-next-line what-if-short-circuiting
+    aiSearchName: ai_dependencies.outputs.AI_SEARCH_NAME // AI Search to secure
+    #disable-next-line what-if-short-circuiting
+    storageName: ai_dependencies.outputs.STORAGE_NAME // Storage to secure
+    #disable-next-line what-if-short-circuiting
+    cosmosDBName: ai_dependencies.outputs.COSMOS_DB_NAME
+    #disable-next-line what-if-short-circuiting
     vnetName: app_vnet.outputs.vnetName
+    #disable-next-line what-if-short-circuiting
     peSubnetName: app_vnet.outputs.peSubnetName
+    #disable-next-line what-if-short-circuiting
     suffix: resourceToken // Unique identifier
+    #disable-next-line what-if-short-circuiting
     vnetResourceGroupName: app_vnet.outputs.resourceGroupName // Resource Group for the VNet
+    #disable-next-line what-if-short-circuiting
     vnetSubscriptionId: app_vnet.outputs.subscriptionId // Subscription ID for the VNet
-    cosmosDBSubscriptionId: ai_dependencies.outputs.cosmosDBSubscriptionId // Subscription ID for Cosmos DB
-    cosmosDBResourceGroupName: ai_dependencies.outputs.cosmosDBResourceGroupName // Resource Group for Cosmos DB
-    aiSearchSubscriptionId: ai_dependencies.outputs.aiSearchServiceSubscriptionId // Subscription ID for AI Search Service
-    aiSearchResourceGroupName: ai_dependencies.outputs.aiSearchServiceResourceGroupName // Resource Group for AI Search Service
-    storageAccountResourceGroupName: ai_dependencies.outputs.azureStorageResourceGroupName // Resource Group for Storage Account
-    storageAccountSubscriptionId: ai_dependencies.outputs.azureStorageSubscriptionId // Subscription ID for Storage Account
-    aiAccountNameResourceGroup: foundry.outputs.resourceGroupName
-    aiAccountSubscriptionId: foundry.outputs.subscriptionId
+    #disable-next-line what-if-short-circuiting
+    cosmosDBSubscriptionId: ai_dependencies.outputs.COSMOS_DB_SUBSCRIPTION_ID // Subscription ID for Cosmos DB
+    #disable-next-line what-if-short-circuiting
+    cosmosDBResourceGroupName: ai_dependencies.outputs.COSMOS_DB_RESOURCE_GROUP_NAME // Resource Group for Cosmos DB
+    #disable-next-line what-if-short-circuiting
+    aiSearchSubscriptionId: ai_dependencies.outputs.AI_SEARCH_SUBSCRIPTION_ID // Subscription ID for AI Search Service
+    #disable-next-line what-if-short-circuiting
+    aiSearchResourceGroupName: ai_dependencies.outputs.AI_SEARCH_RESOURCE_GROUP_NAME // Resource Group for AI Search Service
+    #disable-next-line what-if-short-circuiting
+    storageAccountResourceGroupName: ai_dependencies.outputs.STORAGE_RESOURCE_GROUP_NAME // Resource Group for Storage Account
+    #disable-next-line what-if-short-circuiting
+    storageAccountSubscriptionId: ai_dependencies.outputs.STORAGE_SUBSCRIPTION_ID // Subscription ID for Storage Account
+    #disable-next-line what-if-short-circuiting
+    aiAccountNameResourceGroup: foundry.outputs.FOUNDRY_RESOURCE_GROUP_NAME
+    #disable-next-line what-if-short-circuiting
+    aiAccountSubscriptionId: foundry.outputs.FOUNDRY_SUBSCRIPTION_ID
   }
 }
 
@@ -167,11 +178,10 @@ module foundry './modules/ai/ai-foundry.bicep' = {
   scope: resourceGroup(foundrySubscriptionId, foundryResourceGroupName)
   name: 'ai-foundry-deployment'
   params: {
-    managedIdentityId: '' // Use System Assigned Identity
+    managedIdentityResourceId: '' // Use System Assigned Identity
     name: 'ai-foundry-${resourceToken}'
-    appInsightsId: logAnalytics.outputs.applicationInsightsId
     publicNetworkAccess: 'Enabled'
-    agentSubnetId: foundry_vnet.outputs.agentSubnetId
+    agentSubnetResourceId: foundry_vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId
     deployments: [
       {
         name: 'gpt-4.1-mini'
@@ -195,14 +205,15 @@ module project1 './modules/ai/ai-project-with-caphost.bicep' = {
   scope: resourceGroup(foundrySubscriptionId, foundryResourceGroupName)
   name: 'ai-project-1-with-caphost-${resourceToken}'
   params: {
-    foundryName: foundry.outputs.name
+    foundryName: foundry.outputs.FOUNDRY_NAME
     location: foundryLocation
     projectId: 1
-    aiDependencies: ai_dependencies.outputs.aiDependencies
+    aiDependencies: ai_dependencies.outputs.AI_DEPENDENCIES
+    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
   }
 }
 
-module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.20.0' = if (true) {
+module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.21.0' = if (false) {
   name: 'virtualMachineDeployment'
   scope: resourceGroup(appSubscriptionId, appResourceGroupName)
   params: {
@@ -261,6 +272,4 @@ module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.20.0' = if (t
   }
 }
 
-output capability1HostUrl string = project1.outputs.capabilityHostUrl
-output ai1ConnectionUrl string = project1.outputs.aiConnectionUrl
-output foundry1_connection_string string = project1.outputs.foundry_connection_string
+output FOUNDRY_PROJECT_CONNECTION_STRING string = project1.outputs.FOUNDRY_PROJECT_CONNECTION_STRING

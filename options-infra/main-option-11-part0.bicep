@@ -91,7 +91,7 @@ module app_vnet './modules/networking/vnet-with-peering.bicep' = {
     name: 'app-vnet'
     location: appLocation
     vnetAddressPrefix: '172.18.0.0/22'
-    peeringResourceIds: [foundry_vnet.outputs.virtualNetworkId]
+    peeringResourceIds: [foundry_vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID]
   }
   dependsOn: [app_rg]
 }
@@ -102,7 +102,7 @@ module dns_zones './modules/networking/dns-zones.bicep' = {
   params: {
     vnetResourceIds: [
       app_vnet.outputs.virtualNetworkId
-      foundry_vnet.outputs.virtualNetworkId
+      foundry_vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     ]
   }
   dependsOn: [dns_rg]
@@ -117,16 +117,10 @@ module ai_dependencies './modules/ai-dependencies/standard-dependent-resources.b
     aiSearchName: 'project-search-${resourceToken}'
     cosmosDBName: 'project-cosmosdb-${resourceToken}'
     // AI Search Service parameters
-    aiSearchResourceId: ''
-    aiSearchExists: false
 
     // Storage Account
-    azureStorageAccountResourceId: ''
-    azureStorageExists: false
 
     // Cosmos DB Account
-    cosmosDBResourceId: ''
-    cosmosDBExists: false
   }
   dependsOn: [app_rg]
 }
@@ -136,25 +130,25 @@ module privateEndpointAndDNS './modules/networking/private-endpoint-and-dns.bice
   scope: resourceGroup(foundrySubscriptionId, foundryResourceGroupName)
   params: {
     // provide existing DNS zones
-    existingDnsZones: dns_zones.outputs.DNSZones
+    existingDnsZones: dns_zones.outputs.DNS_ZONES
 
-    aiAccountName: foundry.outputs.name
-    aiSearchName: ai_dependencies.outputs.aiSearchName // AI Search to secure
-    storageName: ai_dependencies.outputs.azureStorageName // Storage to secure
-    cosmosDBName: ai_dependencies.outputs.cosmosDBName
-    vnetName: foundry_vnet.outputs.virtualNetworkName
-    peSubnetName: foundry_vnet.outputs.peSubnetName
+    aiAccountName: foundry.outputs.FOUNDRY_NAME
+    aiSearchName: ai_dependencies.outputs.AI_SEARCH_NAME // AI Search to secure
+    storageName: ai_dependencies.outputs.STORAGE_NAME // Storage to secure
+    cosmosDBName: ai_dependencies.outputs.COSMOS_DB_NAME
+    vnetName: foundry_vnet.outputs.VIRTUAL_NETWORK_NAME
+    peSubnetName: foundry_vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.name
     suffix: resourceToken // Unique identifier
-    vnetResourceGroupName: foundry_vnet.outputs.virtualNetworkResourceGroup // Resource Group for the VNet
-    vnetSubscriptionId: foundry_vnet.outputs.virtualNetworkSubscriptionId // Subscription ID for the VNet
-    cosmosDBSubscriptionId: ai_dependencies.outputs.cosmosDBSubscriptionId // Subscription ID for Cosmos DB
-    cosmosDBResourceGroupName: ai_dependencies.outputs.cosmosDBResourceGroupName // Resource Group for Cosmos DB
-    aiSearchSubscriptionId: ai_dependencies.outputs.aiSearchServiceSubscriptionId // Subscription ID for AI Search Service
-    aiSearchResourceGroupName: ai_dependencies.outputs.aiSearchServiceResourceGroupName // Resource Group for AI Search Service
-    storageAccountResourceGroupName: ai_dependencies.outputs.azureStorageResourceGroupName // Resource Group for Storage Account
-    storageAccountSubscriptionId: ai_dependencies.outputs.azureStorageSubscriptionId // Subscription ID for Storage Account
-    aiAccountNameResourceGroup: foundry.outputs.resourceGroupName
-    aiAccountSubscriptionId: foundry.outputs.subscriptionId
+    vnetResourceGroupName: foundry_vnet.outputs.VIRTUAL_NETWORK_RESOURCE_GROUP // Resource Group for the VNet
+    vnetSubscriptionId: foundry_vnet.outputs.VIRTUAL_NETWORK_SUBSCRIPTION_ID // Subscription ID for the VNet
+    cosmosDBSubscriptionId: ai_dependencies.outputs.COSMOS_DB_SUBSCRIPTION_ID // Subscription ID for Cosmos DB
+    cosmosDBResourceGroupName: ai_dependencies.outputs.COSMOS_DB_RESOURCE_GROUP_NAME // Resource Group for Cosmos DB
+    aiSearchSubscriptionId: ai_dependencies.outputs.AI_SEARCH_SUBSCRIPTION_ID // Subscription ID for AI Search Service
+    aiSearchResourceGroupName: ai_dependencies.outputs.AI_SEARCH_RESOURCE_GROUP_NAME // Resource Group for AI Search Service
+    storageAccountResourceGroupName: ai_dependencies.outputs.STORAGE_RESOURCE_GROUP_NAME // Resource Group for Storage Account
+    storageAccountSubscriptionId: ai_dependencies.outputs.STORAGE_SUBSCRIPTION_ID // Subscription ID for Storage Account
+    aiAccountNameResourceGroup: foundry.outputs.FOUNDRY_RESOURCE_GROUP_NAME
+    aiAccountSubscriptionId: foundry.outputs.FOUNDRY_SUBSCRIPTION_ID
   }
   dependsOn: [dns_rg, foundry_rg]
 }
@@ -177,11 +171,10 @@ module foundry './modules/ai/ai-foundry.bicep' = {
   name: 'ai-foundry-deployment'
   dependsOn: [foundry_rg]
   params: {
-    managedIdentityId: '' // Use System Assigned Identity
+    managedIdentityResourceId: '' // Use System Assigned Identity
     name: 'ai-foundry-models-${resourceToken}'
-    appInsightsId: logAnalytics.outputs.applicationInsightsId
     publicNetworkAccess: 'Disabled'
-    agentSubnetId: null // No agent subnet for Foundry with models
+    agentSubnetResourceId: null // No agent subnet for Foundry with models
     deployments: [
       {
         name: 'gpt-4.1-mini'

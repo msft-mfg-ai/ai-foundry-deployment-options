@@ -1,8 +1,6 @@
 @subscriptionId={{$dotenv subscriptionId}}
 @rg={{$dotenv rg}}
-@capabilityName={{$dotenv capabilityName}}
 @foundryName={{$dotenv foundryName}}
-@foundryCapabilityName={{foundryName}}
 @projectName={{$dotenv projectName}}
 @vnetName={{$dotenv vnetName}}
 @subnetName={{$dotenv subnetName}}
@@ -13,14 +11,14 @@
 @token={{$dotenv token}}
 
 ### create for hub
-PUT {{baseUrl}}/{{foundryName}}/capabilityHosts/{{foundryCapabilityName}}?api-version=2025-06-01
+PUT {{baseUrl}}/{{foundryName}}/capabilityHosts/{{foundryName}}@aml_aiagentservice?api-version=2025-06-01
 Authorization: Bearer {{token}}
 Content-Type: application/json
 
 {
   "properties": {
     "capabilityHostKind": "Agents",
-    "customerSubnet": "/subscriptions/ece240d5-5c85-4dba-8829-29b9949adad1/resourceGroups/two-projects-rg/providers/Microsoft.Network/virtualNetworks/project-vnet-vsovqlu7h7d7c/subnets/agent-subnet"
+    "customerSubnet": "{{subnetId}}"
   }
 }
 
@@ -30,11 +28,11 @@ Authorization: Bearer {{token}}
 Content-Type: application/json
 
 ### Delete Hub Capability Host
-DELETE {{baseUrl}}/{{foundryName}}/capabilityHosts/{{foundryCapabilityName}}@aml_aiagentservice?api-version=2025-06-01
+DELETE {{baseUrl}}/{{foundryName}}/capabilityHosts/{{foundryName}}@aml_aiagentservice?api-version=2025-06-01
 Authorization: Bearer {{token}}
 
 ### Create Project Capability Host
-PUT {{baseUrl}}/{{foundryName}}/projects/{{projectName}}/capabilityHosts/{{capabilityName}}?api-version=2025-04-01-preview
+PUT {{baseUrl}}/{{foundryName}}/projects/{{projectName}}/capabilityHosts/projcaphost?api-version=2025-04-01-preview
 Authorization: Bearer {{token}}
 Content-Type: application/json
 Accept: application/json
@@ -56,17 +54,12 @@ Accept: application/json
 }
 
 ### Get Project Capability Host
-GET {{baseUrl}}/{{foundryName}}/projects/{{projectName}}/capabilityHosts/{{capabilityName}}?api-version=2025-04-01-preview
+GET {{baseUrl}}/{{foundryName}}/projects/{{projectName}}/capabilityHosts?api-version=2025-04-01-preview
 Authorization: Bearer {{token}}
 Content-Type: application/json
 
 ### DELETE Project Capability Host
-DELETE {{baseUrl}}/{{foundryName}}/projects/{{projectName}}/capabilityHosts/{{capabilityName}}?api-version=2025-04-01-preview
-Authorization: Bearer {{token}}
-Content-Type: application/json
-
-### Progress
-GET https://management.azure.com/subscriptions/ece240d5-5c85-4dba-8829-29b9949adad1/providers/Microsoft.MachineLearningServices/locations/westus/mfeOperationsStatus/ch:1d2961e5-4dfc-4108-845b-d82fa2b55b00:0563ed51-e3c0-4945-b9c0-174b21ba74d9?api-version=2025-04-01-preview
+DELETE {{baseUrl}}/{{foundryName}}/projects/{{projectName}}/capabilityHosts/projcaphost?api-version=2025-04-01-preview
 Authorization: Bearer {{token}}
 Content-Type: application/json
 
@@ -103,6 +96,3 @@ Content-Type: application/json
   "top_p": 1
 }
 
-#### Get progress
-GET https://management.azure.com/subscriptions/ece240d5-5c85-4dba-8829-29b9949adad1/providers/Microsoft.MachineLearningServices/locations/westus/mfeOperationsStatus/ch:ed9bc853-1082-4c77-af50-e9dd19b79c58:97777f42-7a92-49d1-a91f-2274546964d0?api-version=2025-06-01
-Authorization: Bearer {{token}}

@@ -1,0 +1,69 @@
+<!-- Recent Subscriptions Partial for Dashboard -->
+<div class="divide-y divide-gray-200">
+    {% for subscription in subscriptions %}
+    <div class="px-6 py-4 flex items-center justify-between hover:bg-gray-50">
+        <div class="flex items-center">
+            <div class="flex-shrink-0">
+                {% if subscription.state == 'active' %}
+                <span class="inline-flex items-center justify-center h-10 w-10 rounded-full bg-green-100">
+                    <svg class="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                </span>
+                {% elif subscription.state == 'suspended' %}
+                <span class="inline-flex items-center justify-center h-10 w-10 rounded-full bg-yellow-100">
+                    <svg class="h-5 w-5 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </span>
+                {% else %}
+                <span class="inline-flex items-center justify-center h-10 w-10 rounded-full bg-gray-100">
+                    <svg class="h-5 w-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </span>
+                {% endif %}
+            </div>
+            <div class="ml-4">
+                <p class="text-sm font-medium text-gray-900">
+                    <a href="/subscriptions/{{ subscription.id }}" class="hover:text-indigo-600">
+                        {{ subscription.display_name }}
+                    </a>
+                </p>
+                <p class="text-sm text-gray-500">
+                    {{ subscription.scope }}
+                </p>
+            </div>
+        </div>
+        <div class="flex items-center">
+            <span class="text-sm text-gray-500 mr-4">
+                {% if subscription.created_date %}
+                Created {{ subscription.created_date.strftime('%b %d, %Y') }}
+                {% endif %}
+            </span>
+            <a href="/subscriptions/{{ subscription.id }}" 
+               class="text-indigo-600 hover:text-indigo-900">
+                <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                </svg>
+            </a>
+        </div>
+    </div>
+    {% else %}
+    <div class="px-6 py-12 text-center text-gray-500">
+        <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+        </svg>
+        <h3 class="mt-2 text-sm font-medium text-gray-900">No subscriptions yet</h3>
+        <p class="mt-1 text-sm text-gray-500">Get started by creating your first subscription.</p>
+        <div class="mt-6">
+            <a href="/subscriptions" class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700">
+                <svg class="-ml-1 mr-2 h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" />
+                </svg>
+                New Subscription
+            </a>
+        </div>
+    </div>
+    {% endfor %}
+</div>

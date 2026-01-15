@@ -1,0 +1,142 @@
+<!-- Subscription Detail Partial - rendered by /api/subscriptions/{id} -->
+<div class="bg-white shadow rounded-lg">
+    <div class="px-6 py-5 border-b border-gray-200">
+        <div class="flex items-center justify-between">
+            <div>
+                <h2 class="text-2xl font-bold text-gray-900">{{ subscription.display_name }}</h2>
+                <p class="mt-1 text-sm text-gray-500">{{ subscription.scope }}</p>
+            </div>
+            <div class="flex items-center space-x-3">
+                {% if subscription.state == 'active' %}
+                <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">
+                    <svg class="mr-1.5 h-2 w-2 text-green-400" fill="currentColor" viewBox="0 0 8 8">
+                        <circle cx="4" cy="4" r="3" />
+                    </svg>
+                    Active
+                </span>
+                <button hx-post="/api/subscriptions/{{ subscription.id }}/suspend"
+                        hx-target="#subscription-detail"
+                        hx-swap="innerHTML"
+                        hx-confirm="Are you sure you want to suspend this subscription?"
+                        class="inline-flex items-center px-3 py-2 border border-yellow-300 shadow-sm text-sm font-medium rounded-md text-yellow-700 bg-white hover:bg-yellow-50">
+                    Suspend
+                </button>
+                {% elif subscription.state == 'suspended' %}
+                <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-yellow-100 text-yellow-800">
+                    <svg class="mr-1.5 h-2 w-2 text-yellow-400" fill="currentColor" viewBox="0 0 8 8">
+                        <circle cx="4" cy="4" r="3" />
+                    </svg>
+                    Suspended
+                </span>
+                <button hx-post="/api/subscriptions/{{ subscription.id }}/activate"
+                        hx-target="#subscription-detail"
+                        hx-swap="innerHTML"
+                        class="inline-flex items-center px-3 py-2 border border-green-300 shadow-sm text-sm font-medium rounded-md text-green-700 bg-white hover:bg-green-50">
+                    Activate
+                </button>
+                {% else %}
+                <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800">
+                    {{ subscription.state | capitalize }}
+                </span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="px-6 py-5">
+        <dl class="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2 lg:grid-cols-3">
+            <div>
+                <dt class="text-sm font-medium text-gray-500">Subscription ID</dt>
+                <dd class="mt-1 text-sm text-gray-900 font-mono">{{ subscription.id }}</dd>
+            </div>
+            
+            <div>
+                <dt class="text-sm font-medium text-gray-500">Owner</dt>
+                <dd class="mt-1 text-sm text-gray-900">{{ subscription.owner_email or 'N/A' }}</dd>
+            </div>
+            
+            <div>
+                <dt class="text-sm font-medium text-gray-500">Created</dt>
+                <dd class="mt-1 text-sm text-gray-900">{{ subscription.created_date.strftime('%Y-%m-%d %H:%M') if subscription.created_date else 'N/A' }}</dd>
+            </div>
+            
+            <div>
+                <dt class="text-sm font-medium text-gray-500">Primary Key</dt>
+                <dd class="mt-1 text-sm text-gray-900">
+                    <div class="flex items-center" x-data="{ showKey: false }">
+                        <span x-show="!showKey" class="font-mono">••••••••••••••••</span>
+                        <span x-show="showKey" class="font-mono">{{ subscription.primary_key or 'N/A' }}</span>
+                        <button @click="showKey = !showKey" class="ml-2 text-indigo-600 hover:text-indigo-500">
+                            <svg x-show="!showKey" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                            <svg x-show="showKey" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                            </svg>
+                        </button>
+                    </div>
+                </dd>
+            </div>
+            
+            <div>
+                <dt class="text-sm font-medium text-gray-500">Expiration</dt>
+                <dd class="mt-1 text-sm text-gray-900">{{ subscription.expiration_date.strftime('%Y-%m-%d') if subscription.expiration_date else 'Never' }}</dd>
+            </div>
+            
+            <div>
+                <dt class="text-sm font-medium text-gray-500">Notes</dt>
+                <dd class="mt-1 text-sm text-gray-900">{{ subscription.notes or 'No notes' }}</dd>
+            </div>
+        </dl>
+    </div>
+    
+    <!-- Token Limits Section -->
+    <div class="px-6 py-5 border-t border-gray-200">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-medium text-gray-900">Token Limits</h3>
+            <button onclick="openLimitsModal('{{ subscription.id }}')"
+                    class="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                <svg class="-ml-0.5 mr-1.5 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                Edit Limits
+            </button>
+        </div>
+        
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div class="bg-gray-50 rounded-lg p-4">
+                <div class="text-sm font-medium text-gray-500">Max Tokens/Day</div>
+                <div class="mt-1 text-2xl font-semibold text-gray-900">
+                    {% if subscription.token_limit and subscription.token_limit.max_tokens_per_day %}
+                        {{ "{:,}".format(subscription.token_limit.max_tokens_per_day) }}
+                    {% else %}
+                        <span class="text-gray-400">Unlimited</span>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <div class="bg-gray-50 rounded-lg p-4">
+                <div class="text-sm font-medium text-gray-500">Max Tokens/Month</div>
+                <div class="mt-1 text-2xl font-semibold text-gray-900">
+                    {% if subscription.token_limit and subscription.token_limit.max_tokens_per_month %}
+                        {{ "{:,}".format(subscription.token_limit.max_tokens_per_month) }}
+                    {% else %}
+                        <span class="text-gray-400">Unlimited</span>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <div class="bg-gray-50 rounded-lg p-4">
+                <div class="text-sm font-medium text-gray-500">Max Requests/Minute</div>
+                <div class="mt-1 text-2xl font-semibold text-gray-900">
+                    {% if subscription.token_limit and subscription.token_limit.max_requests_per_minute %}
+                        {{ subscription.token_limit.max_requests_per_minute }}
+                    {% else %}
+                        <span class="text-gray-400">Unlimited</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

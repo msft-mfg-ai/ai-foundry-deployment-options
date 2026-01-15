@@ -26,6 +26,8 @@ Security Benefits:
 // Resource names and identifiers
 @description('Name of the AI Foundry account')
 param aiAccountName string?
+param location string = resourceGroup().location
+param tags object = {}
 param aiAccountNameResourceGroup string = resourceGroup().name
 param aiAccountSubscriptionId string = subscription().subscriptionId
 @description('Name of the AI Search service')
@@ -71,6 +73,7 @@ param existingDnsZones types.DnsZonesType = types.DefaultDNSZones
 module ai_private_endpoint 'ai-pe-dns.bicep' = if (!empty(aiAccountName)) {
   name: '${aiAccountName}-private-endpoint'
   params: {
+    tags: tags
     aiAccountName: aiAccountName!
     aiAccountNameResourceGroup: aiAccountNameResourceGroup
     aiAccountSubscriptionId: aiAccountSubscriptionId
@@ -119,7 +122,8 @@ resource peSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-05-01' existin
 // - Establishes private connection to AI Search service
 resource aiSearchPrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = {
   name: '${aiSearchName}-private-endpoint'
-  location: resourceGroup().location
+  location: location
+    tags: tags
   properties: {
     subnet: { id: peSubnet.id } // Deploy in customer hub subnet
     privateLinkServiceConnections: [
@@ -141,7 +145,8 @@ resource aiSearchPrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01'
 // - Establishes private connection to blob storage
 resource storagePrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = {
   name: '${storageName}-private-endpoint'
-  location: resourceGroup().location
+  location: location
+    tags: tags
   properties: {
     subnet: { id: peSubnet.id } // Deploy in customer hub subnet
     privateLinkServiceConnections: [
@@ -160,7 +165,8 @@ resource storagePrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' 
 
 resource cosmosDBPrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = {
   name: '${cosmosDBName}-private-endpoint'
-  location: resourceGroup().location
+  location: location
+    tags: tags
   properties: {
     subnet: { id: peSubnet.id } // Deploy in customer hub subnet
     privateLinkServiceConnections: [
@@ -205,6 +211,7 @@ var keyVaultDnsZone = existingDnsZones[?keyVaultDnsZoneName]
 resource aiServicesPrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (empty(aiServicesDnsZone)) {
   name: aiServicesDnsZoneName
   location: 'global'
+  tags: tags
 }
 
 // Reference existing private DNS zone if provided
@@ -218,6 +225,7 @@ var aiServicesDnsZoneId = empty(aiServicesDnsZone) ? aiServicesPrivateDnsZone.id
 resource openAiPrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (empty(openAiDnsZone)) {
   name: openAiDnsZoneName
   location: 'global'
+  tags: tags
 }
 
 // Reference existing private DNS zone if provided
@@ -231,6 +239,7 @@ var openAiDnsZoneId = empty(openAiDnsZone) ? openAiPrivateDnsZone.id : existingO
 resource cognitiveServicesPrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (empty(cognitiveServicesDnsZone)) {
   name: cognitiveServicesDnsZoneName
   location: 'global'
+  tags: tags
 }
 
 // Reference existing private DNS zone if provided
@@ -246,6 +255,7 @@ var cognitiveServicesDnsZoneId = empty(cognitiveServicesDnsZone)
 resource aiSearchPrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (empty(aiSearchDnsZone)) {
   name: aiSearchDnsZoneName
   location: 'global'
+  tags: tags
 }
 
 // Reference existing private DNS zone if provided
@@ -259,6 +269,7 @@ var aiSearchDnsZoneId = empty(aiSearchDnsZone) ? aiSearchPrivateDnsZone.id : exi
 resource storagePrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (empty(storageDnsZone)) {
   name: storageDnsZoneName
   location: 'global'
+  tags: tags
 }
 
 // Reference existing private DNS zone if provided
@@ -272,6 +283,7 @@ var storageDnsZoneId = empty(storageDnsZone) ? storagePrivateDnsZone.id : existi
 resource cosmosDBPrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (empty(cosmosDBDnsZone)) {
   name: cosmosDBDnsZoneName
   location: 'global'
+  tags: tags
 }
 
 // Reference existing private DNS zone if provided
@@ -286,6 +298,7 @@ var cosmosDBDnsZoneId = empty(cosmosDBDnsZone) ? cosmosDBPrivateDnsZone.id : exi
 resource keyVaultPrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (empty(keyVaultDnsZone)) {
   name: keyVaultDnsZoneName
   location: 'global'
+  tags: tags
 }
 
 resource existingKeyVaultPrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' existing = if (!empty(keyVaultDnsZone)) {
@@ -299,6 +312,7 @@ var keyVaultDnsZoneId = empty(keyVaultDnsZone) ? keyVaultPrivateDnsZone.id : exi
 resource aiServicesLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = if (empty(aiServicesDnsZone)) {
   parent: aiServicesPrivateDnsZone
   location: 'global'
+  tags: tags
   name: 'aiServices-${suffix}-link'
   properties: {
     virtualNetwork: { id: vnet.id }
@@ -308,6 +322,7 @@ resource aiServicesLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2
 resource openAiLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = if (empty(openAiDnsZone)) {
   parent: openAiPrivateDnsZone
   location: 'global'
+  tags: tags
   name: 'aiServicesOpenAI-${suffix}-link'
   properties: {
     virtualNetwork: { id: vnet.id }
@@ -317,6 +332,7 @@ resource openAiLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-
 resource cognitiveServicesLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = if (empty(cognitiveServicesDnsZone)) {
   parent: cognitiveServicesPrivateDnsZone
   location: 'global'
+  tags: tags
   name: 'aiServicesCognitiveServices-${suffix}-link'
   properties: {
     virtualNetwork: { id: vnet.id }
@@ -327,6 +343,7 @@ resource cognitiveServicesLink 'Microsoft.Network/privateDnsZones/virtualNetwork
 resource aiSearchLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = if (empty(aiSearchDnsZone)) {
   parent: aiSearchPrivateDnsZone
   location: 'global'
+  tags: tags
   name: 'aiSearch-${suffix}-link'
   properties: {
     virtualNetwork: { id: vnet.id }
@@ -336,6 +353,7 @@ resource aiSearchLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@202
 resource storageLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = if (empty(storageDnsZone)) {
   parent: storagePrivateDnsZone
   location: 'global'
+  tags: tags
   name: 'storage-${suffix}-link'
   properties: {
     virtualNetwork: { id: vnet.id }
@@ -345,6 +363,7 @@ resource storageLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024
 resource cosmosDBLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = if (empty(cosmosDBDnsZone)) {
   parent: cosmosDBPrivateDnsZone
   location: 'global'
+  tags: tags
   name: 'cosmosDB-${suffix}-link'
   properties: {
     virtualNetwork: { id: vnet.id }
@@ -355,6 +374,7 @@ resource cosmosDBLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@202
 resource keyVaultLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = if (empty(keyVaultDnsZone)) {
   parent: keyVaultPrivateDnsZone
   location: 'global'
+  tags: tags
   name: 'keyVault-${suffix}-link'
   properties: {
     virtualNetwork: { id: vnet.id }

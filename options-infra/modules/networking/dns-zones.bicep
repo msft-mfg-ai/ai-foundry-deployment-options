@@ -141,15 +141,16 @@ resource cosmosDBLinks 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@20
   }
 ]
 
-output aiServicesPrivateDnsZoneId string = aiServicesPrivateDnsZone.id
-output openAiPrivateDnsZoneId string = openAiPrivateDnsZone.id
-output cognitiveServicesPrivateDnsZoneId string = cognitiveServicesPrivateDnsZone.id
-output aiSearchPrivateDnsZoneId string = aiSearchPrivateDnsZone.id
-output storagePrivateDnsZoneId string = storagePrivateDnsZone.id
-output cosmosDBPrivateDnsZoneId string = cosmosDBPrivateDnsZone.id
-output keyVaultPrivateDnsZoneId string = keyVaultPrivateDnsZone.id
+output AI_SERVICES_PRIVATE_DNS_ZONE_RESOURCE_ID string = aiServicesPrivateDnsZone.id
+output OPENAI_PRIVATE_DNS_ZONE_RESOURCE_ID string = openAiPrivateDnsZone.id
+output COGNITIVE_SERVICES_PRIVATE_DNS_ZONE_RESOURCE_ID string = cognitiveServicesPrivateDnsZone.id
+output AI_SEARCH_PRIVATE_DNS_ZONE_RESOURCE_ID string = aiSearchPrivateDnsZone.id
+output STORAGE_PRIVATE_DNS_ZONE_RESOURCE_ID string = storagePrivateDnsZone.id
+output COSMOS_DB_PRIVATE_DNS_ZONE_RESOURCE_ID string = cosmosDBPrivateDnsZone.id
+output KEY_VAULT_PRIVATE_DNS_ZONE_RESOURCE_ID string = keyVaultPrivateDnsZone.id
 
-output DNSZones types.DnsZonesType = {
+@description('Dictionary of Private DNS Zones created')
+output DNS_ZONES types.DnsZonesType = {
   'privatelink.services.ai.azure.com': {
     name: aiServicesDnsZoneName
     resourceGroupName: resourceGroup().name

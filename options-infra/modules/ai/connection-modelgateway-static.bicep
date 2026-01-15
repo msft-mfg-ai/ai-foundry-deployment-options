@@ -19,14 +19,16 @@ IMPORTANT: Make sure you are logged into the subscription where the AI Foundry r
 The connection will be created in the AI Foundry project, so you need to be in that subscription context.
 Use: az account set --subscription <foundry-subscription-id>
 */
+import { AuthConfigType } from './modelgateway-connection-common.bicep'
 
 param aiFoundryName string
+param aiFoundryProjectName string?
 param targetUrl string = 'https://your-model-gateway.example.com/v1'
 param gatewayName string = 'example-gateway'
 
 // Connection configuration (ModelGateway only supports ApiKey)
 param authType string = 'ApiKey'
-param isSharedToAll bool = false
+param isSharedToAll bool = true
 
 // Connection naming - can be overridden via parameter
 param connectionName string = '' // Optional: specify custom connection name
@@ -34,6 +36,9 @@ param connectionName string = '' // Optional: specify custom connection name
 // API key for the ModelGateway endpoint
 @secure()
 param apiKey string
+
+@description('Authentication configuration (object for custom auth headers)')
+param authConfig AuthConfigType?
 
 // Generate connection name if not provided
 var generatedConnectionName = 'modelgateway-${gatewayName}-static'
@@ -82,19 +87,31 @@ param staticModels array = [
   }
 ]
 
+// helper variables
+var hasAuthConfig = !empty(authConfig)
+
 // Build the metadata object for ModelGateway Static Models
 // All values must be strings, including serialized JSON objects
-var modelGatewayMetadata = {
-  deploymentInPath: deploymentInPath
-  inferenceAPIVersion: inferenceAPIVersion
-  models: string(staticModels) // Serialize static models array as JSON string
-}
+var modelGatewayMetadata = union(
+  {
+    deploymentInPath: deploymentInPath
+    inferenceAPIVersion: inferenceAPIVersion
+    models: string(staticModels) // Serialize static models array as JSON string
+  },
+  // Conditionally include custom auth configuration
+  hasAuthConfig
+    ? {
+        authConfig: string(authConfig)
+      }
+    : {}
+)
 
 // Use the common module to create the ModelGateway connection
 module modelGatewayConnection 'modelgateway-connection-common.bicep' = {
-  name: 'modelgateway-connection-static'
+  name: '${finalConnectionName}-deployment'
   params: {
     aiFoundryName: aiFoundryName
+    aiFoundryProjectName: aiFoundryProjectName
     connectionName: finalConnectionName
     targetUrl: targetUrl
     authType: authType

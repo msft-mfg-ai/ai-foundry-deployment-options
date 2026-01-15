@@ -10,7 +10,7 @@ param aiServicesPublicName string = 'foundry-landing-zone-${location}-PUBLIC-${r
 // Foundry doesn't support cross-subscription VNet injection or cross subscription resources, so we need to deploy it in the same subscription
 var doesFoundrySupportsCrossSubscriptionVnet = false
 
-module identity 'br/public:avm/res/managed-identity/user-assigned-identity:0.4.0' = {
+module identity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.0' = {
   name: 'mgmtidentity-${uniqueString(deployment().name, location)}'
   params: {
     name: 'landing-zone-identity-${resourceToken}'
@@ -18,7 +18,7 @@ module identity 'br/public:avm/res/managed-identity/user-assigned-identity:0.4.0
   }
 }
 
-module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.12.0' = {
+module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.14.2' = {
   name: 'log-${resourceToken}'
   params: {
     name: 'loganaly01'
@@ -53,7 +53,7 @@ module apps './modules/function/function-app-with-plan.bicep' = {
     name: 'apps'
     applicationInsightResourceId: appInsights.outputs.resourceId
     artifactUrl: 'https://github.com/karpikpl/weather-MCP-OpenAPI-server/blob/main/artifacts/azure-functions-package.zip?raw=true'
-    managedIdentityId: identity.outputs.resourceId
+    managedIdentityResourceId: identity.outputs.resourceId
     location: 'canadacentral'
     privateEndpointSubnetResourceId: null // No private endpoint for this example
     logAnalyticsWorkspaceResourceId: logAnalytics.outputs.resourceId
@@ -64,7 +64,7 @@ module apps './modules/function/function-app-with-plan.bicep' = {
 module aiServices './modules/ai/ai-foundry.bicep' = {
   name: 'ai-services'
   params: {
-    managedIdentityId: identity.outputs.resourceId
+    managedIdentityResourceId: identity.outputs.resourceId
     name: aiServicesName
     location: location
     publicNetworkAccess: 'Disabled' // 'enabled' or 'disabled'
@@ -90,7 +90,7 @@ module aiServices './modules/ai/ai-foundry.bicep' = {
 module aiServicesPublic './modules/ai/ai-foundry.bicep' = {
   name: 'ai-services-public'
   params: {
-    managedIdentityId: identity.outputs.resourceId
+    managedIdentityResourceId: identity.outputs.resourceId
     name: aiServicesPublicName
     location: location
     publicNetworkAccess: 'Enabled' // 'enabled' or 'disabled'
@@ -131,7 +131,7 @@ module appMcp './modules/aca/container-app.bicep' = {
   params: {
     location: location
     name: 'aca-mcp-${resourceToken}'
-    workloadProfileName: managedEnvironment.outputs.AZURE_RESOURCE_CONTAINER_APPS_WORKLOAD_PROFILE_NAME
+    workloadProfileName: managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
     applicationInsightsConnectionString: appInsights.outputs.connectionString
     definition: {
       settings: []
@@ -145,7 +145,7 @@ module appMcp './modules/aca/container-app.bicep' = {
     memory: '0.5Gi'
     scaleMaxReplicas: 1
     scaleMinReplicas: 1
-    containerAppsEnvironmentResourceId: managedEnvironment.outputs.AZURE_RESOURCE_CONTAINER_APPS_ENVIRONMENT_ID
+    containerAppsEnvironmentResourceId: managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_ID
     keyVaultName: null
     probes: [
       {
@@ -164,7 +164,7 @@ module appOpenAPI './modules/aca/container-app.bicep' = {
   params: {
     location: location
     name: 'aca-openapi-${resourceToken}'
-    workloadProfileName: managedEnvironment.outputs.AZURE_RESOURCE_CONTAINER_APPS_WORKLOAD_PROFILE_NAME
+    workloadProfileName: managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
     applicationInsightsConnectionString: appInsights.outputs.connectionString
     definition: {
       settings: []
@@ -178,7 +178,7 @@ module appOpenAPI './modules/aca/container-app.bicep' = {
     memory: '0.5Gi'
     scaleMaxReplicas: 1
     scaleMinReplicas: 1
-    containerAppsEnvironmentResourceId: managedEnvironment.outputs.AZURE_RESOURCE_CONTAINER_APPS_ENVIRONMENT_ID
+    containerAppsEnvironmentResourceId: managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_ID
     keyVaultName: null
     probes: [
       {
@@ -210,16 +210,10 @@ module ai_dependencies 'modules/ai-dependencies/standard-dependent-resources.bic
     cosmosDBName: 'project-cosmosdb-${resourceToken}'
 
     // AI Search Service parameters
-    aiSearchResourceId: ''
-    aiSearchExists: false
 
     // Storage Account
-    azureStorageAccountResourceId: ''
-    azureStorageExists: false
 
     // Cosmos DB Account
-    cosmosDBResourceId: ''
-    cosmosDBExists: false
   }
 }
 
@@ -232,20 +226,34 @@ module ai_dependencies 'modules/ai-dependencies/standard-dependent-resources.bic
 module privateEndpointAndDNS 'modules/networking/private-endpoint-and-dns.bicep' = if (doesFoundrySupportsCrossSubscriptionVnet) {
   name: 'private-endpoints-and-dns'
   params: {
-    aiAccountName: aiServices.outputs.name // AI Services to secure
-    aiSearchName: ai_dependencies.outputs.aiSearchName // AI Search to secure
-    storageName: ai_dependencies.outputs.azureStorageName // Storage to secure
-    cosmosDBName: ai_dependencies.outputs.cosmosDBName
-    vnetName: vnet.outputs.virtualNetworkName // VNet containing subnets
-    peSubnetName: vnet.outputs.peSubnetName // Subnet for private endpoints
+    #disable-next-line what-if-short-circuiting
+    aiAccountName: aiServices.outputs.FOUNDRY_NAME // AI Services to secure
+    #disable-next-line what-if-short-circuiting
+    aiSearchName: ai_dependencies!.outputs.AI_SEARCH_NAME // AI Search to secure
+    #disable-next-line what-if-short-circuiting
+    storageName: ai_dependencies!.outputs.STORAGE_NAME // Storage to secure
+    #disable-next-line what-if-short-circuiting
+    cosmosDBName: ai_dependencies!.outputs.COSMOS_DB_NAME
+    #disable-next-line what-if-short-circuiting
+    vnetName: vnet!.outputs.VIRTUAL_NETWORK_NAME // VNet containing subnets
+    #disable-next-line what-if-short-circuiting
+    peSubnetName: vnet!.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.name // Subnet for private endpoints
     suffix: resourceToken // Unique identifier
-    vnetResourceGroupName: vnet.outputs.virtualNetworkResourceGroup
-    vnetSubscriptionId: vnet.outputs.virtualNetworkSubscriptionId // Subscription ID for the VNet
-    cosmosDBSubscriptionId: ai_dependencies.outputs.cosmosDBSubscriptionId // Subscription ID for Cosmos DB
-    cosmosDBResourceGroupName: ai_dependencies.outputs.cosmosDBResourceGroupName // Resource Group for Cosmos DB
-    aiSearchSubscriptionId: ai_dependencies.outputs.aiSearchServiceSubscriptionId // Subscription ID for AI Search Service
-    aiSearchResourceGroupName: ai_dependencies.outputs.aiSearchServiceResourceGroupName // Resource Group for AI Search Service
-    storageAccountResourceGroupName: ai_dependencies.outputs.azureStorageResourceGroupName // Resource Group for Storage Account
-    storageAccountSubscriptionId: ai_dependencies.outputs.azureStorageSubscriptionId // Subscription ID for Storage Account
+    #disable-next-line what-if-short-circuiting
+    vnetResourceGroupName: vnet!.outputs.VIRTUAL_NETWORK_RESOURCE_GROUP
+    #disable-next-line what-if-short-circuiting
+    vnetSubscriptionId: vnet!.outputs.VIRTUAL_NETWORK_SUBSCRIPTION_ID // Subscription ID for the VNet
+    #disable-next-line what-if-short-circuiting
+    cosmosDBSubscriptionId: ai_dependencies!.outputs.COSMOS_DB_SUBSCRIPTION_ID // Subscription ID for Cosmos DB
+    #disable-next-line what-if-short-circuiting
+    cosmosDBResourceGroupName: ai_dependencies!.outputs.COSMOS_DB_RESOURCE_GROUP_NAME // Resource Group for Cosmos DB
+    #disable-next-line what-if-short-circuiting
+    aiSearchSubscriptionId: ai_dependencies!.outputs.AI_SEARCH_SUBSCRIPTION_ID // Subscription ID for AI Search Service
+    #disable-next-line what-if-short-circuiting
+    aiSearchResourceGroupName: ai_dependencies!.outputs.AI_SEARCH_RESOURCE_GROUP_NAME // Resource Group for AI Search Service
+    #disable-next-line what-if-short-circuiting
+    storageAccountResourceGroupName: ai_dependencies!.outputs.STORAGE_RESOURCE_GROUP_NAME // Resource Group for Storage Account
+    #disable-next-line what-if-short-circuiting
+    storageAccountSubscriptionId: ai_dependencies!.outputs.STORAGE_SUBSCRIPTION_ID // Subscription ID for Storage Account
   }
 }

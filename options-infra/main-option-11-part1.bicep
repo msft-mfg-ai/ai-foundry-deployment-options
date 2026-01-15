@@ -8,7 +8,7 @@
 import * as types from './modules/types/types.bicep'
 
 targetScope = 'resourceGroup'
-
+param location string = resourceGroup().location
 
 // ============== EXISTING AI Foundry VNet ==============
 @description('Name of the EXISTING Foundry Agent Subnet (shared across Foundry projects)')
@@ -75,11 +75,10 @@ var aiDependencies types.aiDependenciesType = {
 module foundry './modules/ai/ai-foundry.bicep' = {
   name: 'ai-foundry-deployment'
   params: {
-    managedIdentityId: '' // Use System Assigned Identity
+    managedIdentityResourceId: '' // Use System Assigned Identity
     name: 'ai-foundry-${resourceToken}'
-    appInsightsId: existingApplicationInsightsResourceId
     publicNetworkAccess: 'Disabled'  // ✅ Changed to Disabled for security
-    agentSubnetId: existingFoundryAgentSubnetId
+    agentSubnetResourceId: existingFoundryAgentSubnetId
     deployments: []  // ✅ Empty - using existing Azure OpenAI resource
   }
 }
@@ -88,15 +87,14 @@ module foundry './modules/ai/ai-foundry.bicep' = {
 module project1 './modules/ai/ai-project-with-caphost.bicep' = {
   name: 'ai-project-1-with-caphost-${resourceToken}'
   params: {
-    foundryName: foundry.outputs.name
-    location: resourceGroup().location
+    foundryName: foundry.outputs.FOUNDRY_NAME
+    location: location
     projectId: 1
     aiDependencies: aiDependencies
     existingAiResourceId: existingAiResourceId
     existingAiResourceKind: existingAiResourceKind
+    appInsightsResourceId: existingApplicationInsightsResourceId
   }
 }
 
-output capability1HostUrl string = project1.outputs.capabilityHostUrl
-output ai1ConnectionUrl string = project1.outputs.aiConnectionUrl
-output foundry1_connection_string string = project1.outputs.foundry_connection_string
+output foundry1_connection_string string = project1.outputs.FOUNDRY_PROJECT_CONNECTION_STRING

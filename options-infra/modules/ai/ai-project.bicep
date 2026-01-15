@@ -3,7 +3,7 @@ param location string
 param project_name string
 param project_description string
 param display_name string
-param managedIdentityId string = ''
+param managedIdentityResourceId string = ''
 param tags object = {}
 @description('The resource ID of the existing AI resource.')
 param existingAiResourceId string?
@@ -25,11 +25,24 @@ param cosmosDBResourceGroupName string = ''
 param azureStorageName string = ''
 param azureStorageSubscriptionId string = ''
 param azureStorageResourceGroupName string = ''
-param createHubCapabilityHost bool = false
+param createAccountCapabilityHost bool = false
+
+param appInsightsResourceId string?
+
+// --------------------------- Application Insights resource if needed ------------------------------------------------
+var insightsParts string[] = split(appInsightsResourceId ?? '', '/')
+var appInsightsName = length(insightsParts) > 0 ? insightsParts[length(insightsParts) - 1] : ''
+var appInsightsResourceGroupName = length(insightsParts) > 4 ? insightsParts[4] : ''
+var appInsightsSubscriptionId = length(insightsParts) > 2 ? insightsParts[2] : ''
+
+resource appInsights 'Microsoft.Insights/components@2020-02-02' existing = if (!empty(appInsightsResourceId)) {
+  name: appInsightsName
+  scope: resourceGroup(appInsightsSubscriptionId, appInsightsResourceGroupName)
+}
 
 // --------------------------------------------------------------------------------------------------------------
 // split managed identity resource ID to get the name
-var identityParts = split(managedIdentityId, '/')
+var identityParts = split(managedIdentityResourceId, '/')
 // get the name of the managed identity
 var managedIdentityName = length(identityParts) > 0 ? identityParts[length(identityParts) - 1] : ''
 
@@ -84,11 +97,11 @@ resource foundry_project 'Microsoft.CognitiveServices/accounts/projects@2025-04-
   name: project_name
   tags: tags
   location: location
-  identity: !empty(managedIdentityId)
+  identity: !empty(managedIdentityResourceId)
     ? {
         type: 'UserAssigned'
         userAssignedIdentities: {
-          '${managedIdentityId}': {}
+          '${managedIdentityResourceId}': {}
         }
       }
     : {
@@ -97,6 +110,26 @@ resource foundry_project 'Microsoft.CognitiveServices/accounts/projects@2025-04-
   properties: {
     description: project_description
     displayName: display_name
+  }
+
+  // Creates the Azure Foundry connection Application Insights
+  resource connection 'connections@2025-04-01-preview' = if (!empty(appInsightsName)) {
+    name: 'applicationInsights-for-${project_name}'
+    properties: {
+      category: 'AppInsights'
+      //group: 'ServicesAndApps'  // read-only...
+      target: appInsights.id
+      authType: 'ApiKey'
+      isSharedToAll: false
+      //isDefault: true  // not valid property
+      credentials: {
+        key: appInsights!.properties.InstrumentationKey
+      }
+      metadata: {
+        ApiType: 'Azure'
+        ResourceId: appInsights.id
+      }
+    }
   }
 }
 
@@ -130,10 +163,10 @@ resource byoAoaiConnection 'Microsoft.CognitiveServices/accounts/projects/connec
   }
 }
 
-// TODO is caphost on account level needed? This sample doesn't use it
+// For VNET INJECTED FOUNDRY - Account Capability Host for Agents is created automatically
 // https://github.com/azure-ai-foundry/foundry-samples/blob/main/samples/microsoft/infrastructure-setup/15-private-network-standard-agent-setup/README.md
-
-resource accountCapabilityHost 'Microsoft.CognitiveServices/accounts/capabilityHosts@2025-04-01-preview' = if (createHubCapabilityHost) {
+@onlyIfNotExists()
+resource accountCapabilityHost 'Microsoft.CognitiveServices/accounts/capabilityHosts@2025-04-01-preview' = if (createAccountCapabilityHost) {
   name: 'capHost'
   parent: foundry
   properties: {
@@ -189,23 +222,24 @@ resource project_connection_azureai_search 'Microsoft.CognitiveServices/accounts
   }
 }
 
-output project_name string = foundry_project.name
-output project_id string = foundry_project.id
-output projectConnectionString string = 'https://${foundry_name}.services.ai.azure.com/api/projects/${project_name}'
-output isAiResourceValid bool = isAiResourceValid
+output FOUNDRY_PROJECT_NAME string = foundry_project.name
+output FOUNDRY_PROJECT_ID string = foundry_project.id
+output FOUNDRY_PROJECT_CONNECTION_STRING string = 'https://${foundry_name}.services.ai.azure.com/api/projects/${project_name}'
+output FOUNDRY_CAPABILITYHOST_NAME string? = accountCapabilityHost.?name
 
 // return the BYO connection names
-output cosmosDBConnection string = empty(cosmosDBName) ? '' : project_connection_cosmosdb_account.name
-output capabilityHostName string = accountCapabilityHost.name
-output azureStorageConnection string = empty(azureStorageName) ? '' : project_connection_azure_storage.name
-output aiSearchConnection string = empty(aiSearchName) ? '' : project_connection_azureai_search.name
-output aiFoundryConnectionName string = empty(existingAiResourceId)
+output FOUNDRY_PROJECT_CONNECTION_NAME_COSMOSDB string = empty(cosmosDBName) ? '' : project_connection_cosmosdb_account.name
+output FOUNDRY_PROJECT_CONNECTION_NAME_STORAGE string = empty(azureStorageName) ? '' : project_connection_azure_storage.name
+output FOUNDRY_PROJECT_CONNECTION_NAME_AI_SEARCH string = empty(aiSearchName) ? '' : project_connection_azureai_search.name
+output FOUNDRY_PROJECT_CONNECTION_NAME_AI string = empty(existingAiResourceId)
   ? ''
   : usingFoundryAiConnection ? byoAiFoundryConnectionName : byoAiProjectConnectionName
 
 #disable-next-line BCP053
-output projectWorkspaceId string = foundry_project.properties.internalId
-
-output accountPrincipalId string = empty(managedIdentityId)
+output FOUNDRY_PROJECT_WORKSPACE_ID string = foundry_project.properties.internalId
+output FOUNDRY_PROJECT_PRINCIPAL_ID string = empty(managedIdentityResourceId)
   ? foundry_project.identity.principalId
   : identity!.properties.principalId
+
+@description('Flag that checks if external AI resource is valid for the project.')
+output FOUNDRY_PROJECT_EXTERNAL_AI_VALID bool = isAiResourceValid

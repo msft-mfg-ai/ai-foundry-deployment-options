@@ -1,0 +1,22 @@
+name: 'Bicep: option_ai-gateway-openrouter'
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'options-infra/option_ai-gateway-openrouter/main.bicep'
+      - 'options-infra/modules/**'
+      - '.github/workflows/bicep-validate-reusable.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'options-infra/option_ai-gateway-openrouter/main.bicep'
+      - 'options-infra/modules/**'
+      - '.github/workflows/bicep-validate-reusable.yml'
+
+jobs:
+  validate:
+    uses: ./.github/workflows/bicep-validate-reusable.yml
+    with:
+      bicep-file: main.bicep
+      working-directory: options-infra/option_ai-gateway-openrouter

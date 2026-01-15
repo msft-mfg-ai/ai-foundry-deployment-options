@@ -7,7 +7,7 @@ param existingLogAnalyticsSubId string = subscription().subscriptionId
 param existingApplicationInsightsName string = ''
 param existingApplicationInsightsRgName string = resourceGroup().name
 param existingApplicationInsightsSubId string = subscription().subscriptionId
-param managedIdentityId string = ''
+param managedIdentityResourceId string = ''
 
 param location string = resourceGroup().location
 param tags object = {}
@@ -25,11 +25,11 @@ var monitoringMetricsPublisherId = '3913510d-42f4-4e42-8a64-420c390055eb'
 
 // --------------------------------------------------------------------------------------------------------------
 // split managed identity resource ID to get the name
-var identityParts = split(managedIdentityId, '/')
+var identityParts = split(managedIdentityResourceId, '/')
 // get the name of the managed identity
 var managedIdentityName = length(identityParts) > 0 ? identityParts[length(identityParts) - 1] : ''
 
-resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-07-31-preview' existing = if (!empty(managedIdentityId)) {
+resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-07-31-preview' existing = if (!empty(managedIdentityResourceId)) {
   name: managedIdentityName
 }
 
@@ -52,6 +52,7 @@ resource newLogAnalyticsResource 'Microsoft.OperationalInsights/workspaces@2023-
     retentionInDays: 30
     features: {
       searchVersion: 1
+      // this is required for ACA logging
       disableLocalAuth: false
     }
     sku: {
@@ -72,7 +73,8 @@ resource newApplicationInsightsResource 'Microsoft.Insights/components@2020-02-0
     WorkspaceResourceId: newLogAnalyticsResource.id
     publicNetworkAccessForIngestion: publicNetworkAccessForIngestion
     publicNetworkAccessForQuery: publicNetworkAccessForQuery
-    DisableLocalAuth: true
+    // enable local auth for APIM integration
+    DisableLocalAuth: false
   }
 }
 
@@ -102,7 +104,7 @@ module azureMonitorPrivateLinkScopePrivateEndpoint '../networking/private-endpoi
 //   }
 // }
 
-resource roleAssignmentAppInsightsNew 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(managedIdentityId) && !useExistingAppInsights) {
+resource roleAssignmentAppInsightsNew 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(managedIdentityResourceId) && !useExistingAppInsights) {
   name: guid(subscription().id, newApplicationInsightsResource.id, identity.id, 'Monitoring Metrics Publisher')
   scope: newApplicationInsightsResource
   properties: {
@@ -112,18 +114,22 @@ resource roleAssignmentAppInsightsNew 'Microsoft.Authorization/roleAssignments@2
   }
 }
 
-output applicationInsightsId string = useExistingAppInsights
-  ? existingApplicationInsightsResource.id
-  : newApplicationInsightsResource.id
-output applicationInsightsName string = useExistingAppInsights
-  ? existingApplicationInsightsResource.name
-  : newApplicationInsightsResource.name
-output logAnalyticsWorkspaceId string = useExistingLogAnalytics
+
+output LOG_ANALYTICS_WORKSPACE_RESOURCE_ID string = useExistingLogAnalytics
   ? existingLogAnalyticsResource.id
   : newLogAnalyticsResource.id
-output logAnalyticsWorkspaceName string = useExistingLogAnalytics
+output LOG_ANALYTICS_WORKSPACE_NAME string = useExistingLogAnalytics
   ? existingLogAnalyticsResource.name
   : newLogAnalyticsResource.name
-output appInsightsConnectionString string = useExistingAppInsights
+output APPLICATION_INSIGHTS_RESOURCE_ID string = useExistingAppInsights
+  ? existingApplicationInsightsResource.id
+  : newApplicationInsightsResource.id
+output APPLICATION_INSIGHTS_NAME string = useExistingAppInsights
+  ? existingApplicationInsightsResource.name
+  : newApplicationInsightsResource.name
+output APPLICATION_INSIGHTS_CONNECTION_STRING string = useExistingAppInsights
   ? existingApplicationInsightsResource.?properties.ConnectionString ?? ''
   : newApplicationInsightsResource.?properties.ConnectionString ?? ''
+output APPLICATION_INSIGHTS_INSTRUMENTATION_KEY string = useExistingAppInsights
+  ? existingApplicationInsightsResource.?properties.InstrumentationKey ?? ''
+  : newApplicationInsightsResource.?properties.InstrumentationKey ?? ''

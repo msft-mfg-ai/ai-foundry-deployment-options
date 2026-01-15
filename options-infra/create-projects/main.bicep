@@ -55,7 +55,7 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
       projectId: i
       aiDependencies: aiDependencies
       existingAiResourceId: null // can provide existing AI resource in the same region
-      managedIdentityId: null // can provide user-assigned identity here
+      managedIdentityResourceId: null // can provide user-assigned identity here
     }
   }
 ]

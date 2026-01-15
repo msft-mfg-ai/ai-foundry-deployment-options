@@ -13,7 +13,7 @@ param tags object = {}
 var backendAcaHostname = replace(replace(backendAcaEndpointFqdn, 'https://', ''), 'http://', '')
 var frontendAcaHostname = replace(replace(frontendAcaEndpointFqdn, 'https://', ''), 'http://', '')
 
-module frontDoorWebApplicationFirewallPolicy 'br/public:avm/res/network/front-door-web-application-firewall-policy:0.3.2' = {
+module frontDoorWebApplicationFirewallPolicy 'br/public:avm/res/network/front-door-web-application-firewall-policy:0.3.3' = {
   name: 'frontDoorWebApplicationFirewallPolicyDeployment'
   params: {
     // Required parameters

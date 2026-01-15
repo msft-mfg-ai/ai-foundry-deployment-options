@@ -3,8 +3,18 @@
 @description('Name of the AI Search resource')
 param aiSearchName string
 
-@description('Principal ID of the AI project')
-param projectPrincipalId string
+@description('Principal ID - e.g of the AI project')
+param principalId string
+
+@description('Principal Type')
+@allowed([
+  'User'
+  'Group'
+  'ServicePrincipal'
+  'ForeignGroup'
+  'Device'
+])
+param principalType string = 'ServicePrincipal'
 
 resource searchService 'Microsoft.Search/searchServices@2024-06-01-preview' existing = {
   name: aiSearchName
@@ -19,11 +29,11 @@ resource searchIndexDataContributorRole 'Microsoft.Authorization/roleDefinitions
 
 resource searchIndexDataContributorAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: searchService
-  name: guid(projectPrincipalId, searchIndexDataContributorRole.id, searchService.id)
+  name: guid(principalId, searchIndexDataContributorRole.id, searchService.id)
   properties: {
-    principalId: projectPrincipalId
+    principalId: principalId
     roleDefinitionId: searchIndexDataContributorRole.id
-    principalType: 'ServicePrincipal'
+    principalType: principalType
   }
 }
 
@@ -34,10 +44,10 @@ resource searchServiceContributorRole 'Microsoft.Authorization/roleDefinitions@2
 
 resource searchServiceContributorRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: searchService
-  name: guid(projectPrincipalId, searchServiceContributorRole.id, searchService.id)
+  name: guid(principalId, searchServiceContributorRole.id, searchService.id)
   properties: {
-    principalId: projectPrincipalId
+    principalId: principalId
     roleDefinitionId: searchServiceContributorRole.id
-    principalType: 'ServicePrincipal'
+    principalType: principalType
   }
 }

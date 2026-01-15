@@ -27,7 +27,7 @@ param gatewayName string = 'example-gateway'
 
 // Connection configuration (ModelGateway only supports ApiKey)
 param authType string = 'ApiKey'
-param isSharedToAll bool = false
+param isSharedToAll bool = true
 
 // Connection naming - can be overridden via parameter
 param connectionName string = ''  // Optional: specify custom connection name
@@ -74,7 +74,7 @@ var modelGatewayMetadata = {
 
 // Use the common module to create the ModelGateway connection
 module modelGatewayConnection 'modelgateway-connection-common.bicep' = {
-  name: 'modelgateway-connection-dynamic'
+  name: '${finalConnectionName}-deployment'
   params: {
     aiFoundryName: aiFoundryName
     connectionName: finalConnectionName

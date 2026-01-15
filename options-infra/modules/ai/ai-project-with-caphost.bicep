@@ -1,5 +1,6 @@
 import * as types from '../types/types.bicep'
 
+param tags object = {}
 param aiDependencies types.aiDependenciesType
 param existingAiResourceId string?
 @allowed([
@@ -7,30 +8,30 @@ param existingAiResourceId string?
   'AIServices'
 ])
 param existingAiResourceKind string = 'AIServices'
-param location string
+param location string = resourceGroup().location
 param foundryName string
-param managedIdentityId string? // Use System Assigned Identity
+param managedIdentityResourceId string? // Use System Assigned Identity
 
 param projectId int = 1
 param project_name string = 'ai-project-${projectId}'
 param project_description string = 'AI Project ${projectId}'
 param display_name string = 'AI Project ${projectId}'
 
-resource foundry 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' existing = {
-  name: foundryName
-}
+param appInsightsResourceId string?
 
 module aiProject './ai-project.bicep' = {
   name: 'deployment-for-${project_name}'
   params: {
+    tags: tags
     foundry_name: foundryName
     location: location
     project_name: project_name
     project_description: project_description
     display_name: display_name
-    managedIdentityId: managedIdentityId // Use System Assigned Identity
+    managedIdentityResourceId: managedIdentityResourceId // Use System Assigned Identity
     existingAiResourceId: existingAiResourceId
     existingAiKind: existingAiResourceKind
+    appInsightsResourceId: appInsightsResourceId
 
     aiSearchName: aiDependencies.aiSearch.name
     aiSearchServiceResourceGroupName: aiDependencies.aiSearch.resourceGroupName
@@ -49,7 +50,7 @@ module aiProject './ai-project.bicep' = {
 module formatProjectWorkspaceId '../ai/format-project-workspace-id.bicep' = {
   name: 'format-${project_name}-workspace-id-deployment'
   params: {
-    projectWorkspaceId: aiProject.outputs.projectWorkspaceId
+    projectWorkspaceId: aiProject.outputs.FOUNDRY_PROJECT_WORKSPACE_ID
   }
 }
 
@@ -60,7 +61,7 @@ module storageAccountRoleAssignment '../iam/azure-storage-account-role-assignmen
   scope: resourceGroup(aiDependencies.azureStorage.subscriptionId, aiDependencies.azureStorage.resourceGroupName)
   params: {
     azureStorageName: aiDependencies.azureStorage.name
-    projectPrincipalId: aiProject.outputs.accountPrincipalId
+    projectPrincipalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
   }
 }
 
@@ -70,7 +71,7 @@ module cosmosAccountRoleAssignments '../iam/cosmosdb-account-role-assignment.bic
   scope: resourceGroup(aiDependencies.cosmosDB.subscriptionId, aiDependencies.cosmosDB.resourceGroupName)
   params: {
     cosmosDBName: aiDependencies.cosmosDB.name
-    projectPrincipalId: aiProject.outputs.accountPrincipalId
+    projectPrincipalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
   }
 }
 
@@ -80,7 +81,7 @@ module aiSearchRoleAssignments '../iam/ai-search-role-assignments.bicep' = {
   scope: resourceGroup(aiDependencies.aiSearch.subscriptionId, aiDependencies.aiSearch.resourceGroupName)
   params: {
     aiSearchName: aiDependencies.aiSearch.name
-    projectPrincipalId: aiProject.outputs.accountPrincipalId
+    principalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
   }
 }
 
@@ -89,11 +90,11 @@ module addProjectCapabilityHost 'add-project-capability-host.bicep' = {
   name: 'capabilityHost-configuration-deployment-${project_name}'
   params: {
     accountName: foundryName
-    projectName: aiProject.outputs.project_name
-    cosmosDBConnection: aiProject.outputs.cosmosDBConnection
-    azureStorageConnection: aiProject.outputs.azureStorageConnection
-    aiSearchConnection: aiProject.outputs.aiSearchConnection
-    aiFoundryConnectionName: aiProject.outputs.aiFoundryConnectionName
+    projectName: aiProject.outputs.FOUNDRY_PROJECT_NAME
+    cosmosDBConnection: aiProject.outputs.FOUNDRY_PROJECT_CONNECTION_NAME_COSMOSDB
+    azureStorageConnection: aiProject.outputs.FOUNDRY_PROJECT_CONNECTION_NAME_STORAGE
+    aiSearchConnection: aiProject.outputs.FOUNDRY_PROJECT_CONNECTION_NAME_AI_SEARCH
+    aiFoundryConnectionName: aiProject.outputs.FOUNDRY_PROJECT_CONNECTION_NAME_AI
   }
   dependsOn: [
     cosmosAccountRoleAssignments
@@ -107,9 +108,9 @@ module storageContainersRoleAssignment '../iam/blob-storage-container-role-assig
   name: 'storage-containers-deployment-${project_name}'
   scope: resourceGroup(aiDependencies.azureStorage.subscriptionId, aiDependencies.azureStorage.resourceGroupName)
   params: {
-    aiProjectPrincipalId: aiProject.outputs.accountPrincipalId
+    aiProjectPrincipalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
     storageName: aiDependencies.azureStorage.name
-    workspaceId: formatProjectWorkspaceId.outputs.projectWorkspaceIdGuid
+    workspaceId: formatProjectWorkspaceId.outputs.FOUNDRY_PROJECT_WORKSPACE_ID
   }
   dependsOn: [
     addProjectCapabilityHost
@@ -122,8 +123,8 @@ module cosmosContainerRoleAssignments '../iam/cosmos-container-role-assignments.
   scope: resourceGroup(aiDependencies.cosmosDB.subscriptionId, aiDependencies.cosmosDB.resourceGroupName)
   params: {
     cosmosAccountName: aiDependencies.cosmosDB.name
-    projectWorkspaceId: formatProjectWorkspaceId.outputs.projectWorkspaceIdGuid
-    projectPrincipalId: aiProject.outputs.accountPrincipalId
+    projectWorkspaceId: formatProjectWorkspaceId.outputs.FOUNDRY_PROJECT_WORKSPACE_ID
+    projectPrincipalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
   }
   dependsOn: [
     addProjectCapabilityHost
@@ -131,7 +132,5 @@ module cosmosContainerRoleAssignments '../iam/cosmos-container-role-assignments.
   ]
 }
 
-output capabilityHostUrl string = 'https://portal.azure.com/#/resource/${aiProject.outputs.project_id}/capabilityHosts/${addProjectCapabilityHost.outputs.capabilityHostName}/overview'
-output aiConnectionUrl string = 'https://portal.azure.com/#/resource/${foundry.id}/connections/${aiProject.outputs.aiFoundryConnectionName}/overview'
-output foundry_connection_string string = aiProject.outputs.projectConnectionString
-output projectName string = aiProject.outputs.project_name
+output FOUNDRY_PROJECT_CONNECTION_STRING string = aiProject.outputs.FOUNDRY_PROJECT_CONNECTION_STRING
+output FOUNDRY_PROJECT_NAME string = aiProject.outputs.FOUNDRY_PROJECT_NAME

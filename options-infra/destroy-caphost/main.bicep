@@ -76,7 +76,7 @@ resource AzureAIProjectManagerRoleAssignment 'Microsoft.Authorization/roleAssign
   scope: project
   name: guid('script-identity', AzureAIProjectManagerRole.id, project.id)
   properties: {
-    principalId: identity.outputs.managedIdentityPrincipalId
+    principalId: identity.outputs.MANAGED_IDENTITY_PRINCIPAL_ID
     roleDefinitionId: AzureAIProjectManagerRole.id
     principalType: 'ServicePrincipal'
   }
@@ -88,8 +88,8 @@ module deleteCaphost '../modules/ai/delete-caphost.bicep' = {
     foundryName: foundryName
     projectName: projectName
     location: location
-    scriptUserAssignedIdentityResourceId: identity.outputs.managedIdentityId
-    scriptUserAssignedIdentityPrincipalId: identity.outputs.managedIdentityPrincipalId
+    scriptUserAssignedIdentityResourceId: identity.outputs.MANAGED_IDENTITY_RESOURCE_ID
+    scriptUserAssignedIdentityPrincipalId: identity.outputs.MANAGED_IDENTITY_PRINCIPAL_ID
   }
 }
 
@@ -104,7 +104,7 @@ module projectUpdate '../modules/ai/ai-project-with-caphost.bicep' = {
     display_name: project.properties.displayName
     aiDependencies: aiDependencies
     existingAiResourceId: null // can provide existing AI resource in the same region
-    managedIdentityId: null // can provide user-assigned identity here
+    managedIdentityResourceId: null // can provide user-assigned identity here
   }
   dependsOn: [
     deleteCaphost

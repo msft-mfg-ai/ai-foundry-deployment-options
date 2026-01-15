@@ -91,5 +91,5 @@ module vault 'br/public:avm/res/key-vault/vault:0.13.3' = {
   }
 }
 
-output AZURE_RESOURCE_KEY_VAULT_ID string = vault.outputs.resourceId
-output AZURE_RESOURCE_KEY_VAULT_NAME string = vault.outputs.name
+output KEY_VAULT_ID string = vault.outputs.resourceId
+output KEY_VAULT_NAME string = vault.outputs.name

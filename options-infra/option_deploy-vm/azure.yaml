@@ -5,3 +5,30 @@ infra:
   provider: bicep
   path: .
   module: main
+
+hooks:
+  postup:
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host "=========================================="
+        Write-Host "VM deployed successfully!"
+        Write-Host "=========================================="
+        Write-Host ""
+        Write-Host "Configure JIT access in Azure Portal, then Connect to the VM using:"
+        Write-Host "  $env:SSH_COMMAND"
+        Write-Host ""
+      interactive: true
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        echo "=========================================="
+        echo "VM deployed successfully!"
+        echo "=========================================="
+        echo ""
+        echo "Configure JIT access in Azure Portal, then Connect to the VM using:"
+        echo "  ${SSH_COMMAND}"
+        echo ""
+      interactive: true
+      continueOnError: false

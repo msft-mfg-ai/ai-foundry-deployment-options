@@ -35,10 +35,9 @@ module identity './modules/iam/identity.bicep' = {
 module foundry './modules/ai/ai-foundry.bicep' = {
   name: 'foundry'
   params: {
-    managedIdentityId: identity.outputs.managedIdentityId
+    managedIdentityResourceId: identity.outputs.MANAGED_IDENTITY_RESOURCE_ID
     name: 'ai-foundry-${resourceToken}'
     location: location
-    appInsightsId: logAnalytics.outputs.applicationInsightsId
     publicNetworkAccess: 'Enabled'
   }
 }
@@ -46,16 +45,17 @@ module foundry './modules/ai/ai-foundry.bicep' = {
 module aiProject './modules/ai/ai-project.bicep' = {
   name: 'ai-project'
   params: {
-    foundry_name: foundry.outputs.name
+    foundry_name: foundry.outputs.FOUNDRY_NAME
     location: location
     project_name: 'ai-project1'
     project_description: 'AI Project with existing, external AI resource ${existingAiResourceId}'
     display_name: 'AI Project with ${existingAiResourceKind}'
-    managedIdentityId: identity.outputs.managedIdentityId
+    managedIdentityResourceId: identity.outputs.MANAGED_IDENTITY_RESOURCE_ID
     existingAiResourceId: existingAiResourceId
     existingAiKind: existingAiResourceKind
     usingFoundryAiConnection: true // Use the AI Foundry connection for the project
-    createHubCapabilityHost: true
+    createAccountCapabilityHost: true
+    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
   }
 }
 
@@ -63,15 +63,13 @@ module aiProject './modules/ai/ai-project.bicep' = {
 module addProjectCapabilityHost 'modules/ai/add-project-capability-host.bicep' = {
   name: 'capabilityHost-configuration-deployment'
   params: {
-    accountName: foundry.outputs.name
-    projectName: aiProject.outputs.project_name
-    cosmosDBConnection: aiProject.outputs.cosmosDBConnection
-    azureStorageConnection: aiProject.outputs.azureStorageConnection
-    aiSearchConnection: aiProject.outputs.aiSearchConnection
-    aiFoundryConnectionName: aiProject.outputs.aiFoundryConnectionName
+    accountName: foundry.outputs.FOUNDRY_NAME
+    projectName: aiProject.outputs.FOUNDRY_PROJECT_NAME
+    cosmosDBConnection: aiProject.outputs.FOUNDRY_PROJECT_CONNECTION_NAME_COSMOSDB
+    azureStorageConnection: aiProject.outputs.FOUNDRY_PROJECT_CONNECTION_NAME_STORAGE
+    aiSearchConnection: aiProject.outputs.FOUNDRY_PROJECT_CONNECTION_NAME_AI_SEARCH
+    aiFoundryConnectionName: aiProject.outputs.FOUNDRY_PROJECT_CONNECTION_NAME_AI
   }
 }
 
-output capabilityHostUrl string = 'https://portal.azure.com/#/resource/${aiProject.outputs.project_id}/capabilityHosts/${addProjectCapabilityHost.outputs.capabilityHostName}/overview'
-output aiConnectionUrl string = 'https://portal.azure.com/#/resource/${foundry.outputs.id}/connections/${aiProject.outputs.aiFoundryConnectionName}/overview'
-output foundry_connection_string string = aiProject.outputs.projectConnectionString
+output FOUNDRY_PROJECT_CONNECTION_STRING string = aiProject.outputs.FOUNDRY_PROJECT_CONNECTION_STRING

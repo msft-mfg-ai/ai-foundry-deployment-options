@@ -78,7 +78,7 @@ module dns_zones '../modules/networking/dns-zones.bicep' = {
   name: 'dns-zones-deployment'
   scope: rg_central
   params: {
-    vnetResourceIds: [privateDns.outputs.virtualNetworkId]
+    vnetResourceIds: [privateDns.outputs.VIRTUAL_NETWORK_RESOURCE_ID]
   }
 }
 
@@ -86,11 +86,11 @@ module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
   name: 'ai-dependencies-with-dns'
   scope: rg_foundry
   params: {
-    peSubnetName: vnet.outputs.peSubnetName
-    vnetResourceId: vnet.outputs.virtualNetworkId
+    peSubnetName: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.name
+    vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     resourceToken: resourceToken
-    aiServicesName: foundry.outputs.name
-    aiAccountNameResourceGroupName: foundry.outputs.resourceGroupName
+    aiServicesName: foundry.outputs.FOUNDRY_NAME
+    aiAccountNameResourceGroupName: foundry.outputs.FOUNDRY_RESOURCE_GROUP_NAME
   }
 }
 // --------------------------------------------------------------------------------------------------------------
@@ -110,12 +110,11 @@ module foundry '../modules/ai/ai-foundry.bicep' = {
   scope: rg_foundry
   name: 'foundry-app-1-deployment'
   params: {
-    managedIdentityId: '' // Use System Assigned Identity
+    managedIdentityResourceId: '' // Use System Assigned Identity
     name: 'ai-foundry-${resourceToken}'
     location: location
-    appInsightsId: logAnalytics.outputs.applicationInsightsId
     publicNetworkAccess: 'Disabled'
-    agentSubnetId: vnet.outputs.agentSubnetId // Use the first agent subnet
+    agentSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId // Use the first agent subnet
     deployments: [
       {
         name: 'gpt-4.1-mini'
@@ -139,29 +138,29 @@ module foundry_pe '../modules/networking/ai-pe-dns.bicep' = {
   name: 'foundry-pe-dns'
   scope: rg_central
   params: {
-    aiAccountName: foundry.outputs.name
-    aiAccountNameResourceGroup: foundry.outputs.resourceGroupName
-    aiAccountSubscriptionId: foundry.outputs.subscriptionId
-    peSubnetId: privateDns.outputs.peSubnetId
-    vnetId: privateDns.outputs.virtualNetworkId
+    aiAccountName: foundry.outputs.FOUNDRY_NAME
+    aiAccountNameResourceGroup: foundry.outputs.FOUNDRY_RESOURCE_GROUP_NAME
+    aiAccountSubscriptionId: foundry.outputs.FOUNDRY_SUBSCRIPTION_ID
+    peSubnetId: privateDns.outputs.VIRTUAL_NETWORK_SUBNET_PE_RESOURCE_ID
+    vnetId: privateDns.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     resourceToken: resourceToken
-    existingDnsZones: dns_zones.outputs.DNSZones
+    existingDnsZones: dns_zones.outputs.DNS_ZONES
   }
-  dependsOn: [dns_zones]
 }
 
 module project1 '../modules/ai/ai-project-with-caphost.bicep' = {
   name: 'ai-project-1-with-caphost-${resourceToken}'
   scope: rg_foundry
   params: {
-    foundryName: foundry.outputs.name
+    foundryName: foundry.outputs.FOUNDRY_NAME
     location: location
     projectId: 1
-    aiDependencies: ai_dependencies.outputs.aiDependencies
+    aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
+    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
   }
 }
 
-module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.20.0' = {
+module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.21.0' = {
   name: 'virtualMachineDeployment'
   scope: rg_central
   params: {
@@ -187,7 +186,7 @@ module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.20.0' = {
         ipConfigurations: [
           {
             name: 'ipconfig01'
-            subnetResourceId: privateDns.outputs.peSubnetId
+            subnetResourceId: privateDns.outputs.VIRTUAL_NETWORK_SUBNET_PE_RESOURCE_ID
             pipConfiguration: {
               availabilityZones: []
               skuName: 'Basic'
@@ -220,6 +219,4 @@ module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.20.0' = {
   }
 }
 
-output capability1HostUrl string = project1.outputs.capabilityHostUrl
-output ai1ConnectionUrl string = project1.outputs.aiConnectionUrl
-output foundry1_connection_string string = project1.outputs.foundry_connection_string
+output foundry1_connection_string string = project1.outputs.FOUNDRY_PROJECT_CONNECTION_STRING

@@ -68,8 +68,8 @@ module ai_dependencies './modules/ai/ai-dependencies-with-dns.bicep' = {
   name: 'ai-dependencies-with-dns'
   scope: foundryDependenciesResourceGroup
   params: {
-    peSubnetName: vnet.outputs.peSubnetName
-    vnetResourceId: vnet.outputs.virtualNetworkId
+    peSubnetName: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.name
+    vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     resourceToken: resourceToken
     aiServicesName: '' // create AI serviced PE later
     aiAccountNameResourceGroupName: ''
@@ -82,8 +82,8 @@ module app1 'modules/app/app-rg.bicep' = {
   params: {
     location: location
     appName: app1Name
-    agentSubnetId: vnet.outputs.extraAgentSubnetIds[0] // Use the first agent subnet
-    aiDependencies: ai_dependencies.outputs.aiDependencies
+    agentSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.extraAgentSubnets[0].resourceId // Use the first agent subnet
+    aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
     existingAiResourceId: existingAiResourceId
     existingAiResourceKind: existingAiResourceKind
   }
@@ -95,8 +95,8 @@ module app2 'modules/app/app-rg.bicep' = if(deployApp2) {
   params: {
     location: location
     appName: app2Name
-    agentSubnetId: vnet.outputs.extraAgentSubnetIds[1] // Use the second agent subnet
-    aiDependencies: ai_dependencies.outputs.aiDependencies
+    agentSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.extraAgentSubnets[1].resourceId // Use the second agent subnet
+    aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
     existingAiResourceId: existingAiResourceId
     existingAiResourceKind: existingAiResourceKind
   }
@@ -106,12 +106,12 @@ module ai1_private_endpoint 'modules/networking/ai-pe-dns.bicep' = {
   name: '${app1Name}-ai-private-endpoint'
   scope: foundryDependenciesResourceGroup
   params: {
-    aiAccountName: app1.outputs.aiAccountName
+    aiAccountName: app1.outputs.FOUNDRY_NAME
     aiAccountNameResourceGroup: app1ResourceGroup.name
-    peSubnetId: vnet.outputs.peSubnetId
+    peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
     resourceToken: resourceToken
-    vnetId: vnet.outputs.virtualNetworkId
-    existingDnsZones: ai_dependencies.outputs.DNSZones
+    vnetId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
+    existingDnsZones: ai_dependencies.outputs.DNS_ZONES
   }
 }
 
@@ -119,18 +119,14 @@ module ai2_private_endpoint 'modules/networking/ai-pe-dns.bicep' = if(deployApp2
   name: '${app2Name}-ai-private-endpoint'
   scope: foundryDependenciesResourceGroup
   params: {
-    aiAccountName: app2!.outputs.aiAccountName
+    aiAccountName: app2!.outputs.FOUNDRY_NAME
     aiAccountNameResourceGroup: app2ResourceGroup.name
-    peSubnetId: vnet.outputs.peSubnetId
+    peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
     resourceToken: resourceToken
-    vnetId: vnet.outputs.virtualNetworkId
-    existingDnsZones: ai_dependencies.outputs.DNSZones
+    vnetId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
+    existingDnsZones: ai_dependencies.outputs.DNS_ZONES
   }
 }
 
-output capability1HostUrl string = app1.outputs.capabilityHostUrl
-output capability2HostUrl string = deployApp2 ? app2!.outputs.capabilityHostUrl : ''
-output ai1ConnectionUrl string = app1.outputs.aiConnectionUrl
-output ai2ConnectionUrl string = deployApp2 ? app2!.outputs.aiConnectionUrl : ''
-output foundry1_connection_string string = app1.outputs.projectConnectionString
-output foundry2_connection_string string = deployApp2 ? app2!.outputs.projectConnectionString : ''
+output foundry1_connection_string string = app1.outputs.FOUNDRY_PROJECT_CONNECTION_STRING
+output foundry2_connection_string string = deployApp2 ? app2!.outputs.FOUNDRY_PROJECT_CONNECTION_STRING : ''

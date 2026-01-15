@@ -23,7 +23,7 @@ module vnet './modules/networking/vnet.bicep' = {
     vnetName: 'project-vnet-${resourceToken}'
     location: location
     vnetAddressPrefix: '172.17.0.0/22'
-    customDNS: privateDns.outputs.privateDnsIp
+    customDNS: privateDns.outputs.PRIVATE_DNS_IP
   }
 }
 
@@ -38,8 +38,8 @@ module privateDns './modules/private-dns/private-dns.bicep' = {
 module ai_dependencies './modules/ai/ai-dependencies-with-dns.bicep' = {
   name: 'ai-dependencies-with-dns'
   params: {
-    peSubnetName: privateDns.outputs.peSubnetName
-    vnetResourceId: privateDns.outputs.virtualNetworkId
+    peSubnetName: privateDns.outputs.VIRTUAL_NETWORK_SUBNET_PE_NAME
+    vnetResourceId: privateDns.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     resourceToken: resourceToken
     aiServicesName: '' // create AI serviced PE later
     aiAccountNameResourceGroupName: ''
@@ -61,12 +61,11 @@ module logAnalytics './modules/monitor/loganalytics.bicep' = {
 module foundry './modules/ai/ai-foundry.bicep' = {
   name: 'foundry-deployment'
   params: {
-    managedIdentityId: '' // Use System Assigned Identity
+    managedIdentityResourceId: '' // Use System Assigned Identity
     name: 'ai-foundry-${resourceToken}'
     location: location
-    appInsightsId: logAnalytics.outputs.applicationInsightsId
     publicNetworkAccess: 'Enabled'
-    agentSubnetId: vnet.outputs.agentSubnetId // Use the first agent subnet
+    agentSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId // Use the first agent subnet
     deployments: [
       {
         name: 'gpt-4.1-mini'
@@ -89,14 +88,15 @@ module foundry './modules/ai/ai-foundry.bicep' = {
 module project1 './modules/ai/ai-project-with-caphost.bicep' = {
   name: 'ai-project-1-with-caphost-${resourceToken}'
   params: {
-    foundryName: foundry.outputs.name
+    foundryName: foundry.outputs.FOUNDRY_NAME
     location: location
     projectId: 1
-    aiDependencies: ai_dependencies.outputs.aiDependencies
+    aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
+    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
   }
 }
 
-module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.18.0' = {
+module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.21.0' = {
   name: 'virtualMachineDeployment'
   params: {
     // Required parameters
@@ -120,7 +120,7 @@ module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.18.0' = {
         ipConfigurations: [
           {
             name: 'ipconfig01'
-            subnetResourceId: vnet.outputs.peSubnetId
+            subnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
             pipConfiguration: {
               publicIpNameSuffix: '-pip-01'
             }
@@ -150,6 +150,4 @@ module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.18.0' = {
   }
 }
 
-output capability1HostUrl string = project1.outputs.capabilityHostUrl
-output ai1ConnectionUrl string = project1.outputs.aiConnectionUrl
-output foundry1_connection_string string = project1.outputs.foundry_connection_string
+output FOUNDRY_PROJECT_CONNECTION_STRING string = project1.outputs.FOUNDRY_PROJECT_CONNECTION_STRING

@@ -3,7 +3,7 @@
 param name string
 param location string
 param artifactUrl string // URL to zip file with function code
-param managedIdentityId string
+param managedIdentityResourceId string
 param resourceToken string
 param logAnalyticsWorkspaceResourceId string
 param applicationInsightResourceId string
@@ -11,7 +11,7 @@ param privateEndpointSubnetResourceId string = ''
 
 // --------------------------------------------------------------------------------------------------------------
 // split managed identity resource ID to get the name
-var identityParts = split(managedIdentityId, '/')
+var identityParts = split(managedIdentityResourceId, '/')
 // get the name of the managed identity
 var managedIdentityName = length(identityParts) > 0 ? identityParts[length(identityParts) - 1] : ''
 
@@ -19,7 +19,7 @@ resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-07-31-p
   name: managedIdentityName
 }
 
-module virtualNetworkDeployment 'br/public:avm/res/network/virtual-network:0.7.0' = {
+module virtualNetworkDeployment 'br/public:avm/res/network/virtual-network:0.7.2' = {
   name: 'virtual-network-deployment'
   params: {
     addressPrefixes: ['10.0.0.0/16']
@@ -44,7 +44,7 @@ module virtualNetworkDeployment 'br/public:avm/res/network/virtual-network:0.7.0
 }
 
 // Storage Account for the Function App
-module storageAccount 'br/public:avm/res/storage/storage-account:0.25.1' = {
+module storageAccount 'br/public:avm/res/storage/storage-account:0.31.0' = {
   name: 'storageAccount'
   params: {
     name: take('funstor${resourceToken}', 24)
@@ -187,7 +187,7 @@ var storageZones = [
   }
 ]
 
-module storagePrivateDns 'br/public:avm/res/network/private-dns-zone:0.7.1' = [
+module storagePrivateDns 'br/public:avm/res/network/private-dns-zone:0.8.0' = [
   for zone in storageZones: {
     name: 'privateDnsZoneDeployment-${zone.name}'
     params: {
@@ -235,7 +235,7 @@ resource serverfarmForFunctions 'Microsoft.Web/serverfarms@2023-12-01' = {
   }
 }
 
-module func 'br/public:avm/res/web/site:0.19.0' = {
+module func 'br/public:avm/res/web/site:0.20.0' = {
   name: 'function-deployment'
   params: {
     location: location
@@ -243,7 +243,7 @@ module func 'br/public:avm/res/web/site:0.19.0' = {
     kind: 'functionapp'
     name: 'fun-${name}-${resourceToken}'
     serverFarmResourceId: serverfarmForFunctions.id
-    managedIdentities: { userAssignedResourceIds: [managedIdentityId] }
+    managedIdentities: { userAssignedResourceIds: [managedIdentityResourceId] }
     publicNetworkAccess: 'Disabled'
     virtualNetworkSubnetResourceId: virtualNetworkDeployment.outputs.subnetResourceIds[0] // Use the first subnet for Function App
     siteConfig: {
@@ -267,7 +267,7 @@ module func 'br/public:avm/res/web/site:0.19.0' = {
           AZURE_CLIENT_ID: identity.properties.clientId
           AzureWebJobsStorage__credential: 'managedidentity'
           // AzureWebJobsStorage__credentialType: 'managedidentity'
-          AzureWebJobsStorage__managedIdentityResourceId: managedIdentityId
+          AzureWebJobsStorage__managedIdentityResourceId: managedIdentityResourceId
           AzureWebJobsStorage__clientId: identity.properties.clientId
           // AzureWebJobsStorage__accountName: storageAccount.outputs.name
           SCM_DO_BUILD_DURING_DEPLOYMENT: 'true'
@@ -290,7 +290,7 @@ module func 'br/public:avm/res/web/site:0.19.0' = {
   }
 }
 
-module logicApp 'br/public:avm/res/web/site:0.19.0' = {
+module logicApp 'br/public:avm/res/web/site:0.20.0' = {
   name: 'logicAppDeployment'
   params: {
     // Required parameters
@@ -298,7 +298,7 @@ module logicApp 'br/public:avm/res/web/site:0.19.0' = {
     kind: 'functionapp,workflowapp'
     name: '${name}-${resourceToken}'
     serverFarmResourceId: serverfarmForLogicApps.id
-    managedIdentities: { userAssignedResourceIds: [managedIdentityId] }
+    managedIdentities: { userAssignedResourceIds: [managedIdentityResourceId] }
     publicNetworkAccess: 'Disabled'
     virtualNetworkSubnetResourceId: virtualNetworkDeployment.outputs.subnetResourceIds[1] // Use the second subnet for Logic Apps
     outboundVnetRouting: {
@@ -322,7 +322,7 @@ module logicApp 'br/public:avm/res/web/site:0.19.0' = {
           AZURE_CLIENT_ID: identity.properties.clientId
           AzureWebJobsStorage__credential: 'managedIdentity'
           AzureWebJobsStorage__credentialType: 'managedIdentity'
-          AzureWebJobsStorage__managedIdentityResourceId: managedIdentityId
+          AzureWebJobsStorage__managedIdentityResourceId: managedIdentityResourceId
           AzureWebJobsStorage__clientId: identity.properties.clientId
           AzureWebJobsStorage__accountName: storageAccount.outputs.name
           AzureWebJobsSecretStorageType: 'files'
@@ -346,7 +346,7 @@ module logicApp 'br/public:avm/res/web/site:0.19.0' = {
   }
 }
 
-output functionAppId string = func.outputs.resourceId
-output functionAppDefaultHostname string = func.outputs.defaultHostname
-output storageAccountName string = storageAccount.outputs.name
-output planName string = serverfarmForLogicApps.name
+output FUNCTION_APP_RESOURCE_ID string = func.outputs.resourceId
+output FUNCTION_APP_DEFAULT_HOSTNAME string = func.outputs.defaultHostname
+output STORAGE_ACCOUNT_NAME string = storageAccount.outputs.name
+output LOGIC_APP_PLAN_NAME string = serverfarmForLogicApps.name

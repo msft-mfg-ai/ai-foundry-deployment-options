@@ -1,3 +1,4 @@
 using 'main.bicep'
 
-param subnetId = readEnvironmentVariable('SUBNET_ID')
+var subnetIdValue = readEnvironmentVariable('SUBNET_ID', '')
+param subnetId = empty(subnetIdValue) ? null : subnetIdValue

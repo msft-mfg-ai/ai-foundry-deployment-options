@@ -24,6 +24,15 @@ module identity '../modules/iam/identity.bicep' = {
   }
 }
 
+module foundry_identity '../modules/iam/identity.bicep' = {
+  name: 'foundry-identity-deployment'
+  params: {
+    identityName: 'foundry-${resourceToken}-identity'
+    location: location
+  }
+}
+
+
 // vnet doesn't have to be in the same RG as the AI Services
 // each foundry needs it's own delegated subnet, projects inside of one Foundry share the subnet for the Agents Service
 module vnet '../modules/networking/vnet.bicep' = {
@@ -38,8 +47,8 @@ module vnet '../modules/networking/vnet.bicep' = {
 module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
   name: 'ai-dependencies-with-dns'
   params: {
-    peSubnetName: vnet.outputs.peSubnetName
-    vnetResourceId: vnet.outputs.virtualNetworkId
+    peSubnetName: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.name
+    vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     resourceToken: resourceToken
     aiServicesName: '' // create AI serviced PE later
     aiAccountNameResourceGroupName: ''
@@ -58,16 +67,33 @@ module logAnalytics '../modules/monitor/loganalytics.bicep' = {
   }
 }
 
+module keyVault '../modules/kv/key-vault.bicep' = {
+  name: 'key-vault-deployment-for-foundry'
+  params: {
+    tags: {}
+    location: location
+    name: take('kv-foundry-${resourceToken}', 24)
+    logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
+    doRoleAssignments: true
+    secrets: []
+
+    publicAccessEnabled: false
+    privateEndpointSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+    privateEndpointName: 'pe-kv-foundry-${resourceToken}'
+    privateDnsZoneResourceId: ai_dependencies.outputs.DNS_ZONES['privatelink.vaultcore.azure.net']!.resourceId
+  }
+}
+
 module foundry '../modules/ai/ai-foundry.bicep' = {
   name: 'foundry-deployment-${resourceToken}'
   params: {
-    managedIdentityId: '' // Use System Assigned Identity
+    managedIdentityResourceId: foundry_identity.outputs.MANAGED_IDENTITY_RESOURCE_ID
     name: 'ai-foundry-${resourceToken}'
     location: location
-    appInsightsId: logAnalytics.outputs.applicationInsightsId
     publicNetworkAccess: 'Enabled'
-    agentSubnetId: vnet.outputs.agentSubnetId // Use the first agent subnet
+    agentSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId // Use the first agent subnet
     deployments: [] // no models
+    keyVaultResourceId: keyVault.outputs.KEY_VAULT_RESOURCE_ID
   }
 }
 
@@ -86,12 +112,13 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
   for i in range(1, 3): {
     name: 'ai-project-${i}-with-caphost-${resourceToken}'
     params: {
-      foundryName: foundry.outputs.name
+      foundryName: foundry.outputs.FOUNDRY_NAME
       location: location
       projectId: i
-      aiDependencies: ai_dependencies.outputs.aiDependencies
+      aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
       existingAiResourceId: null
-      managedIdentityId: identities[i - 1].outputs.managedIdentityId
+      managedIdentityResourceId: identities[i - 1].outputs.MANAGED_IDENTITY_RESOURCE_ID
+      appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
     }
   }
 ]
@@ -99,12 +126,12 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
 module project4 '../modules/ai/ai-project-with-caphost.bicep' = {
   name: 'ai-project-4-with-caphost-${resourceToken}'
   params: {
-    foundryName: foundry.outputs.name
+    foundryName: foundry.outputs.FOUNDRY_NAME
     location: location
     projectId: 4
-    aiDependencies: ai_dependencies.outputs.aiDependencies
+    aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
     existingAiResourceId: null
-    managedIdentityId: null
+    managedIdentityResourceId: null
   }
 }
 
@@ -114,7 +141,7 @@ module dnsAca 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
     name: 'privatelink.${location}.azurecontainerapps.io'
     virtualNetworkLinks: [
       {
-        virtualNetworkResourceId: vnet.outputs.virtualNetworkId
+        virtualNetworkResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
       }
     ]
   }
@@ -126,7 +153,7 @@ module dnsPostgress 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
     name: 'privatelink.postgres.database.azure.com'
     virtualNetworkLinks: [
       {
-        virtualNetworkResourceId: vnet.outputs.virtualNetworkId
+        virtualNetworkResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
       }
     ]
   }
@@ -137,17 +164,17 @@ module liteLlm '../modules/litellm/lite-llm.bicep' = {
   params: {
     location: location
     resourceToken: resourceToken
-    identityResourceId: identity.outputs.managedIdentityId
-    logAnalyticsWorkspaceResourceId: logAnalytics.outputs.logAnalyticsWorkspaceId
-    appInsightsConnectionString: logAnalytics.outputs.appInsightsConnectionString
-    virtualNetworkResourceId: vnet.outputs.virtualNetworkId
-    privateEndpointSubnetId: vnet.outputs.peSubnetId
-    acaSubnetResourceId: vnet.outputs.extraAgentSubnetIds[0]
-    keyVaultDnsZoneResourceId: ai_dependencies.outputs.DNSZones['privatelink.vaultcore.azure.net']!.resourceId
+    identityResourceId: identity.outputs.MANAGED_IDENTITY_RESOURCE_ID
+    logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
+    appInsightsConnectionString: logAnalytics.outputs.APPLICATION_INSIGHTS_CONNECTION_STRING
+    virtualNetworkResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
+    privateEndpointSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+    acaSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.extraAgentSubnets[0].resourceId
+    keyVaultDnsZoneResourceId: ai_dependencies.outputs.DNS_ZONES['privatelink.vaultcore.azure.net']!.resourceId
     postgressDnsZoneResourceId: dnsPostgress.outputs.resourceId
     openAiApiKey: openAiApiKey
     openAiApiBase: openAiApiBase
-    aiFoundryName: foundry.outputs.name
+    aiFoundryName: foundry.outputs.FOUNDRY_NAME
     litlLlmPublicFqdn: 'http://${publicIpAddress.outputs.ipAddress}'
     liteLlmConfigYaml: '''
 model_list:
@@ -236,7 +263,7 @@ module acaAppGateway '../modules/appgtw/application-gateway.bicep' = {
     location: location
     name: 'app-gateway-${resourceToken}'
     applicationFqdn: liteLlm.outputs.liteLlmAcaFqdn
-    applicationGatewaySubnetId: vnet.outputs.appGwSubnetId
+    applicationGatewaySubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.appGwSubnet.resourceId
     acaName: 'aca${resourceToken}'
     publicIpResourceId: publicIpAddress.outputs.resourceId
     tags: {
@@ -246,6 +273,6 @@ module acaAppGateway '../modules/appgtw/application-gateway.bicep' = {
   }
 }
 
-output project_connection_strings string[] = [for i in range(1, 3): projects[i - 1].outputs.aiConnectionUrl]
-output project_names string[] = [for i in range(1, 3): projects[i - 1].outputs.projectName]
-output config_validation_result bool = valid_config
+output FOUNDRY_PROJECTS_CONNECTION_STRINGS string[] = [for i in range(1, 3): projects[i - 1].outputs.FOUNDRY_PROJECT_CONNECTION_STRING]
+output FOUNDRY_PROJECT_NAMES string[] = [for i in range(1, 3): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
+output CONFIG_VALIDATION_RESULT bool = valid_config

@@ -1,0 +1,29 @@
+<!-- Top Consumers Partial - rendered by /api/usage/top-consumers -->
+<div class="space-y-4">
+    {% for consumer in consumers %}
+    <div class="flex items-center">
+        <div class="flex-shrink-0 w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center">
+            <span class="text-sm font-medium text-indigo-600">{{ loop.index }}</span>
+        </div>
+        <div class="ml-3 flex-1 min-w-0">
+            <p class="text-sm font-medium text-gray-900 truncate">
+                <a href="/subscriptions/{{ consumer.subscription_id }}" class="hover:text-indigo-600">
+                    {{ consumer.name }}
+                </a>
+            </p>
+            <div class="flex items-center">
+                <div class="flex-1 bg-gray-200 rounded-full h-2 mr-2">
+                    <div class="bg-indigo-600 h-2 rounded-full" style="width: {{ consumer.percentage }}%"></div>
+                </div>
+                <span class="text-xs text-gray-500 whitespace-nowrap">
+                    {{ "{:,}".format(consumer.total_tokens) }} tokens
+                </span>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="text-center text-gray-500 py-8">
+        <p>No usage data available</p>
+    </div>
+    {% endfor %}
+</div>

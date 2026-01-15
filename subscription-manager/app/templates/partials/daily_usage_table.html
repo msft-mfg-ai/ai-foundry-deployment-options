@@ -1,0 +1,79 @@
+<!-- Daily Usage Table Partial -->
+<div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-gray-200">
+        <thead class="bg-gray-50">
+            <tr>
+                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Date
+                </th>
+                <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Requests
+                </th>
+                <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Prompt Tokens
+                </th>
+                <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Completion Tokens
+                </th>
+                <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Total Tokens
+                </th>
+                <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Avg/Request
+                </th>
+            </tr>
+        </thead>
+        <tbody class="bg-white divide-y divide-gray-200">
+            {% for usage in daily_usage | reverse %}
+            <tr class="hover:bg-gray-50">
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {{ usage.usage_date.strftime('%Y-%m-%d') }}
+                    {% if usage.usage_date.weekday() >= 5 %}
+                    <span class="text-xs text-gray-400">(Weekend)</span>
+                    {% endif %}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500">
+                    {{ "{:,}".format(usage.total_requests) }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500">
+                    {{ "{:,}".format(usage.total_prompt_tokens) }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500">
+                    {{ "{:,}".format(usage.total_completion_tokens) }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-gray-900">
+                    {{ "{:,}".format(usage.total_tokens) }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500">
+                    {{ "{:,.0f}".format(usage.avg_tokens_per_request) }}
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="6" class="px-6 py-12 text-center text-gray-500">
+                    No usage data available for this period
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot class="bg-gray-50">
+            <tr>
+                <td class="px-6 py-4 text-sm font-medium text-gray-900">
+                    Total
+                </td>
+                <td class="px-6 py-4 text-sm text-right font-medium text-gray-900">
+                    {{ "{:,}".format(total_requests) }}
+                </td>
+                <td colspan="2" class="px-6 py-4 text-sm text-right text-gray-500">
+                    —
+                </td>
+                <td class="px-6 py-4 text-sm text-right font-bold text-indigo-600">
+                    {{ "{:,}".format(total_tokens) }}
+                </td>
+                <td class="px-6 py-4 text-sm text-right text-gray-500">
+                    {{ "{:,.0f}".format(total_tokens / total_requests if total_requests > 0 else 0) }}
+                </td>
+            </tr>
+        </tfoot>
+    </table>
+</div>

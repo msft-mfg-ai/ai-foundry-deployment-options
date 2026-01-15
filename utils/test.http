@@ -12,7 +12,7 @@
 #<access token - use: az account get-access-token --resource=https://management.azure.com/ --query accessToken -o tsv>
 @token={{$dotenv token}}
 
-### create for hub
+### create for account
 PUT {{baseUrl}}/{{foundryName}}/capabilityHosts/{{foundryCapabilityName}}?api-version=2025-06-01
 Authorization: Bearer {{token}}
 Content-Type: application/json

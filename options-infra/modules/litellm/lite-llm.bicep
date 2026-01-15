@@ -2,6 +2,7 @@ param location string
 param resourceToken string
 param appInsightsConnectionString string
 param logAnalyticsWorkspaceResourceId string
+@description('Identity used by Container Apps to access Key Vault and other resources')
 param identityResourceId string
 @secure()
 param openAiApiKey string
@@ -39,7 +40,7 @@ module postgressDb '../db/postgress.bicep' = {
     }
     location: location
     name: 'pg-${resourceToken}'
-    keyVaultName: keyVault.outputs.AZURE_RESOURCE_KEY_VAULT_NAME
+    keyVaultName: keyVault.outputs.KEY_VAULT_NAME
     workspaceResourceId: logAnalyticsWorkspaceResourceId
     privateEndpointSubnetId: privateEndpointSubnetId
     privateDnsZoneResourceId: postgressDnsZoneResourceId
@@ -69,7 +70,7 @@ module keyVault '../kv/key-vault.bicep' = {
       { name: 'openaiapikey', value: openAiApiKey }
       { name: 'litelllmasterkey', value: litelllmasterkey }
     ]
-    userAssignedManagedIdentityPrincipalId: userAssignedIdentity.properties.principalId
+    userAssignedManagedIdentityPrincipalIds: [userAssignedIdentity.properties.principalId]
     principalId: null
     doRoleAssignments: true
     logAnalyticsWorkspaceId: logAnalyticsWorkspaceResourceId
@@ -97,10 +98,10 @@ module dnsAca 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
 module acaPrivateEndpoint '../networking/private-endpoint.bicep' = {
   name: 'private-endpoint-aca'
   params: {
-    privateEndpointName: 'pe-${managedEnvironment.outputs.AZURE_RESOURCE_CONTAINER_APPS_ENVIRONMENT_NAME}'
+    privateEndpointName: 'pe-${managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_NAME}'
     location: location
     subnetId: privateEndpointSubnetId
-    targetResourceId: managedEnvironment.outputs.AZURE_RESOURCE_CONTAINER_APPS_ENVIRONMENT_ID
+    targetResourceId: managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_ID
     groupIds: ['managedEnvironments']
     zoneConfigs: [
       {
@@ -116,7 +117,7 @@ module appMcp '../aca/container-app.bicep' = {
   params: {
     location: location
     name: 'aca-mcp-${resourceToken}'
-    workloadProfileName: managedEnvironment.outputs.AZURE_RESOURCE_CONTAINER_APPS_WORKLOAD_PROFILE_NAME
+    workloadProfileName: managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
     applicationInsightsConnectionString: appInsightsConnectionString
     definition: {
       settings: []
@@ -130,7 +131,7 @@ module appMcp '../aca/container-app.bicep' = {
     memory: '0.5Gi'
     scaleMaxReplicas: 1
     scaleMinReplicas: 1
-    containerAppsEnvironmentResourceId: managedEnvironment.outputs.AZURE_RESOURCE_CONTAINER_APPS_ENVIRONMENT_ID
+    containerAppsEnvironmentResourceId: managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_ID
     keyVaultName: null
     probes: [
       {
@@ -149,7 +150,7 @@ module appOpenAPI '../aca/container-app.bicep' = {
   params: {
     location: location
     name: 'aca-openapi-${resourceToken}'
-    workloadProfileName: managedEnvironment.outputs.AZURE_RESOURCE_CONTAINER_APPS_WORKLOAD_PROFILE_NAME
+    workloadProfileName: managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
     applicationInsightsConnectionString: appInsightsConnectionString
     definition: {
       settings: []
@@ -163,7 +164,7 @@ module appOpenAPI '../aca/container-app.bicep' = {
     memory: '0.5Gi'
     scaleMaxReplicas: 1
     scaleMinReplicas: 1
-    containerAppsEnvironmentResourceId: managedEnvironment.outputs.AZURE_RESOURCE_CONTAINER_APPS_ENVIRONMENT_ID
+    containerAppsEnvironmentResourceId: managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_ID
     keyVaultName: null
     probes: [
       {
@@ -182,7 +183,7 @@ module liteLlmApp '../aca/container-app.bicep' = {
   params: {
     location: location
     name: 'aca-litellm-${resourceToken}'
-    workloadProfileName: managedEnvironment.outputs.AZURE_RESOURCE_CONTAINER_APPS_WORKLOAD_PROFILE_NAME
+    workloadProfileName: managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
     applicationInsightsConnectionString: appInsightsConnectionString
     definition: {
       settings: [
@@ -202,7 +203,7 @@ module liteLlmApp '../aca/container-app.bicep' = {
         }
         {
           name: 'PROXY_BASE_URL'
-          value: litlLlmPublicFqdn ?? 'https://aca-litellm-${resourceToken}.${managedEnvironment.outputs.AZURE_RESOURCE_CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN}'
+          value: litlLlmPublicFqdn ?? 'https://aca-litellm-${resourceToken}.${managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN}'
         }
         {
           secret: true
@@ -276,8 +277,8 @@ module liteLlmApp '../aca/container-app.bicep' = {
     memory: '2.0Gi'
     scaleMaxReplicas: 1
     scaleMinReplicas: 1
-    containerAppsEnvironmentResourceId: managedEnvironment.outputs.AZURE_RESOURCE_CONTAINER_APPS_ENVIRONMENT_ID
-    keyVaultName: keyVault.outputs.AZURE_RESOURCE_KEY_VAULT_NAME
+    containerAppsEnvironmentResourceId: managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_ID
+    keyVaultName: keyVault.outputs.KEY_VAULT_NAME
     probes: [
       {
         type: 'Readiness'
@@ -299,15 +300,15 @@ module liteLlmApp '../aca/container-app.bicep' = {
   }
 }
 
-module liteLlmConnectionDynamic '../ai/connection-litellm-gateway.bicep' = {
+module liteLlmConnectionDynamic '../ai/connection-modelgateway-dynamic.bicep' = {
   name: 'lite-llm-connection-dynamic'
   params: {
     aiFoundryName: aiFoundryName
-    connectionName: 'modelgateway-litellm-${resourceToken}'
+    connectionName: 'model-gateway-litellm-${resourceToken}'
     apiKey: litelllmasterkey
     isSharedToAll: true
     gatewayName: 'litellm'
-    targetUrl: liteLlmApp.outputs.AZURE_RESOURCE_CONTAINER_APP_FQDN
+    targetUrl: liteLlmApp.outputs.CONTAINER_APP_FQDN
   }
 }
 
@@ -315,13 +316,13 @@ module liteLlmConnectionStatic '../ai/connection-modelgateway-static.bicep' = if
   name: 'lite-llm-connection-static'
   params: {
     aiFoundryName: aiFoundryName
-    connectionName: 'modelgateway-litellm-${resourceToken}-static'
+    connectionName: 'model- gateway-litellm-${resourceToken}-static'
     apiKey: litelllmasterkey
     isSharedToAll: true
     gatewayName: 'litellm'
-    targetUrl: liteLlmApp.outputs.AZURE_RESOURCE_CONTAINER_APP_FQDN
+    targetUrl: liteLlmApp.outputs.CONTAINER_APP_FQDN
     staticModels: modelsStatic
   }
 }
 
-output liteLlmAcaFqdn string = liteLlmApp.outputs.AZURE_RESOURCE_CONTAINER_APP_FQDN
+output liteLlmAcaFqdn string = liteLlmApp.outputs.CONTAINER_APP_FQDN

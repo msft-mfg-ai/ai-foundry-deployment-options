@@ -28,7 +28,7 @@ module fixCosmosPermissions '../modules/iam/cosmos-container-role-assignments.bi
     params: {
       cosmosAccountName: cosmosAccountName
       projectPrincipalId: projects[i].identity.principalId
-      projectWorkspaceId: formatProjectWorkspaceIds[i].outputs.projectWorkspaceIdGuid
+      projectWorkspaceId: formatProjectWorkspaceIds[i].outputs.FOUNDRY_PROJECT_WORKSPACE_ID
     }
   }
 ]

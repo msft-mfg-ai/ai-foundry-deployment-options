@@ -9,4 +9,4 @@ var part5 = substring(projectWorkspaceId, 20, 12)  // Remaining 12 characters
 
 var formattedGuid = '${part1}-${part2}-${part3}-${part4}-${part5}'
 
-output projectWorkspaceIdGuid string = formattedGuid
+output FOUNDRY_PROJECT_WORKSPACE_ID string = formattedGuid

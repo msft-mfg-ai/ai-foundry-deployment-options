@@ -5,14 +5,14 @@ param vnetResourceIdsForLink string[] = []
 param peeringResourceId string[] = []
 param hubVnetRanges types.HubVnetRangesType
 
-module networkSecurityGroup 'br/public:avm/res/network/network-security-group:0.5.1' = {
+module networkSecurityGroup 'br/public:avm/res/network/network-security-group:0.5.2' = {
   name: 'networkSecurityGroupDeployment'
   params: {
     name: 'pe-nsg'
   }
 }
 
-module virtualNetwork 'br/public:avm/res/network/virtual-network:0.7.0' = {
+module virtualNetwork 'br/public:avm/res/network/virtual-network:0.7.2' = {
   name: 'hub-vnet-deployment'
   params: {
     addressPrefixes: [hubVnetRanges.vnetAddressPrefix]
@@ -44,7 +44,7 @@ module virtualNetwork 'br/public:avm/res/network/virtual-network:0.7.0' = {
   }
 }
 
-module dnsResolver 'br/public:avm/res/network/dns-resolver:0.5.4' = {
+module dnsResolver 'br/public:avm/res/network/dns-resolver:0.5.6' = {
   name: 'dnsResolverDeployment'
   params: {
     // Required parameters
@@ -69,7 +69,7 @@ module dnsResolver 'br/public:avm/res/network/dns-resolver:0.5.4' = {
   }
 }
 
-module dnsForwardingRuleset 'br/public:avm/res/network/dns-forwarding-ruleset:0.5.2' = {
+module dnsForwardingRuleset 'br/public:avm/res/network/dns-forwarding-ruleset:0.5.3' = {
   name: 'dnsForwardingRulesetDeployment'
   params: {
     // Required parameters
@@ -120,7 +120,7 @@ module dnsForwardingRuleset 'br/public:avm/res/network/dns-forwarding-ruleset:0.
   }
 }
 
-output virtualNetworkId string = virtualNetwork.outputs.resourceId
-output peSubnetId string = virtualNetwork.outputs.subnetResourceIds[2]
-output peSubnetName string = virtualNetwork.outputs.subnetNames[2]
-output privateDnsIp string = hubVnetRanges.privateDnsIp
+output VIRTUAL_NETWORK_RESOURCE_ID string = virtualNetwork.outputs.resourceId
+output VIRTUAL_NETWORK_SUBNET_PE_RESOURCE_ID string = virtualNetwork.outputs.subnetResourceIds[2]
+output VIRTUAL_NETWORK_SUBNET_PE_NAME string = virtualNetwork.outputs.subnetNames[2]
+output PRIVATE_DNS_IP string = hubVnetRanges.privateDnsIp

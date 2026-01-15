@@ -73,7 +73,6 @@ module foundry '../modules/ai/ai-foundry.bicep' = {
     managedIdentityId: '' // Use System Assigned Identity
     name: 'ai-foundry-with-models-${resourceToken}'
     location: location
-    appInsightsId: logAnalytics.outputs.applicationInsightsId
     publicNetworkAccess: 'Disabled'
     deployments: [
       {
@@ -100,7 +99,6 @@ module foundry_projects '../modules/ai/ai-foundry.bicep' = {
     managedIdentityId: '' // Use System Assigned Identity
     name: 'ai-foundry-projects-${resourceToken}'
     location: location
-    appInsightsId: logAnalytics.outputs.applicationInsightsId
     publicNetworkAccess: 'Enabled'
     agentSubnetId: vnet.outputs.agentSubnetId // Use the first agent subnet
   }
@@ -138,6 +136,7 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
       aiDependencies: ai_dependencies.outputs.aiDependencies
       existingAiResourceId: foundry.outputs.id
       managedIdentityId: identities[i - 1].outputs.managedIdentityId
+      appInsightsId: logAnalytics.outputs.applicationInsightsId
     }
   }
 ]

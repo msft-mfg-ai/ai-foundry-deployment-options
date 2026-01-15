@@ -1,0 +1,7 @@
+# deploying using AZD because https://github.com/Azure/azure-cli/pull/31990
+name: deploy-ai-gateway
+
+infra:
+  provider: bicep
+  path: .
+  module: main

@@ -1,0 +1,80 @@
+<!-- Subscription Usage Chart Partial -->
+<canvas id="subscriptionUsageChart" class="w-full h-full"></canvas>
+<script>
+    (function() {
+        const ctx = document.getElementById('subscriptionUsageChart');
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: {{ labels | tojson }},
+                datasets: [
+                    {
+                        label: 'Total Tokens',
+                        data: {{ total_values | tojson }},
+                        borderColor: 'rgb(79, 70, 229)',
+                        backgroundColor: 'rgba(79, 70, 229, 0.1)',
+                        tension: 0.3,
+                        fill: false
+                    },
+                    {
+                        label: 'Prompt Tokens',
+                        data: {{ prompt_tokens | tojson }},
+                        borderColor: 'rgb(16, 185, 129)',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        tension: 0.3,
+                        fill: false
+                    },
+                    {
+                        label: 'Completion Tokens',
+                        data: {{ completion_tokens | tojson }},
+                        borderColor: 'rgb(245, 158, 11)',
+                        backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                        tension: 0.3,
+                        fill: false
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                plugins: {
+                    legend: {
+                        position: 'top'
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                let value = context.parsed.y;
+                                if (value >= 1000000) return context.dataset.label + ': ' + (value / 1000000).toFixed(2) + 'M';
+                                if (value >= 1000) return context.dataset.label + ': ' + (value / 1000).toFixed(2) + 'K';
+                                return context.dataset.label + ': ' + value;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                if (value >= 1000000) return (value / 1000000).toFixed(1) + 'M';
+                                if (value >= 1000) return (value / 1000).toFixed(1) + 'K';
+                                return value;
+                            }
+                        }
+                    },
+                    x: {
+                        ticks: {
+                            maxRotation: 45,
+                            minRotation: 45
+                        }
+                    }
+                }
+            }
+        });
+    })();
+</script>

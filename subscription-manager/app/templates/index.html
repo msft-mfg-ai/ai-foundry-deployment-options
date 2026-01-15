@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Page Header -->
+    <div class="md:flex md:items-center md:justify-between">
+        <div class="min-w-0 flex-1">
+            <h1 class="text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:text-3xl sm:tracking-tight">
+                Dashboard
+            </h1>
+            <p class="mt-1 text-sm text-gray-500">
+                Monitor and manage your API Management subscriptions for LLM access
+            </p>
+        </div>
+        <div class="mt-4 flex md:ml-4 md:mt-0">
+            <a href="/subscriptions" class="ml-3 inline-flex items-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600">
+                <svg class="-ml-0.5 mr-1.5 h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+                </svg>
+                Manage Subscriptions
+            </a>
+        </div>
+    </div>
+
+    <!-- Stats Cards -->
+    <div hx-get="/api/usage/stats" hx-trigger="load" hx-swap="innerHTML">
+        <!-- Loading skeleton -->
+        <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+            {% for i in range(4) %}
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="p-5">
+                    <div class="skeleton h-4 w-24 rounded mb-2"></div>
+                    <div class="skeleton h-8 w-16 rounded"></div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Charts Section -->
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <!-- Token Usage Over Time Chart -->
+        <div class="bg-white shadow rounded-lg p-6">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">Token Usage (Last 30 Days)</h3>
+            <div class="h-64" id="usage-chart-container" 
+                 hx-get="/api/usage/chart-data?days=30" 
+                 hx-trigger="load" 
+                 hx-swap="innerHTML">
+                <div class="flex items-center justify-center h-full">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Top Consumers -->
+        <div class="bg-white shadow rounded-lg p-6">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">Top Token Consumers</h3>
+            <div id="top-consumers" 
+                 hx-get="/api/usage/top-consumers" 
+                 hx-trigger="load" 
+                 hx-swap="innerHTML">
+                <div class="space-y-3">
+                    {% for i in range(5) %}
+                    <div class="flex items-center">
+                        <div class="skeleton h-4 w-full rounded"></div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Subscriptions -->
+    <div class="bg-white shadow rounded-lg">
+        <div class="px-6 py-4 border-b border-gray-200">
+            <h3 class="text-lg font-medium text-gray-900">Recent Subscriptions</h3>
+        </div>
+        <div id="recent-subscriptions" 
+             hx-get="/api/subscriptions/recent" 
+             hx-trigger="load" 
+             hx-swap="innerHTML">
+            <div class="p-6">
+                <div class="animate-pulse space-y-4">
+                    {% for i in range(5) %}
+                    <div class="flex items-center space-x-4">
+                        <div class="skeleton h-10 w-10 rounded-full"></div>
+                        <div class="flex-1">
+                            <div class="skeleton h-4 w-48 rounded mb-2"></div>
+                            <div class="skeleton h-3 w-32 rounded"></div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    // Chart initialization will be handled by the HTMX response
+    window.initUsageChart = function(data) {
+        const ctx = document.getElementById('usageChart');
+        if (!ctx) return;
+        
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.labels,
+                datasets: [{
+                    label: 'Total Tokens',
+                    data: data.values,
+                    borderColor: 'rgb(79, 70, 229)',
+                    backgroundColor: 'rgba(79, 70, 229, 0.1)',
+                    tension: 0.3,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                if (value >= 1000000) return (value / 1000000).toFixed(1) + 'M';
+                                if (value >= 1000) return (value / 1000).toFixed(1) + 'K';
+                                return value;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    };
+</script>
+{% endblock %}
