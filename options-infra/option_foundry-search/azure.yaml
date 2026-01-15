@@ -7,6 +7,82 @@ infra:
   module: main
 
 hooks:
+  postprovision:
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host "=========================================="
+        Write-Host "Creating agents"
+        Write-Host "=========================================="
+        
+        # Install dependencies
+        Write-Host "Installing v1 Python dependencies with uv..."
+        Push-Location scripts/agents_v1
+        uv sync
+        
+        # Create agents v1
+        Write-Host ""
+        Write-Host "Creating agents v1"
+        uv run python create_agents_v1.py
+        
+        Pop-Location
+
+        # Install dependencies
+        Write-Host "Installing v2 Python dependencies with uv..."
+        Push-Location scripts/agents_v2
+        uv sync
+        
+        # Create agents v2
+        Write-Host ""
+        Write-Host "Creating agents v2"
+        uv run python create_agents_v2.py
+        
+        Pop-Location
+        
+        Write-Host ""
+        Write-Host "=========================================="
+        Write-Host "All agents created successfully!"
+        Write-Host "=========================================="
+      interactive: true
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        echo "=========================================="
+        echo "Creating agents"
+        echo "=========================================="
+        
+        # Install dependencies
+        echo "Installing v1 Python dependencies with uv..."
+        cd scripts/agents_v1
+        uv sync
+        
+        # Create agents v1
+        echo ""
+        echo "Creating agents v1"
+        uv run python create_agents_v1.py
+        
+        cd ..
+
+        # Install dependencies
+        echo "Installing v2 Python dependencies with uv..."
+        cd agents_v2
+        uv sync
+        
+        # Create agents v2
+        echo ""
+        echo "Creating agents v2"
+        uv run python create_agents_v2.py
+        
+        cd ../..
+        
+        echo ""
+        echo "=========================================="
+        echo "All agents created successfully!"
+        echo "=========================================="
+      interactive: true
+      continueOnError: false  
+
   postup:
     windows:
       shell: pwsh

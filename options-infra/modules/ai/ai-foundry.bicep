@@ -192,3 +192,4 @@ output FOUNDRY_SUBSCRIPTION_ID string = useExistingService ? existing_Foundry_Su
 output FOUNDRY_PRINCIPAL_ID string = empty(managedIdentityResourceId)
   ? (useExistingService ? (existingAccount.?identity.principalId ?? '') : account.?identity.principalId ?? '')
   : (useExistingService ? '' : identity!.properties.principalId)
+output FOUNDRY_DEPLOYMENT_NAMES string[] = [for d in deployments: d.name]

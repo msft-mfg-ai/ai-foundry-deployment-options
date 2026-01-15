@@ -313,7 +313,15 @@ output project_connection_strings string[] = [
 ]
 output project_names string[] = [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
 output FOUNDRY_NAME string = foundryName
+output FOUNDRY_DEPLOYMENT_NAME string = foundry.outputs.FOUNDRY_DEPLOYMENT_NAMES[0]
+
+output AI_PROJECT_CONNECTION_STRING string = projects[0].outputs.FOUNDRY_PROJECT_CONNECTION_STRING
+
 output AI_SEARCH_SERVICE_PUBLIC_NO_PE string = searchServicePublicNoPe.outputs.endpoint
 output AI_SEARCH_SERVICE_PUBLIC_PE string = searchServicePublicPe.outputs.endpoint
 output AI_SEARCH_PE string = 'https://${ai_dependencies.outputs.AI_DEPENDECIES.aiSearch.name}.search.windows.net'
 output AI_SEARCH_PE_NAME string = ai_dependencies.outputs.AI_DEPENDECIES.aiSearch.name
+
+output AI_SEARCH_SERVICE_PE_CONNECTION_NAME string = '${ai_dependencies.outputs.AI_DEPENDECIES.aiSearch.name}-for-${projects[0].outputs.FOUNDRY_PROJECT_NAME}'
+output AI_SEARCH_SERVICE_PUBLIC_NO_PE_CONNECTION_NAME string = acount_connection_azureai_search_public_no_pe.name
+output AI_SEARCH_SERVICE_PUBLIC_PE_CONNECTION_NAME string = acount_connection_azureai_search_public_pe.name
