@@ -74,7 +74,7 @@ var modelGatewayMetadata = {
 
 // Use the common module to create the ModelGateway connection
 module modelGatewayConnection 'modelgateway-connection-common.bicep' = {
-  name: 'modelgateway-connection-dynamic'
+  name: '${finalConnectionName}-deployment'
   params: {
     aiFoundryName: aiFoundryName
     connectionName: finalConnectionName

@@ -161,7 +161,7 @@ module aiGatewayProjectConnectionStatic '../ai/connection-apim-gateway.bicep' = 
       isSharedToAll: false
       staticModels: staticModels
       inferenceAPIVersion: '2025-03-01-preview'
-      apimCustomDomainGatewayUrl: apim.outputs.apimGatewayUrl
+    // apim connection doesn't support custom domain
     }
   }
 ]
@@ -181,7 +181,7 @@ module aiGatewayProjectConnectionDynamic '../ai/connection-apim-gateway.bicep' =
       getModelEndpoint: '/deployments/{deploymentName}'
       deploymentProvider: 'AzureOpenAI'
       inferenceAPIVersion: '2025-03-01-preview'
-      apimCustomDomainGatewayUrl: customDomain != null ? 'https://apim.${customDomain}/' : null
+    // apim connection doesn't support custom domain
     }
   }
 ]

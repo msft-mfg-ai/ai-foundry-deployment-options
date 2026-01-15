@@ -86,3 +86,23 @@ async def get_gateway_connections(client: AIProjectClient):
         "ai_gateway_connection_static": ai_gateway_connection_static,
         "ai_gateway_connection_dynamic": ai_gateway_connection_dynamic,
     }
+
+# Helper function to classify connection type
+def classify_connection(conn_name: str, gateway_connections: dict) -> tuple[str, str]:
+    """Returns (gateway_type, mode) based on connection name and gateway_connections dict."""
+    conn_lower = conn_name.lower()
+    
+    # Determine gateway type (APIM vs ModelGateway)
+    if conn_name in [gateway_connections.get("ai_gateway_connection_static"), 
+                     gateway_connections.get("ai_gateway_connection_dynamic")]:
+        gateway_type = "APIM"
+    elif conn_name in [gateway_connections.get("model_gateway_connection_static"),
+                       gateway_connections.get("model_gateway_connection_dynamic")]:
+        gateway_type = "ModelGateway"
+    else:
+        gateway_type = "Unknown"
+    
+    # Determine mode (static vs dynamic)
+    mode = "static" if "static" in conn_lower else "dynamic"
+    
+    return gateway_type, mode

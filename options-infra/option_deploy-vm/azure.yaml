@@ -15,7 +15,7 @@ hooks:
         Write-Host "VM deployed successfully!"
         Write-Host "=========================================="
         Write-Host ""
-        Write-Host "Connect to the VM using:"
+        Write-Host "Configure JIT access in Azure Portal, then Connect to the VM using:"
         Write-Host "  $env:SSH_COMMAND"
         Write-Host ""
       interactive: true
@@ -27,7 +27,7 @@ hooks:
         echo "VM deployed successfully!"
         echo "=========================================="
         echo ""
-        echo "Connect to the VM using:"
+        echo "Configure JIT access in Azure Portal, then Connect to the VM using:"
         echo "  ${SSH_COMMAND}"
         echo ""
       interactive: true

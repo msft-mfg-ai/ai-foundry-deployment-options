@@ -89,7 +89,7 @@ var logSettings = {
   body: { bytes: 8192 }
 }
 
-var updatedPolicyXml = replace(policyXml, '{backend-id}', (length(aiServicesConfig) > 1) ? inferenceBackendPoolName : aiServicesConfig[0].name)
+var updatedPolicyXml = replace(policyXml, '{backend-id}', (length(aiServicesConfig) > 1) ? inferenceBackendPoolName : '${aiServicesConfig[0].name}-${inferenceAPIType}-backend')
 
 // ------------------
 //    RESOURCES

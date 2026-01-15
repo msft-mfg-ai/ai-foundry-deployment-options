@@ -1,7 +1,9 @@
 param subnetId string?
 param location string = resourceGroup().location
 
-module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.21.0' = {
+var is_valid = empty(subnetId) ? fail('ERROR: SUBNET_ID variable is required. Please provide a valid subnet resource ID.') : true
+
+module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.21.0' = if (is_valid) {
   name: 'virtualMachineDeployment'
   params: {
     tags: {
@@ -64,7 +66,7 @@ module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.21.0' = {
   }
 }
 
-output is_valid bool = empty(subnetId) ? fail('ERROR: subnetId parameter is required. Please provide a valid subnet resource ID.') : true
+output is_valid bool = is_valid
 output VM_PUBLIC_IP string? = virtualMachine.outputs.nicConfigurations[0].?ipConfigurations[0].?publicIP
 output VM_USERNAME string = 'localAdminUser'
 output SSH_COMMAND string = 'ssh -i ~/.ssh/id_rsa localAdminUser@${virtualMachine.outputs.nicConfigurations[0].ipConfigurations[0].?publicIP}'

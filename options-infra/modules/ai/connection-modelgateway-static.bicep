@@ -108,7 +108,7 @@ var modelGatewayMetadata = union(
 
 // Use the common module to create the ModelGateway connection
 module modelGatewayConnection 'modelgateway-connection-common.bicep' = {
-  name: 'modelgateway-connection-static-deployment'
+  name: '${finalConnectionName}-deployment'
   params: {
     aiFoundryName: aiFoundryName
     aiFoundryProjectName: aiFoundryProjectName
