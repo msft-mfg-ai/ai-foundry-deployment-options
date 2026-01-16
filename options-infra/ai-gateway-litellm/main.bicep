@@ -162,7 +162,7 @@ module dnsAca 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
   name: 'dns-aca'
   params: {
     tags: tags
-    location: location
+    location: 'global'
     name: 'privatelink.${location}.azurecontainerapps.io'
     virtualNetworkLinks: [
       {
@@ -176,7 +176,7 @@ module dnsPostgress 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
   name: 'dns-postgress'
   params: {
     tags: tags
-    location: location
+    location: 'global'
     name: 'privatelink.postgres.database.azure.com'
     virtualNetworkLinks: [
       {
@@ -211,19 +211,25 @@ model_list:
       model: azure/gpt-4.1-mini
       api_base: os.environ/AZURE_API_BASE # runs os.getenv("AZURE_API_BASE")
       api_key: os.environ/AZURE_API_KEY # runs os.getenv("AZURE_API_KEY")
-      api_version: "2025-04-14"
+      api_version: "2025-01-01-preview"
+  - model_name: gpt-4o
+    litellm_params:
+      model: azure/gpt-4o
+      api_base: os.environ/AZURE_API_BASE # runs os.getenv("AZURE_API_BASE")
+      api_key: os.environ/AZURE_API_KEY # runs os.getenv("AZURE_API_KEY")
+      api_version: "2025-01-01-preview"      
   - model_name: gpt-5-mini
     litellm_params:
       model: azure/gpt-5-mini
       api_base: os.environ/AZURE_API_BASE # runs os.getenv("AZURE_API_BASE")
       api_key: os.environ/AZURE_API_KEY # runs os.getenv("AZURE_API_KEY")
-      api_version: "2025-08-07"
+      api_version: "2025-04-01-preview"
   - model_name: o3-mini
     litellm_params:
       model: azure/o3-mini
       api_base: os.environ/AZURE_API_BASE # runs os.getenv("AZURE_API_BASE")
       api_key: os.environ/AZURE_API_KEY # runs os.getenv("AZURE_API_KEY")
-      api_version: "2025-01-31"
+      api_version: "2025-01-01-preview"
 
 general_settings:
   store_model_in_db: true
