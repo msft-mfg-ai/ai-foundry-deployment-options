@@ -1,6 +1,6 @@
-# Option: AI Gateway (External APIM) with AI Foundry Basic
+# Option: AI Gateway (External APIM) with Foundry Basic
 
-This deployment option creates an AI Foundry Basic environment with an **external Azure API Management (APIM) Basic v2** instance acting as an AI Gateway to proxy requests to an external Azure OpenAI resource.
+This deployment creates a Foundry Basic environment with an **external Azure API Management (APIM) Basic v2** instance acting as an AI Gateway. The goal is to allow **Foundry Agent Service** to use models from APIM, which proxies requests to an external Azure OpenAI resource.
 
 ## Architecture Overview
 
@@ -52,9 +52,9 @@ This deployment option creates an AI Foundry Basic environment with an **externa
 
 ## Deployed Resources
 
-### AI Foundry
-- **AI Foundry Hub** with managed identity (or use existing)
-- **AI Project(s)** with Capability Hosts (configurable count)
+### Foundry
+- **Foundry account** with managed identity (or use existing)
+- **Foundry project(s)** with Capability Hosts (configurable count)
 
 ### AI Gateway (APIM)
 - **Azure API Management** in external mode (public IP)
@@ -79,7 +79,7 @@ export OPENAI_RESOURCE_ID="/subscriptions/<sub-id>/resourceGroups/<rg>/providers
 
 ### Optional Parameters
 - `OPENAI_LOCATION` - Location of the OpenAI resource (defaults to deployment location)
-- `PROJECTS_COUNT` - Number of AI Projects to create (default: 1)
+- `PROJECTS_COUNT` - Number of Foundry projects to create (default: 1)
 
 ## Deployment
 
@@ -92,9 +92,9 @@ azd up
 
 | Output | Description |
 |--------|-------------|
-| `project_connection_strings` | Connection strings for AI Projects |
-| `project_names` | Names of the deployed AI Projects |
-| `FOUNDRY_NAME` | Name of the AI Foundry hub |
+| `project_connection_strings` | Connection strings for Foundry projects |
+| `project_names` | Names of the deployed Foundry projects |
+| `FOUNDRY_NAME` | Name of the Foundry account |
 | `config_validation_result` | Validation status of the configuration |
 
 

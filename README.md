@@ -1,6 +1,6 @@
 > **AI Foundry Deployment Options**
 >
-> This repository provides Bicep templates and deployment instructions for setting up Azure AI Foundry landing zones with various networking and resource sharing options. It is intended for Azure administrators and application teams deploying AI workloads with private networking, BYO resources, and cost management best practices.
+> This repository provides Bicep templates and deployment instructions for setting up Foundry landing zones with various networking and resource sharing options. It is intended for Azure administrators and application teams deploying AI workloads with private networking, BYO resources, and cost management best practices.
 >
 > **Last updated:** July 31, 2025
 >
@@ -254,5 +254,5 @@ Use tools available in [utils](./utils/) to view/modify/delete capability hosts.
 * If model deployments fail, check that your subscription has quota for the AI models
 * For RBAC or role assignment problems, confirm your identity and permissions
 * Use `--verbose` flag for more detailed output if needed
-* Ensure Azure OpenAI resource and Azure AI Foundry account are in the same region
+* Ensure Azure OpenAI resource and Foundry account are in the same region
 * For deployment failures, review error messages and consult [Azure documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/use-your-own-resources)

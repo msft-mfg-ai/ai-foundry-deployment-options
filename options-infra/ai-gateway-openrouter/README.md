@@ -1,6 +1,6 @@
-# Option: AI Foundry Public with OpenRouter Integration
+# Option: Foundry Public with OpenRouter Integration
 
-This deployment option creates a **public AI Foundry** environment (without agent subnet) that connects to **OpenRouter** as an external model gateway, enabling access to a wide variety of AI models through a single API endpoint.
+This deployment creates a **public Foundry** environment (without agent subnet) that connects to **OpenRouter** as an external model gateway. The goal is to allow **Foundry projects** to use models from OpenRouter, enabling access to a wide variety of AI models through a single API endpoint.
 
 ## Architecture Overview
 
@@ -56,9 +56,9 @@ This deployment option creates a **public AI Foundry** environment (without agen
 
 ## Deployed Resources
 
-### AI Foundry
-- **AI Foundry Hub** (public network access enabled)
-- **AI Project(s)** without Capability Hosts
+### Foundry
+- **Foundry account** (public network access enabled)
+- **Foundry project(s)** without Capability Hosts
 - **Model Gateway Connection** (static) to OpenRouter
 
 ### Supporting Services
@@ -84,8 +84,8 @@ Get your API key from [OpenRouter](https://openrouter.ai/keys).
 ### Optional Parameters
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `EXISTING_FOUNDRY_NAME` | Use an existing AI Foundry hub | Create new |
-| `PROJECTS_COUNT` | Number of AI Projects to create | 1 |
+| `EXISTING_FOUNDRY_NAME` | Use an existing Foundry account | Create new |
+| `PROJECTS_COUNT` | Number of Foundry projects to create | 1 |
 
 ## Deployment
 
@@ -98,9 +98,9 @@ azd up
 
 | Output | Description |
 |--------|-------------|
-| `FOUNDRY_PROJECTS_CONNECTION_STRINGS` | Connection strings for AI Projects |
-| `FOUNDRY_PROJECT_NAMES` | Names of the deployed AI Projects |
-| `FOUNDRY_NAME` | Name of the AI Foundry hub |
+| `FOUNDRY_PROJECTS_CONNECTION_STRINGS` | Connection strings for Foundry projects |
+| `FOUNDRY_PROJECT_NAMES` | Names of the deployed Foundry projects |
+| `FOUNDRY_NAME` | Name of the Foundry account |
 | `CONFIG_VALIDATION_RESULT` | Validation status of the configuration |
 
 ## Model Aliases

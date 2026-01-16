@@ -1,6 +1,6 @@
-# Option: AI Gateway (External APIM) with AI Foundry
+# Option: AI Gateway (External APIM) with Foundry
 
-This deployment option creates an AI Foundry environment with an **external Azure API Management (APIM) Basic v2** instance acting as an AI Gateway to proxy requests to an external Azure OpenAI resource.
+This deployment creates a Foundry environment with an **external Azure API Management (APIM) Basic v2** instance acting as an AI Gateway. The goal is to allow **Foundry Agent Service** to use models from APIM, which proxies requests to an external Azure OpenAI resource.
 
 ## Architecture Overview
 
@@ -58,9 +58,9 @@ This deployment option creates an AI Foundry environment with an **external Azur
 - **Private DNS Zones** for:
   - Key Vault, Storage, Cosmos DB, AI Search
 
-### AI Foundry
-- **AI Foundry Hub** with managed identity (or use existing)
-- **AI Project(s)** with Capability Hosts (configurable count)
+### Foundry
+- **Foundry account** with managed identity (or use existing)
+- **Foundry project(s)** with Capability Hosts (configurable count)
 - **AI Dependencies**: Storage, Cosmos DB, AI Search with private endpoints
 
 ### AI Gateway (APIM)
@@ -86,8 +86,8 @@ export OPENAI_RESOURCE_ID="/subscriptions/<sub-id>/resourceGroups/<rg>/providers
 
 ### Optional Parameters
 - `OPENAI_LOCATION` - Location of the OpenAI resource (defaults to deployment location)
-- `EXISTING_FOUNDRY_NAME` - Use an existing AI Foundry hub instead of creating new
-- `PROJECTS_COUNT` - Number of AI Projects to create (default: 1)
+- `EXISTING_FOUNDRY_NAME` - Use an existing Foundry account instead of creating new
+- `PROJECTS_COUNT` - Number of Foundry projects to create (default: 1)
 
 ## Deployment
 
@@ -100,9 +100,9 @@ azd up
 
 | Output | Description |
 |--------|-------------|
-| `project_connection_strings` | Connection strings for AI Projects |
-| `project_names` | Names of the deployed AI Projects |
-| `FOUNDRY_NAME` | Name of the AI Foundry hub |
+| `project_connection_strings` | Connection strings for Foundry projects |
+| `project_names` | Names of the deployed Foundry projects |
+| `FOUNDRY_NAME` | Name of the Foundry account |
 | `config_validation_result` | Validation status of the configuration |
 
 ## Key Differences from `option_ai-gateway-internal`
@@ -120,4 +120,4 @@ azd up
 - **Centralized AI Gateway**: Single point of control for AI model access
 - **Landing Zone integration**: Connect to shared Azure OpenAI in a hub subscription
 - **Policy enforcement**: Rate limiting, logging, and access control via APIM policies
-- **Existing Foundry**: Can attach to an existing AI Foundry hub
+- **Existing Foundry**: Can attach to an existing Foundry account

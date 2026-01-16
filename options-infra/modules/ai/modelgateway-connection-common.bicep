@@ -1,5 +1,5 @@
 /*
-Common module for creating ModelGateway connections to Azure AI Foundry projects.
+Common module for creating ModelGateway connections to Foundry projects.
 This module handles the core connection logic and can be reused across different ModelGateway connection samples.
 ModelGateway connections support ApiKey authentication.
 */
