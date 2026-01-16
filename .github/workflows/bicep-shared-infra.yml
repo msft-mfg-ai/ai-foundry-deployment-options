@@ -1,16 +1,16 @@
-name: 'Bicep: landing-zone'
+name: 'Bicep: shared-infra'
 
 on:
   push:
     branches: [main]
     paths:
-      - 'options-infra/landing-zone.bicep'
+      - 'options-infra/shared-infra/main.bicep'
       - 'options-infra/modules/**'
       - '.github/workflows/bicep-validate-reusable.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'options-infra/landing-zone.bicep'
+      - 'options-infra/shared-infra/main.bicep'
       - 'options-infra/modules/**'
       - '.github/workflows/bicep-validate-reusable.yml'
 
@@ -18,5 +18,5 @@ jobs:
   validate:
     uses: ./.github/workflows/bicep-validate-reusable.yml
     with:
-      bicep-file: landing-zone.bicep
-      working-directory: options-infra
+      bicep-file: main.bicep
+      working-directory: options-infra/shared-infra

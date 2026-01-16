@@ -18,7 +18,7 @@ module identity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.0
   }
 }
 
-module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.14.2' = {
+module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.15.0' = {
   name: 'log-${resourceToken}'
   params: {
     name: 'loganaly01'
