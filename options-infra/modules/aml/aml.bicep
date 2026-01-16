@@ -20,7 +20,7 @@ param foundryName string?
   'Hub'
 ])
 param kind string = 'Default' //'Hub'
-var description string = '${kind == 'Hub' ? 'Ai Foundry Hub' : 'Machine Learning Workspace'} ${name}'
+var description string = '${kind == 'Hub' ? 'Foundry account' : 'Machine Learning Workspace'} ${name}'
 var friendlyName string = description
 
 // split storage account id to get name and resource group

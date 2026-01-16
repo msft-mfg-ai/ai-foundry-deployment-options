@@ -1,5 +1,5 @@
 metadata name = 'API Management v2 Premium with VNET Injections (Internal)'
-metadata description = 'Deploys API Management v2 Premium with VNET Injections (Internal) mode and custom domain, integrated with AI Foundry as an AI Gateway.'
+metadata description = 'Deploys API Management v2 Premium with VNET Injections (Internal) mode and custom domain, integrated with Foundry as an AI Gateway to allow Foundry Agent Service to use models from APIM.'
 
 targetScope = 'resourceGroup'
 

@@ -63,9 +63,9 @@ This deployment option creates a complete AI Foundry environment with LiteLLM as
   - PostgreSQL (`privatelink.postgres.database.azure.com`)
   - Key Vault, Storage, Cosmos DB, AI Search
 
-### AI Foundry
-- **AI Foundry Hub** with managed identity
-- **3 AI Projects** (Projects 1, 2, and 4) with Capability Hosts in Foundry Standard mode
+### Foundry
+- **Foundry account** with managed identity
+- **3 Foundry projects** (Projects 1, 2, and 4) with Capability Hosts in Foundry Standard mode
 - **AI Dependencies**: Storage, Cosmos DB, AI Search with private endpoints
 
 ### LiteLLM Gateway

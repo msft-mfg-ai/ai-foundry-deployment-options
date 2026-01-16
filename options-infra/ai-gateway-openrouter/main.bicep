@@ -1,8 +1,8 @@
-// This bicep files deploys one resource group with the following resources:
-// 1. The AI Foundry dependencies, such as VNet and
-//    private endpoints for AI Search, Azure Storage and Cosmos DB
-// 2. The AI Foundry itself
-// 3. Two AI Projects with the capability hosts - in Foundry Standard mode
+// This bicep file deploys one resource group with the following resources:
+// 1. Foundry dependencies (minimal - no VNet)
+// 2. Foundry account and projects (public mode, without agent subnet)
+// 3. Model Gateway connection to OpenRouter to allow Foundry projects to use models from OpenRouter
+// 4. Projects without capability hosts
 targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
