@@ -18,6 +18,7 @@ param postgressDnsZoneResourceId string
 param liteLlmConfigYaml string
 param modelsStatic array = []
 param litlLlmPublicFqdn string?
+param tags object = {}
 
 var identityResourceParts = split(identityResourceId, '/')
 var identityResourceName = last(identityResourceParts)
@@ -34,10 +35,10 @@ var litelllmasterkey = take(uniqueString(resourceToken, 'litellm'), 6)
 module postgressDb '../db/postgress.bicep' = {
   name: 'postgress-db-deployment'
   params: {
-    tags: {
-      CostControl:'Ignore'
-      'hidden-title':'LiteLLM Postgress DB'
-    }
+    tags: union(tags, {
+      CostControl: 'Ignore'
+      'hidden-title': 'LiteLLM Postgress DB'
+    })
     location: location
     name: 'pg-${resourceToken}'
     keyVaultName: keyVault.outputs.KEY_VAULT_NAME
@@ -50,6 +51,7 @@ module postgressDb '../db/postgress.bicep' = {
 module managedEnvironment '../aca/container-app-environment.bicep' = {
   name: 'managed-environment'
   params: {
+    tags: tags
     location: location
     appInsightsConnectionString: appInsightsConnectionString
     name: 'aca${resourceToken}'
@@ -63,7 +65,7 @@ module managedEnvironment '../aca/container-app-environment.bicep' = {
 module keyVault '../kv/key-vault.bicep' = {
   name: 'key-vault-deployment'
   params: {
-    tags: {}
+    tags: tags
     location: location
     name: 'kv-${resourceToken}'
     secrets: [
@@ -85,6 +87,7 @@ module keyVault '../kv/key-vault.bicep' = {
 module dnsAca 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
   name: 'dns-aca'
   params: {
+    tags: tags
     name: 'privatelink.${location}.azurecontainerapps.io'
     virtualNetworkLinks: [
       {
@@ -98,8 +101,9 @@ module dnsAca 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
 module acaPrivateEndpoint '../networking/private-endpoint.bicep' = {
   name: 'private-endpoint-aca'
   params: {
-    privateEndpointName: 'pe-${managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_NAME}'
+    tags: tags
     location: location
+    privateEndpointName: 'pe-${managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_NAME}'
     subnetId: privateEndpointSubnetId
     targetResourceId: managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_ID
     groupIds: ['managedEnvironments']
@@ -115,6 +119,7 @@ module acaPrivateEndpoint '../networking/private-endpoint.bicep' = {
 module appMcp '../aca/container-app.bicep' = {
   name: 'app-mcp'
   params: {
+    tags: tags
     location: location
     name: 'aca-mcp-${resourceToken}'
     workloadProfileName: managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
@@ -148,6 +153,7 @@ module appMcp '../aca/container-app.bicep' = {
 module appOpenAPI '../aca/container-app.bicep' = {
   name: 'app-openapi'
   params: {
+    tags: tags
     location: location
     name: 'aca-openapi-${resourceToken}'
     workloadProfileName: managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
@@ -181,6 +187,7 @@ module appOpenAPI '../aca/container-app.bicep' = {
 module liteLlmApp '../aca/container-app.bicep' = {
   name: 'app-litellm'
   params: {
+    tags: tags
     location: location
     name: 'aca-litellm-${resourceToken}'
     workloadProfileName: managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME

@@ -1,4 +1,5 @@
 param location string
+param tags object = {}
 param name string
 param logAnalyticsWorkspaceResourceId string
 param storages array
@@ -27,8 +28,9 @@ var is_log_analytics_valid = logAnalyticsWorkspace.properties.features.disableLo
 module containerAppsEnvironment 'br/public:avm/res/app/managed-environment:0.11.3' = {
   name: 'container-apps-environment'
   params: {
-    name: name
+    tags: tags
     location: location
+    name: name
     zoneRedundant: false
     storages: storages
     publicNetworkAccess: publicNetworkAccess
