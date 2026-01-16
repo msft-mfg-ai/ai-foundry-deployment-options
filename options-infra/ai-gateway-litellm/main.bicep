@@ -178,19 +178,19 @@ module liteLlm '../modules/litellm/lite-llm.bicep' = {
     litlLlmPublicFqdn: 'http://${publicIpAddress.outputs.ipAddress}'
     liteLlmConfigYaml: '''
 model_list:
-  - model_name: azure-gpt-4.1-mini
+  - model_name: gpt-4.1-mini
     litellm_params:
       model: azure/gpt-4.1-mini
       api_base: os.environ/AZURE_API_BASE # runs os.getenv("AZURE_API_BASE")
       api_key: os.environ/AZURE_API_KEY # runs os.getenv("AZURE_API_KEY")
       api_version: "2025-04-14"
-  - model_name: azure-gpt-5-mini
+  - model_name: gpt-5-mini
     litellm_params:
       model: azure/gpt-5-mini
       api_base: os.environ/AZURE_API_BASE # runs os.getenv("AZURE_API_BASE")
       api_key: os.environ/AZURE_API_KEY # runs os.getenv("AZURE_API_KEY")
       api_version: "2025-08-07"
-  - model_name: azure-o3-mini
+  - model_name: o3-mini
     litellm_params:
       model: azure/o3-mini
       api_base: os.environ/AZURE_API_BASE # runs os.getenv("AZURE_API_BASE")
@@ -247,7 +247,7 @@ callback_settings:
   }
 }
 
-module publicIpAddress 'br/public:avm/res/network/public-ip-address:0.10.0' = {
+module publicIpAddress 'br/public:avm/res/network/public-ip-address:0.12.0' = {
   params: {
     // Required parameters
     name: 'app-gateway-${resourceToken}-public-ip'
@@ -289,3 +289,6 @@ module models_policy_assignment '../modules/policy/models-policy-assignment.bice
 output FOUNDRY_PROJECTS_CONNECTION_STRINGS string[] = [for i in range(1, 3): projects[i - 1].outputs.FOUNDRY_PROJECT_CONNECTION_STRING]
 output FOUNDRY_PROJECT_NAMES string[] = [for i in range(1, 3): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
 output CONFIG_VALIDATION_RESULT bool = valid_config
+
+output LITELLM_SWAGGER_URL string = 'http://${publicIpAddress.outputs.ipAddress}'
+output LITELLM_UI_URL string = 'http://${publicIpAddress.outputs.ipAddress}/ui/login/'

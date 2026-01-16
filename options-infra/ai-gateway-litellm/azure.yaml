@@ -5,3 +5,36 @@ infra:
   provider: bicep
   path: .
   module: main
+
+hooks:
+  postup:
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host "=========================================="
+        Write-Host "LiteLLM setup deployed successfully!"
+        Write-Host "=========================================="
+        Write-Host ""
+        Write-Host "Access LiteLLM:"
+        Write-Host "  $env:LITELLM_UI_URL"
+        Write-Host ""
+        Write-Host "Access LiteLLM Swagger Documentation:"
+        Write-Host "  $env:LITELLM_SWAGGER_URL"
+        Write-Host ""
+      interactive: true
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        echo "=========================================="
+        echo "LiteLLM setup deployed successfully!"
+        echo "=========================================="
+        echo ""
+        echo "Access LiteLLM:"
+        echo "  ${LITELLM_UI_URL}"
+        echo ""
+        echo "Access LiteLLM Swagger Documentation:"
+        echo "  ${LITELLM_SWAGGER_URL}"
+        echo ""
+      interactive: true
+      continueOnError: false
