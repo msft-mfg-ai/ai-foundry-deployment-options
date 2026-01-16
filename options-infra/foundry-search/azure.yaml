@@ -83,7 +83,7 @@ hooks:
       interactive: true
       continueOnError: false  
 
-  posprovision:
+  postprovision:
     windows:
       shell: pwsh
       run: |
