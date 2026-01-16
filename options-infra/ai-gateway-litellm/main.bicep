@@ -273,6 +273,19 @@ module acaAppGateway '../modules/appgtw/application-gateway.bicep' = {
   }
 }
 
+module models_policy '../modules/policy/models-policy.bicep' = {
+  scope: subscription()
+  name: 'policy-definition-deployment-${resourceToken}'
+}
+
+module models_policy_assignment '../modules/policy/models-policy-assignment.bicep' = {
+  name: 'policy-assignment-deployment-${resourceToken}'
+  params: {
+    cognitiveServicesPolicyDefinitionId: models_policy.outputs.cognitiveServicesPolicyDefinitionId
+    allowedCognitiveServicesModels: []
+  }
+}
+
 output FOUNDRY_PROJECTS_CONNECTION_STRINGS string[] = [for i in range(1, 3): projects[i - 1].outputs.FOUNDRY_PROJECT_CONNECTION_STRING]
 output FOUNDRY_PROJECT_NAMES string[] = [for i in range(1, 3): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
 output CONFIG_VALIDATION_RESULT bool = valid_config

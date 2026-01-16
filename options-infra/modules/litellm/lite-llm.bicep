@@ -316,7 +316,7 @@ module liteLlmConnectionStatic '../ai/connection-modelgateway-static.bicep' = if
   name: 'lite-llm-connection-static'
   params: {
     aiFoundryName: aiFoundryName
-    connectionName: 'model- gateway-litellm-${resourceToken}-static'
+    connectionName: 'model-gateway-litellm-${resourceToken}-static'
     apiKey: litelllmasterkey
     isSharedToAll: true
     gatewayName: 'litellm'
