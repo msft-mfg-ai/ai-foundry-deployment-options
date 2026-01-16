@@ -1,9 +1,8 @@
 import os
-from azure.ai.projects.models import (
-    PromptAgentDefinition,
-    Tool,
-)
-from openai import AsyncStream
+from azure.ai.projects.models import PromptAgentDefinition, Tool, AgentObject
+from azure.ai.projects.aio import AIProjectClient
+from openai import AsyncStream, AsyncOpenAI
+from openai.types.conversations import Conversation
 from openai.types.responses import ResponseStreamEvent, Response
 from openai.types.responses.response_input_param import (
     McpApprovalResponse,
@@ -13,7 +12,7 @@ import logging
 
 class agents_utils:
     def __init__(self, client):
-        self.client = client
+        self.client: AIProjectClient = client
         pass
 
     async def get_agents(self):
@@ -31,7 +30,7 @@ class agents_utils:
         deployment_name: str = None,
         delete_before_create: bool = True,
         tools: list[Tool] = [],
-    ):
+    ) -> AgentObject:
         # default deployment name
         deployment_name = (
             deployment_name
@@ -129,6 +128,7 @@ async def process_stream(stream: AsyncStream[ResponseStreamEvent]):
 
     return events_received, input_list, response_id, full_response
 
+
 async def process_response(response: Response):
     """Process response and handle MCP approval requests."""
     events_received = []
@@ -168,7 +168,8 @@ async def process_response(response: Response):
 
     return events_received, input_list, response_id, full_response
 
-def process_approval(item, input_list = []):
+
+def process_approval(item, input_list=[]):
     if item.type == "mcp_approval_request":
         print(
             f"\n\n🔐 MCP approval requested: {item.name if hasattr(item, 'name') else 'tool'}"
@@ -180,3 +181,28 @@ def process_approval(item, input_list = []):
                 approval_request_id=item.id,
             )
         )
+
+
+async def create_response_with_retry(
+    openai_client: AsyncOpenAI, conversation: Conversation, agent: AgentObject, max_retries: int = 10, use_retry: bool = True
+) -> Response:
+    last_exception = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = await openai_client.responses.create(
+                conversation=conversation.id,
+                extra_body={"agent": {"name": agent.name, "type": "agent_reference"}},
+                input="",
+            )
+            return response
+        except Exception as e:
+            if not use_retry:
+                raise e
+
+            last_exception = e
+            logging.warning(f"Attempt {attempt}/{max_retries} failed: {e}")
+            if attempt < max_retries:
+                import asyncio
+                await asyncio.sleep(1)  # Wait 1 second before retrying
+    
+    raise Exception(f"Failed to get response after {max_retries} attempts. Last error: {last_exception}")

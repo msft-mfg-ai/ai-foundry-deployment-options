@@ -106,8 +106,8 @@ module searchServicePublicNoPe 'br/public:avm/res/search/search-service:0.12.0' 
             }
           ]
     )
-    semanticSearch: 'standard'
-    sku: 'standard'
+    semanticSearch: 'disabled'
+    sku: 'basic'
     tags: union(tags, {
       'hidden-title': 'AI Search Public PE'
     })
@@ -182,8 +182,8 @@ module searchServicePublicPe 'br/public:avm/res/search/search-service:0.12.0' = 
             }
           ]
     )
-    semanticSearch: 'standard'
-    sku: 'standard'
+    semanticSearch: 'disabled'
+    sku: 'basic'
     tags: union(tags, {
       'hidden-title': 'AI Search Public PE'
     })
