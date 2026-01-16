@@ -245,7 +245,7 @@ callback_settings:
     '''
     modelsStatic: [
       {
-        name: 'azure-gpt-4.1-mini'
+        name: 'gpt-4.1-mini'
         properties: {
           model: {
             name: 'gpt-4.1-mini'
@@ -255,7 +255,17 @@ callback_settings:
         }
       }
       {
-        name: 'azure-gpt-5-mini'
+        name: 'gpt-4o'
+        properties: {
+          model: {
+            name: 'gpt-4o'
+            version: '2025-01-01-preview'
+            format: 'OpenAI'
+          }
+        }
+      }
+      {
+        name: 'gpt-5-mini'
         properties: {
           model: {
             name: 'gpt-5-mini'
@@ -265,7 +275,7 @@ callback_settings:
         }
       }
       {
-        name: 'azure-o3-mini'
+        name: 'o3-mini'
         properties: {
           model: {
             name: 'o3-mini'
