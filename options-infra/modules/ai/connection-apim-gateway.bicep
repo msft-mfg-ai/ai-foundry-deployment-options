@@ -1,5 +1,5 @@
 /*
-Common module for creating APIM connections to Azure AI Foundry projects.
+Common module for creating APIM connections to Foundry projects.
 This module handles the core connection logic and can be reused across different APIM connection samples.
 */
 // https://github.com/azure-ai-foundry/foundry-samples/blob/main/infrastructure/infrastructure-setup-bicep/01-connections/apim/connection-apim.bicep

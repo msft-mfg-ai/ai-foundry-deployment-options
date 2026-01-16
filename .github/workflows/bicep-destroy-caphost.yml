@@ -1,0 +1,22 @@
+name: 'Bicep: destroy-caphost'
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'options-infra/destroy-caphost/**'
+      - 'options-infra/modules/**'
+      - '.github/workflows/bicep-validate-reusable.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'options-infra/destroy-caphost/**'
+      - 'options-infra/modules/**'
+      - '.github/workflows/bicep-validate-reusable.yml'
+
+jobs:
+  validate:
+    uses: ./.github/workflows/bicep-validate-reusable.yml
+    with:
+      bicep-file: main.bicep
+      working-directory: options-infra/destroy-caphost

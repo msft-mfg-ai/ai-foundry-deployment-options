@@ -4,7 +4,7 @@ Deploy AI Foundry with a link to another AI Foundry in the same region but diffe
 
 ## Infrastructure
 
-Deployed using [Bicep](../../options-infra/main-option-2.bicep).
+Deployed using [Bicep](../../options-infra/foundry-external-ai/main.bicep).
 
 ## Results
 

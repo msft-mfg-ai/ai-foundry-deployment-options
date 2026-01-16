@@ -1,0 +1,7 @@
+# Azure Developer CLI configuration
+name: foundry-multi-subscription
+
+infra:
+  provider: bicep
+  path: .
+  module: main
