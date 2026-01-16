@@ -1,16 +1,16 @@
-name: 'Bicep: litellm'
+name: 'Bicep: ai-gateway-litellm'
 
 on:
   push:
     branches: [main]
     paths:
-      - 'options-infra/litellm/**'
+      - 'options-infra/ai-gateway-litellm/**'
       - 'options-infra/modules/**'
       - '.github/workflows/bicep-validate-reusable.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'options-infra/litellm/**'
+      - 'options-infra/ai-gateway-litellm/**'
       - 'options-infra/modules/**'
       - '.github/workflows/bicep-validate-reusable.yml'
 
@@ -19,4 +19,4 @@ jobs:
     uses: ./.github/workflows/bicep-validate-reusable.yml
     with:
       bicep-file: main.bicep
-      working-directory: options-infra/litellm
+      working-directory: options-infra/ai-gateway-litellm
