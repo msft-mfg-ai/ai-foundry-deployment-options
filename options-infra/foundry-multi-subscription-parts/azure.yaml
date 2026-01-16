@@ -1,0 +1,7 @@
+# Azure Developer CLI configuration
+name: foundry-multi-subscription-parts
+
+infra:
+  provider: bicep
+  path: .
+  # This deployment has multiple parts - see README for deployment order

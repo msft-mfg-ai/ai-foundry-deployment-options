@@ -12,7 +12,9 @@
 - [Overview](#ai-foundry-landing-zone-options)
 - [Standard Network Setup](#ai-foundry-standard-network-standard-setup)
 - [Cost Management](#cost-management)
-- [Deployment Options](#option-1---nothing-shared)
+- [Deployment Options](#deployment-options)
+  - [Architecture Patterns](#architecture-patterns)
+  - [All Deployment Templates](#all-deployment-templates)
 - [Deployment Instructions](#deployment-instructions)
 - [Troubleshooting](#troubleshooting)
 
@@ -71,88 +73,53 @@ For Foundry Standard deployment (BYO network and storage), all dependent resourc
 > [!NOTE]
 > Shared AI resource has to be of kind `AIServices` in order to support all models not only OpenAI.
 
-## Option 1 - nothing shared
-![Nothing shared approach](./Resources/1-nothing_shared.png)
+## Deployment Options
 
-Each application deploys its own "AI Landing Zone".
+### Architecture Patterns
 
-For cleaner deployments, it's possible to separate internal, Agents Service resources (Cosmos DB, Storage, AI Search, VNET, Private Endpoints, DNS, etc.) into separate Resource Group.
+| Pattern | Description | Diagram | Sample |
+|---------|-------------|---------|--------|
+| **Nothing Shared** | Each application deploys its own AI Landing Zone | ![Nothing shared](./Resources/1-nothing_shared.png) | [foundry-basic](./options-infra/foundry-basic/) |
+| **Nothing Shared (2 RGs)** | Separate internal resources (Cosmos DB, Storage, AI Search, VNET) into dedicated Resource Group | ![2 RGs](./Resources/1-nothing_shared-two-rgs.png) | [foundry-multi-rg](./options-infra/foundry-multi-rg/) |
+| **Shared AI Dependencies** | Share Cosmos DB, Storage, AI Search between projects (same subscription/region) | ![Shared deps](./Resources/2-shared-dependencies.png) | [foundry-multi-rg](./options-infra/foundry-multi-rg/) |
+| **Shared AI Foundry Models** | Share models via external AI Foundry connection (can be cross-subscription) | ![Shared models](./Resources/3-shared-models.png) | [foundry-external-ai](./options-infra/foundry-external-ai/) |
+| **Shared Foundry, Multiple Projects** | Single Foundry with project per application team | ![Many projects](./Resources/4-shared-foundry-many-projects.png) | [foundry-two-projects](./options-infra/foundry-two-projects/) |
+| **AI Gateway (APIM)** | Use Azure API Management as AI Gateway ⚠️ *Not yet supported* | ![AI Gateway](./Resources/5-shared-apim.png) | [ai-gateway](./options-infra/ai-gateway/) |
 
-![Nothing shared with 2 RGs](./Resources/1-nothing_shared-two-rgs.png)
+### All Deployment Templates
 
->[!NOTE]
-> Sample deployment with two resource groups is available at [Bicep](./options-infra/main-option-3.bicep)
+| Directory | Description | Scope | azd |
+|-----------|-------------|-------|-----|
+| [foundry-basic](./options-infra/foundry-basic/) | Basic AI Foundry with self-contained resources | Resource Group | ✅ |
+| [foundry-external-ai](./options-infra/foundry-external-ai/) | Foundry with external AI resource connection | Resource Group | ✅ |
+| [foundry-multi-rg](./options-infra/foundry-multi-rg/) | Resources split across multiple resource groups | Subscription | ✅ |
+| [foundry-two-projects](./options-infra/foundry-two-projects/) | One Foundry with two AI projects | Resource Group | ✅ |
+| [foundry-multi-vnet](./options-infra/foundry-multi-vnet/) | Foundry and dependencies in separate VNets with DNS resolver | Resource Group | ✅ |
+| [foundry-multi-region](./options-infra/foundry-multi-region/) | Dependencies in different region | Resource Group | ✅ |
+| [foundry-agents-vnet](./options-infra/foundry-agents-vnet/) | Agents Service in dedicated VNet | Resource Group | ✅ |
+| [foundry-avm](./options-infra/foundry-avm/) | Using official Azure Verified Modules (AVM) | Resource Group | ✅ |
+| [foundry-multi-subscription](./options-infra/foundry-multi-subscription/) | Cross-subscription deployment (3 subs) | Management Group | ✅ |
+| [foundry-multi-subscription-parts](./options-infra/foundry-multi-subscription-parts/) | Multi-part cross-subscription deployment | Management Group | ✅ |
+| [azure-ml](./options-infra/azure-ml/) | Azure Machine Learning workspace | Resource Group | ✅ |
+| [foundry-search](./options-infra/foundry-search/) | Foundry with AI Search integration | Resource Group | ✅ |
+| [ai-gateway](./options-infra/ai-gateway/) | API Management as AI Gateway | Resource Group | ✅ |
+| [ai-gateway-basic](./options-infra/ai-gateway-basic/) | Basic AI Gateway configuration | Resource Group | ✅ |
+| [ai-gateway-premium](./options-infra/ai-gateway-premium/) | Premium tier AI Gateway | Resource Group | ✅ |
+| [ai-gateway-internal](./options-infra/ai-gateway-internal/) | Internal AI Gateway (private) | Resource Group | ✅ |
+| [ai-gateway-pe](./options-infra/ai-gateway-pe/) | AI Gateway with private endpoints | Resource Group | ✅ |
+| [ai-gateway-openrouter](./options-infra/ai-gateway-openrouter/) | AI Gateway with OpenRouter | Resource Group | ✅ |
+| [litellm](./options-infra/litellm/) | LiteLLM proxy deployment | Resource Group | ✅ |
+| [deploy-vm](./options-infra/deploy-vm/) | Deploy VM for testing | Resource Group | ✅ |
+| [separate-dns](./options-infra/separate-dns/) | Separate DNS configuration | Resource Group | ✅ |
+| [create-projects](./options-infra/create-projects/) | Create additional projects | Resource Group | ✅ |
+| [destroy-caphost](./options-infra/destroy-caphost/) | Destroy capability hosts | Resource Group | ✅ |
 
-### Share nothing - AI Landing Zone
-More complex example available at [AI Landing Zone](https://github.com/Azure/AI-Landing-Zones)
- 
-![AI Landing Zone](./Resources/AI-Landing-Zone-Reference-Architecture.png)
+### Additional Resources
 
-## Option 2 - shared AI dependencies
-
-![Sharing AI Dependencies](./Resources/2-shared-dependencies.png)
-
-AI Dependencies can be shared between the projects when:
-1. All resources are in the same subscription.
-2. All resources are in the same region.
-3. Each AI Foundry is injected with its own, unique subnet for the Agents Service.
-
->[!NOTE]
-> Sample deployment with sharing AI Dependencies is available at [Bicep](./options-infra/main-option-3.bicep)
-
-## Option 3 - shared AI Foundry models
-
-Agents Service can use external AI Foundry connections, as long as:
-1. External AI Foundry is linked to Agent Service via capability host
-2. External AI Foundry is in the same region
-
-It doesn't have to be in the same subscription (!).
-
-Support is limited only to Agent Service, when using private endpoints.
-
-Chat playground works only with public external Foundry in the same subscription.
-
-![Shared AI Foundry](./Resources/3-shared-models.png)
-
- >[!NOTE]
-> Sample deployment external AI Foundry is available at [Bicep](./options-infra/main-option-2.bicep) as well as [Bicep](./options-infra/main-option-3.bicep).
-
-> [!NOTE]
-> OpenAI can use the [spillover feature (preview) for provisioned deployments](https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/spillover-traffic-management
-)
-
-### Tutorials and materials
-
-* [Using existing OpenAI resource](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/use-your-own-resources#basic-agent-setup-use-an-existing-azure-openai-resource)
-
-## Option 4 - Shared Foundry with project per application
-
-![Many Projects](./Resources/4-shared-foundry-many-projects.png)
-
-Projects have to be deployed to the same resource group as AI Foundry, but can be shared with Application Teams.
-
-Each application team can use their project with models hosted by Foundry.
-
- >[!NOTE]
-> Sample deployment for two-project solution is available here: [Bicep](./options-infra/main-option-4.bicep)
-
-## Option 5 - using AI Gateway (APIM) 
-
-Azure API Management can be used as [AI Gateway](https://learn.microsoft.com/en-us/azure/api-management/genai-gateway-capabilities) for AI Foundry.
-
-> [!WARNING]
-> AI Gateway for Foundry is currently not supported.
-
- ![AI Gateway](./Resources/5-shared-apim.png)
-
-### Tutorials and materials
-
-* [AI Gateway Workshop](https://azure-samples.github.io/AI-Gateway/)
-* [AI Gateway Samples](https://github.com/Azure-Samples/ai-gateway)
- 
-## Mini Landing Zone
-
-Bicep files in [lading-zone.bicep](./options-infra/landing-zone.bicep) provide very simple infrastructure that can be used for testing external foundry scenarios.
+- **Mini Landing Zone**: Simple infrastructure for testing - [landing-zone.bicep](./options-infra/landing-zone.bicep)
+- **AI Landing Zone Reference**: [Azure AI Landing Zones](https://github.com/Azure/AI-Landing-Zones)
+- **AI Gateway Workshop**: [azure-samples.github.io/AI-Gateway](https://azure-samples.github.io/AI-Gateway/)
+- **OpenAI Spillover Feature**: [Spillover traffic management (preview)](https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/spillover-traffic-management)
 
 ## Deployment Instructions
 
@@ -194,8 +161,8 @@ Bicep files in [lading-zone.bicep](./options-infra/landing-zone.bicep) provide v
    ```bash
    az deployment group create `
      --resource-group "rg-ai-foundry-config" `
-     --template-file "main-option-1.bicep" `
-     --parameters "main-option-1.bicepparam" `
+     --template-file "foundry-basic/main.bicep" `
+     --parameters "foundry-basic/main.bicepparam" `
      --verbose
    ```
 
@@ -203,8 +170,8 @@ Bicep files in [lading-zone.bicep](./options-infra/landing-zone.bicep) provide v
    ```bash
    az deployment group create `
      --resource-group "rg-ai-foundry-config" `
-     --template-file "main-option-2.bicep" `
-     --parameters "main-option-2.bicepparam" `
+     --template-file "foundry-external-ai/main.bicep" `
+     --parameters "foundry-external-ai/main.bicepparam" `
      --verbose
    ```
 
@@ -212,8 +179,8 @@ Bicep files in [lading-zone.bicep](./options-infra/landing-zone.bicep) provide v
    ```bash
    az deployment sub create `
      --location westus `
-     --template-file "main-option-3.bicep" `
-     --parameters "main-option-3.bicepparam" `
+     --template-file "foundry-multi-rg/main.bicep" `
+     --parameters "foundry-multi-rg/main.bicepparam" `
      --verbose
    ```
 
@@ -221,14 +188,14 @@ Bicep files in [lading-zone.bicep](./options-infra/landing-zone.bicep) provide v
    ```bash
    az deployment group create `
      --resource-group "rg-ai-foundry-config" `
-     --template-file "main-option-4.bicep" `
-     --parameters "main-option-4.bicepparam" `
+     --template-file "foundry-two-projects/main.bicep" `
+     --parameters "foundry-two-projects/main.bicepparam" `
      --verbose
    ```
 
 
 **Configuration Notes:**
-Create your own configuration file: `main-option-3.local.bicepparam` and use in the deployment.
+Create your own configuration file: `foundry-multi-rg/main.local.bicepparam` and use in the deployment.
 
 * **Location**: Set to `eastus2` - you can change this to your preferred Azure region that supports AI services
 * **Existing AOAI Resource**: 
@@ -248,7 +215,7 @@ Create your own configuration file: `main-option-3.local.bicepparam` and use in 
 ```bash
 az deployment group create `
   --resource-group "rg-ai-foundry-config" `
-  --template-file "main-option-2.bicep" `
+  --template-file "foundry-external-ai/main.bicep" `
   --parameters location="eastus2" existingAoaiResourceId="/subscriptions/1c083bf3-30ac-4804-aa81-afddc58c78dc/resourceGroups/aoai-rgp-02/providers/Microsoft.CognitiveServices/accounts/aoai-02" `
   --verbose
 ```

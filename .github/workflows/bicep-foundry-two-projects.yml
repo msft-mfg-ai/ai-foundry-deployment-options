@@ -1,0 +1,22 @@
+name: 'Bicep: foundry-two-projects'
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'options-infra/foundry-two-projects/**'
+      - 'options-infra/modules/**'
+      - '.github/workflows/bicep-validate-reusable.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'options-infra/foundry-two-projects/**'
+      - 'options-infra/modules/**'
+      - '.github/workflows/bicep-validate-reusable.yml'
+
+jobs:
+  validate:
+    uses: ./.github/workflows/bicep-validate-reusable.yml
+    with:
+      bicep-file: main.bicep
+      working-directory: options-infra/foundry-two-projects

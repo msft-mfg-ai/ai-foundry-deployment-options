@@ -1,7 +1,0 @@
-# deploying using AZD because https://github.com/Azure/azure-cli/pull/31990
-name: main-option-10
-
-infra:
-  provider: bicep
-  path: ../
-  module: main-option-10
