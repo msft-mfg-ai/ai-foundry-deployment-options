@@ -13,7 +13,7 @@ var existingVnetResourceIdName = empty(existingVnetResourceId) ? '' : existingVn
 var existingVnetResourceAppsSubnet = '${existingVnetResourceId}/subnets/${amlSubnetName}'
 var existingVnetResourcePrivateEndpointsSubnet = '${existingVnetResourceId}/subnets/${privateEndpointsSubnetName}'
 
-module defaultNetworkSecurityGroup 'br/public:avm/res/network/network-security-group:0.5.1' = if (empty(existingVnetResourceId)) {
+module defaultNetworkSecurityGroup 'br/public:avm/res/network/network-security-group:0.5.2' = if (empty(existingVnetResourceId)) {
   name: 'default-network-security-group'
   params: {
     name: securityGroupName
@@ -23,7 +23,7 @@ module defaultNetworkSecurityGroup 'br/public:avm/res/network/network-security-g
   }
 }
 
-module virtualNetwork 'br/public:avm/res/network/virtual-network:0.7.0' = if (empty(existingVnetResourceId)) {
+module virtualNetwork 'br/public:avm/res/network/virtual-network:0.7.2' = if (empty(existingVnetResourceId)) {
   name: 'virtual-network-${virtualNetworkName}'
   params: {
     addressPrefixes: ['10.0.0.0/26']
