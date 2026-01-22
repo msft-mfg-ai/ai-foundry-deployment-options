@@ -408,13 +408,6 @@ class AgentManager:
                 import traceback
                 logger.error(f"Traceback: {traceback.format_exc()}")
                 
-                # Try to clean up thread on error
-                if thread:
-                    try:
-                        await thread.delete()
-                    except:
-                        pass
-                
                 return InvokeResult(
                     response=f"Error processing file: {str(e)}",
                     agent_used="large_context_agent",
