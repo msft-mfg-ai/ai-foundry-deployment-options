@@ -17,7 +17,7 @@ services:
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
       - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
       - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
-      - OTEL_PYTHON_EXCLUDED_URLS=/health,/healthz,/ready,/readiness,/liveness
+      - OTEL_PYTHON_EXCLUDED_URLS=/health,/healthz,/ready,/readiness,/liveness,/invoke/stream
     depends_on:
       file-processor:
         condition: service_healthy

@@ -185,7 +185,7 @@ module appAgents '../modules/aca/container-app.bicep' = {
         }
         {
           name: 'FILE_PROCESSOR_URL'
-          value: 'https://aca-file-processor-${resourceToken}.internal.${managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN}'
+          value: 'https://aca-file-processor.internal.${managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN}'
         }
         {
           name: 'AZURE_OPENAI_DEPLOYMENT'
@@ -193,7 +193,7 @@ module appAgents '../modules/aca/container-app.bicep' = {
         }
         {
           name: 'OTEL_PYTHON_EXCLUDED_URLS'
-          value: '/health,/healthz,/ready,/readiness,/liveness'
+          value: '/health,/healthz,/ready,/readiness,/liveness,/invoke/stream'
         }
       ]
     }
@@ -232,7 +232,7 @@ module appFileProcessor '../modules/aca/container-app.bicep' = {
       settings: [
         {
           name: 'PROCESSING_DELAY_SECONDS'
-          value: '180' // 3 minutes
+          value: '20' // 20 seconds
         }
         {
           name: 'OTEL_PYTHON_EXCLUDED_URLS'

@@ -22,9 +22,9 @@ def configure_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
-    
+
     # Suppress noisy loggers from Azure SDK and OpenTelemetry internals
     noisy_loggers = [
         "azure.core.pipeline.policies.http_logging_policy",
@@ -39,10 +39,10 @@ def configure_logging() -> None:
         "urllib3",
         "msal",
     ]
-    
+
     for logger_name in noisy_loggers:
         logging.getLogger(logger_name).setLevel(logging.WARNING)
-    
+
     # Ensure our app loggers are at INFO level
     logging.getLogger(APP_LOGGER_NAME).setLevel(logging.INFO)
 
@@ -51,11 +51,13 @@ def setup_telemetry() -> None:
     """Configure OpenTelemetry with Azure Monitor exporter."""
     # Configure logging first
     configure_logging()
-    
+
     if not settings.APPLICATIONINSIGHTS_CONNECTION_STRING:
-        logger.warning("APPLICATIONINSIGHTS_CONNECTION_STRING not set, telemetry disabled")
+        logger.warning(
+            "APPLICATIONINSIGHTS_CONNECTION_STRING not set, telemetry disabled"
+        )
         return
-    
+
     configure_azure_monitor(
         connection_string=settings.APPLICATIONINSIGHTS_CONNECTION_STRING,
         service_name=settings.SERVICE_NAME,
@@ -63,10 +65,10 @@ def setup_telemetry() -> None:
         enable_live_metrics=False,
         logger_name=APP_LOGGER_NAME,  # Only export logs from our app logger
     )
-    
+
     # Instrument httpx for outgoing HTTP calls
     HTTPXClientInstrumentor().instrument()
-    
+
     logger.info("OpenTelemetry configured with Azure Monitor")
 
 

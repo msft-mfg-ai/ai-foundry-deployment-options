@@ -126,6 +126,35 @@ def get_ui_html() -> str:
         .loading.show {
             display: block;
         }
+        .intermediate-steps {
+            margin-top: 15px;
+            text-align: left;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .step {
+            padding: 8px 12px;
+            margin: 5px 0;
+            border-radius: 5px;
+            font-size: 12px;
+            animation: fadeIn 0.3s ease-in;
+        }
+        .step.tool-call {
+            background: rgba(255, 165, 0, 0.2);
+            border-left: 3px solid #ffa500;
+        }
+        .step.tool-result {
+            background: rgba(0, 255, 100, 0.1);
+            border-left: 3px solid #00ff64;
+        }
+        .step.text-chunk {
+            background: rgba(0, 217, 255, 0.1);
+            border-left: 3px solid #00d9ff;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
         .spinner {
             border: 3px solid rgba(255, 255, 255, 0.1);
             border-top: 3px solid #00d9ff;
@@ -195,7 +224,8 @@ def get_ui_html() -> str:
             
             <div class="loading" id="loading">
                 <div class="spinner"></div>
-                <p>Processing your request...</p>
+                <p id="loadingText">Processing your request...</p>
+                <div id="intermediateSteps" class="intermediate-steps"></div>
             </div>
             
             <div class="input-container">
@@ -221,6 +251,8 @@ def get_ui_html() -> str:
         const messagesEl = document.getElementById('messages');
         const inputEl = document.getElementById('userInput');
         const loadingEl = document.getElementById('loading');
+        const loadingTextEl = document.getElementById('loadingText');
+        const intermediateStepsEl = document.getElementById('intermediateSteps');
         const sendBtn = document.getElementById('sendBtn');
         const statusEl = document.getElementById('status');
         
@@ -282,6 +314,18 @@ def get_ui_html() -> str:
             messagesEl.scrollTop = messagesEl.scrollHeight;
         }
         
+        function addIntermediateStep(type, content) {
+            const step = document.createElement('div');
+            step.className = `step ${type}`;
+            step.innerHTML = content;
+            intermediateStepsEl.appendChild(step);
+            intermediateStepsEl.scrollTop = intermediateStepsEl.scrollHeight;
+        }
+        
+        function clearIntermediateSteps() {
+            intermediateStepsEl.innerHTML = '';
+        }
+        
         async function sendMessage() {
             const message = inputEl.value.trim();
             if (!message) return;
@@ -290,12 +334,15 @@ def get_ui_html() -> str:
             addMessage(message, true);
             inputEl.value = '';
             
-            // Show loading
+            // Show loading and clear previous steps
             loadingEl.classList.add('show');
+            loadingTextEl.textContent = 'Processing your request...';
+            clearIntermediateSteps();
             sendBtn.disabled = true;
             
             try {
-                const response = await fetch('/invoke', {
+                // Use streaming endpoint with SSE
+                const response = await fetch('/invoke/stream', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -307,17 +354,63 @@ def get_ui_html() -> str:
                     throw new Error(`HTTP ${response.status}`);
                 }
                 
-                const data = await response.json();
-                addMessage(data.response, false, {
-                    agent_used: data.agent_used,
-                    plugins_invoked: data.plugins_invoked
-                });
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\\n');
+                    buffer = lines.pop(); // Keep incomplete line in buffer
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                handleStreamEvent(data);
+                            } catch (e) {
+                                console.log('Parse error:', e);
+                            }
+                        }
+                    }
+                }
                 
             } catch (error) {
                 addMessage(`Error: ${error.message}. Please try again.`, false);
             } finally {
                 loadingEl.classList.remove('show');
                 sendBtn.disabled = false;
+            }
+        }
+        
+        function handleStreamEvent(data) {
+            switch (data.type) {
+                case 'tool_call':
+                    loadingTextEl.textContent = `Calling: ${data.tool}...`;
+                    addIntermediateStep('tool-call', `🔧 <strong>Calling:</strong> ${data.tool}${data.arguments ? '<br><small>' + data.arguments.substring(0, 100) + '</small>' : ''}`);
+                    break;
+                    
+                case 'tool_result':
+                    addIntermediateStep('tool-result', `✅ <strong>${data.tool}</strong> completed<br><small>${data.result.substring(0, 150)}...</small>`);
+                    break;
+                    
+                case 'text_chunk':
+                    addIntermediateStep('text-chunk', `💬 ${data.content}`);
+                    break;
+                    
+                case 'final':
+                    addMessage(data.response, false, {
+                        agent_used: data.agent_used,
+                        plugins_invoked: data.plugins_invoked
+                    });
+                    break;
+                    
+                case 'error':
+                    addMessage(`Error: ${data.message}`, false);
+                    break;
             }
         }
     </script>

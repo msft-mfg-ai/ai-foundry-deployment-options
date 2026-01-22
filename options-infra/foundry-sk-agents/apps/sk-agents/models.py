@@ -8,12 +8,14 @@ from pydantic import BaseModel
 
 class InvokeRequest(BaseModel):
     """Request model for agent invocation."""
+
     message: str
     context: Optional[dict] = None
 
 
 class InvokeResponse(BaseModel):
     """Response model for agent invocation."""
+
     response: str
     agent_used: str
     plugins_invoked: list[str]
@@ -21,6 +23,7 @@ class InvokeResponse(BaseModel):
 
 class InvokeResult(BaseModel):
     """Internal result from agent invocation."""
+
     response: str
     agent_used: str
     plugins_invoked: list[str]
@@ -28,6 +31,7 @@ class InvokeResult(BaseModel):
 
 class HealthResponse(BaseModel):
     """Health check response."""
+
     status: str
     service: str
     agents_initialized: bool
@@ -35,6 +39,7 @@ class HealthResponse(BaseModel):
 
 class AgentInfo(BaseModel):
     """Information about an agent."""
+
     name: str
     description: str
     status: str
@@ -42,11 +47,13 @@ class AgentInfo(BaseModel):
 
 class PluginInfo(BaseModel):
     """Information about a plugin."""
+
     name: str
     functions: list[str]
 
 
 class AgentsInfoResponse(BaseModel):
     """Response containing information about all agents and plugins."""
+
     agents: list[AgentInfo]
     plugins: list[PluginInfo]

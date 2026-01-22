@@ -10,18 +10,19 @@ Features:
 """
 
 from dotenv import load_dotenv
+
 load_dotenv()  # Load .env file before other imports
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager  # noqa: E402
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from fastapi import FastAPI  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # noqa: E402
 
-from config import settings
-from telemetry import setup_telemetry, get_logger
-from agent_manager import AgentManager
-from routes import router, set_agent_manager
+from config import settings  # noqa: E402
+from telemetry import setup_telemetry, get_logger  # noqa: E402
+from agent_manager import AgentManager  # noqa: E402
+from routes import router, set_agent_manager  # noqa: E402
 
 # Use named logger
 logger = get_logger("main")
@@ -34,21 +35,21 @@ agent_manager: AgentManager | None = None
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     global agent_manager
-    
+
     # Startup
     setup_telemetry()
     logger.info("SK Agents Service starting...")
-    
+
     # Initialize agent manager
     agent_manager = AgentManager()
     await agent_manager.initialize()
-    
+
     # Set the agent manager for routes
     set_agent_manager(agent_manager)
-    
+
     logger.info("SK Agents Service started successfully")
     yield
-    
+
     # Shutdown
     if agent_manager:
         await agent_manager.cleanup()
@@ -60,7 +61,7 @@ app = FastAPI(
     title="SK Agents Service",
     description="Semantic Kernel Agents with Azure AI Foundry integration",
     version=settings.SERVICE_VERSION,
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Add CORS middleware
@@ -81,4 +82,5 @@ FastAPIInstrumentor.instrument_app(app)
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=3000)

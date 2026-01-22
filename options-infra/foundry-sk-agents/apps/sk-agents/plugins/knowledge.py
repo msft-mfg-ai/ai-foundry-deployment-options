@@ -9,12 +9,14 @@ from semantic_kernel.functions import kernel_function
 
 class KnowledgePlugin:
     """Plugin for general knowledge and capabilities."""
-    
+
     @kernel_function(
         name="get_capabilities",
-        description="Get information about what the agent can do and its capabilities"
+        description="Get information about what the agent can do and its capabilities",
     )
-    async def get_capabilities(self) -> Annotated[str, "Agent capabilities information"]:
+    async def get_capabilities(
+        self,
+    ) -> Annotated[str, "Agent capabilities information"]:
         """Return agent capabilities."""
         return """
 I am the Master Agent with the following capabilities:
@@ -37,7 +39,7 @@ Example: "Summarize these files: report.pdf, data.csv, notes.txt"
 
     @kernel_function(
         name="get_system_status",
-        description="Get the current system status and health information"
+        description="Get the current system status and health information",
     )
     async def get_system_status(self) -> Annotated[str, "System status information"]:
         """Return system status."""

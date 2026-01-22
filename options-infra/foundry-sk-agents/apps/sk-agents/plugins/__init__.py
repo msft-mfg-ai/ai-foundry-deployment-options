@@ -10,6 +10,6 @@ from plugins.large_context_agent import LargeContextAgentPlugin
 # FileProcessorPlugin is used internally by LargeContextAgentPlugin
 __all__ = [
     "FileProcessorPlugin",  # Internal use only
-    "KnowledgePlugin", 
+    "KnowledgePlugin",
     "LargeContextAgentPlugin",
 ]
