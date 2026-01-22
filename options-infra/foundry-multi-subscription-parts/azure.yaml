@@ -4,4 +4,5 @@ name: foundry-multi-subscription-parts
 infra:
   provider: bicep
   path: .
+  module: main
   # This deployment has multiple parts - see README for deployment order

@@ -1,0 +1,22 @@
+[project]
+name = "sk-agents"
+version = "0.1.0"
+description = "Foundry Agents with Semantic Kernel and Azure Foundry"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "azure-ai-agents>=1.0.0,<1.2.0",
+    "azure-ai-projects>=1.0.0b7,<2.0.0",
+    "azure-identity>=1.15.0",
+    "azure-monitor-opentelemetry>=1.6.0,<1.7.0",
+    "fastapi>=0.109.0,<1.0.0",
+    "httpx>=0.27.0,<1.0.0",
+    "opentelemetry-api>=1.25.0,<1.40.0",
+    "opentelemetry-sdk>=1.25.0,<1.40.0",
+    "opentelemetry-instrumentation-fastapi>=0.46b0",
+    "opentelemetry-instrumentation-httpx>=0.46b0",
+    "pydantic>=2.0.0,<2.12.0",
+    "python-dotenv>=1.0.0",
+    "semantic-kernel[azure]>=1.28.0,<1.35.0",
+    "uvicorn[standard]>=0.27.0,<1.0.0",
+]

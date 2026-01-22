@@ -1,5 +1,5 @@
 # deploying using AZD because https://github.com/Azure/azure-cli/pull/31990
-name: deploy-litellm
+name: ai-gateway-litellm
 
 infra:
   provider: bicep

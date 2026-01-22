@@ -6,6 +6,11 @@
 targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
+param projectsCount int = 2
+var tags = {
+  'created-by': 'foundry-two-projects'
+  'hidden-title': 'Foundry Standard - BYO Vnet'
+}
 
 @export()
 type apiType = {
@@ -79,29 +84,38 @@ module foundry '../modules/ai/ai-foundry.bicep' = {
   }
 }
 
-module project1 '../modules/ai/ai-project-with-caphost.bicep' = {
-  name: 'ai-project-1-with-caphost-${resourceToken}'
-  params: {
-    foundryName: foundry.outputs.FOUNDRY_NAME
-    location: location
-    projectId: 1
-    aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
-    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
-  }
-}
+module project_identities '../modules/iam/identity.bicep' = [
+  for i in range(1, projectsCount): {
+    name: 'ai-project-${i}-identity-${resourceToken}'
+    params: {
+      tags: tags
+      location: location
 
-module project2 '../modules/ai/ai-project-with-caphost.bicep' = {
-  name: 'ai-project-2-with-caphost-${resourceToken}'
-  params: {
-    foundryName: foundry.outputs.FOUNDRY_NAME
-    location: location
-    projectId: 2
-    aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
+      identityName: 'ai-project-${i}-identity-${resourceToken}'
+    }
   }
-  dependsOn: [
-    project1 // Ensure project1 is created before project2
-  ]
-}
+]
+
+@batchSize(1)
+module projects '../modules/ai/ai-project-with-caphost.bicep' = [
+  for i in range(1, projectsCount): {
+    name: 'ai-project-${i}-with-caphost-${resourceToken}'
+    params: {
+      tags: tags
+      location: location
+      foundryName: foundry.outputs.FOUNDRY_NAME
+      project_description: 'AI Project ${i} ${resourceToken}'
+      display_name: 'AI Project ${i} ${resourceToken}'
+      projectId: i
+      aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
+      existingAiResourceId: null
+      managedIdentityResourceId: project_identities[i - 1].outputs.MANAGED_IDENTITY_RESOURCE_ID
+      appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    }
+  }
+]
+
+
 
 module dnsSites 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
   name: 'dns-sites'
@@ -152,5 +166,7 @@ module privateEndpoints '../modules/networking/private-endpoint.bicep' = [
   }
 ]
 
-output FOUNDRY_PROJECT_1_CONNECTION_STRING string = project1.outputs.FOUNDRY_PROJECT_CONNECTION_STRING
-output FOUNDRY_PROJECT_2_CONNECTION_STRING string = project2.outputs.FOUNDRY_PROJECT_CONNECTION_STRING
+output project_connection_strings string[] = [
+  for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_CONNECTION_STRING
+]
+output project_names string[] = [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]

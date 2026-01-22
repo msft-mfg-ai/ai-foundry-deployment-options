@@ -56,7 +56,6 @@ module managedEnvironment '../aca/container-app-environment.bicep' = {
     appInsightsConnectionString: appInsightsConnectionString
     name: 'aca${resourceToken}'
     logAnalyticsWorkspaceResourceId: logAnalyticsWorkspaceResourceId
-    storages: []
     publicNetworkAccess: 'Disabled'
     infrastructureSubnetId: acaSubnetResourceId
   }

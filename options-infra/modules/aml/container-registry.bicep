@@ -9,8 +9,8 @@ param principalIdsForPullPermission string[] = []
 param principalIdsForPushPermission string[] = []
 param doRoleAssignments bool = true
 param privateEndpointSubnetId string?
-param privateEndpointName string = ''
-param privateDnsZoneResourceId string = ''
+param privateEndpointName string?
+param privateDnsZoneResourceId string?
 param logAnalyticsWorkspaceId string
 @description('If true, resources will be deployed with high availability (multi-zone, multi-region when possible)')
 param haDeploymentEnabled bool = false
@@ -52,7 +52,7 @@ var importRequiredRoleAssignments = importRunOnDeploy
 var allRolesAssignments = union(pullRoleAssignments, importRequiredRoleAssignments)
 
 // Container registry
-module containerRegistry 'br/public:avm/res/container-registry/registry:0.9.3' = {
+module containerRegistry 'br/public:avm/res/container-registry/registry:0.10.0' = {
   name: 'registryDeployment-${name}'
   params: {
     name: name
@@ -92,7 +92,7 @@ module containerRegistry 'br/public:avm/res/container-registry/registry:0.9.3' =
               ? null
               : {
                   privateDnsZoneGroupConfigs: [
-                    { privateDnsZoneResourceId: privateDnsZoneResourceId }
+                    { privateDnsZoneResourceId: privateDnsZoneResourceId! }
                   ]
                 }
           }

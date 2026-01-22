@@ -2,8 +2,9 @@ param location string
 param tags object = {}
 param name string
 param logAnalyticsWorkspaceResourceId string
-param storages array
-param publicNetworkAccess string
+param storages array = []
+@allowed(['Enabled', 'Disabled'])
+param publicNetworkAccess string?
 param infrastructureSubnetId string?
 param appInsightsConnectionString string
 
@@ -21,8 +22,8 @@ resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2025-07
 }
 
 var is_log_analytics_valid = logAnalyticsWorkspace.properties.features.disableLocalAuth == true
-? fail('Log Analytics workspace is not configured correctly for Container Apps. Please ensure "Disable Local Auth" is set to false.')
-: true
+  ? fail('Log Analytics workspace is not configured correctly for Container Apps. Please ensure "Disable Local Auth" is set to false.')
+  : true
 
 // Container apps environment
 module containerAppsEnvironment 'br/public:avm/res/app/managed-environment:0.11.3' = {
@@ -51,7 +52,7 @@ module containerAppsEnvironment 'br/public:avm/res/app/managed-environment:0.11.
       }
     }
     appInsightsConnectionString: appInsightsConnectionString
-    openTelemetryConfiguration:{
+    openTelemetryConfiguration: {
       tracesConfiguration: {
         destinations: ['appInsights']
       }

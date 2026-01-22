@@ -68,7 +68,7 @@ var additionalVolumes = union(
   volumes
 )
 
-module containerApp 'br/public:avm/res/app/container-app:0.19.0' = {
+module containerApp 'br/public:avm/res/app/container-app:0.20.0' = {
   name: 'containerAppDeployment-${name}'
   params: {
     name: name
@@ -164,6 +164,7 @@ module containerApp 'br/public:avm/res/app/container-app:0.19.0' = {
   }
 }
 
-output CONTAINER_APP_ID string = containerApp.outputs.resourceId
+output CONTAINER_APP_RESOURCE_ID string = containerApp.outputs.resourceId
+output CONTAINER_APP_NAME string = containerApp.outputs.name
 output CONTAINER_APP_FQDN string = 'https://${containerApp.outputs.fqdn}'
 output CONTAINER_APP_AUTHENTICATION_CALLBACK_URI string = 'https://${containerApp.outputs.fqdn}/.auth/login/aad/callback'

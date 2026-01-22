@@ -1,5 +1,5 @@
 # deploying using AZD because https://github.com/Azure/azure-cli/pull/31990
-name: deploy-ai-gateway-openrouter
+name: ai-gateway-openrouter
 
 infra:
   provider: bicep

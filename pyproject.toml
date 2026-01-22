@@ -21,6 +21,7 @@ exclude = [
     "subscription-manager",
     "options-infra/option_foundry-search/scripts",
     "options-infra/option_foundry-search/scripts/agents_v2",
-    "options-infra/option_foundry-search/scripts/agents_v1"
+    "options-infra/option_foundry-search/scripts/agents_v1",
+    "options-infra/foundry-sk-agents/apps/sk-agents"
 ]
 

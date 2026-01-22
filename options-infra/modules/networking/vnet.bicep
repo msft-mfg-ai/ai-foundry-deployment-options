@@ -74,9 +74,11 @@ var apimv2PremiumSubnet = empty(apimv2PremiumSubnetPrefix)
   ? cidrSubnet(vnetAddress, 24, extraAgentSubnets + 6)
   : apimv2PremiumSubnetPrefix
 
-// Temporary
 var laSubnet = empty(peSubnetPrefix) ? cidrSubnet(vnetAddress, 24, 2) : peSubnetPrefix
 var laSubnetName = 'logic-apps-subnet'
+
+var acaSubnet = cidrSubnet(vnetAddress, 24, extraAgentSubnets + 7)
+var acaSubnetName = 'aca-subnet'
 
 var extraAgentSubnetNames = [for i in range(0, extraAgentSubnets): '${agentSubnetName}-${i + 1}']
 var extraAgentSubnetObjects = [
@@ -200,14 +202,23 @@ module virtualNetwork 'br/public:avm/res/network/virtual-network:0.7.2' = {
         id: networkSecurityGroup.outputs.resourceId
         delegation: 'Microsoft.Web/serverfarms'
       }
+      {
+        name: acaSubnetName
+        addressPrefix: acaSubnet
+        networkSecurityGroupResourceId: networkSecurityGroup.outputs.resourceId
+        delegation: 'Microsoft.app/environments'
+      }
     ])
   }
 }
 
-var extraAgentSubnetsArray = filter(map(virtualNetwork.outputs.subnetResourceIds, (subnetId, index)=> {
-  name: virtualNetwork.outputs.subnetNames[index]
-  resourceId: subnetId
-}), subnet => contains(extraAgentSubnetNames, subnet.name))
+var extraAgentSubnetsArray = filter(
+  map(virtualNetwork.outputs.subnetResourceIds, (subnetId, index) => {
+    name: virtualNetwork.outputs.subnetNames[index]
+    resourceId: subnetId
+  }),
+  subnet => contains(extraAgentSubnetNames, subnet.name)
+)
 
 // Output variables
 type SubnetInfoType = {
@@ -227,6 +238,10 @@ type SubnetsType = {
   apimv2Subnet: SubnetInfoType
   @description('The API Management V2 Premium SKUs Subnet information')
   apimv2PremiumSubnet: SubnetInfoType
+  @description('The Logic Apps Subnet information')
+  logicAppsSubnet: SubnetInfoType
+  @description('The Azure Container Apps Subnet information')
+  acaSubnet: SubnetInfoType
   @description('Additional Agent Subnets information')
   extraAgentSubnets: SubnetInfoType[]
 }
@@ -255,6 +270,14 @@ output VIRTUAL_NETWORK_SUBNETS SubnetsType = {
   apimv2PremiumSubnet: {
     name: apimv2PremiumSubnetName
     resourceId: '${virtualNetwork.outputs.resourceId}/subnets/${apimv2PremiumSubnetName}'
+  }
+  logicAppsSubnet: {
+    name: laSubnetName
+    resourceId: '${virtualNetwork.outputs.resourceId}/subnets/${laSubnetName}'
+  }
+  acaSubnet: {
+    name: acaSubnetName
+    resourceId: '${virtualNetwork.outputs.resourceId}/subnets/${acaSubnetName}'
   }
   extraAgentSubnets: extraAgentSubnetsArray
 }
