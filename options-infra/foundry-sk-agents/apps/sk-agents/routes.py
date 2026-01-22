@@ -56,7 +56,7 @@ async def invoke_agent(request: InvokeRequest) -> InvokeResponse:
         )
         
     except Exception as e:
-        logger.error(f"Error invoking agent: {e}")
+        logger.exception(f"Error invoking agent: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

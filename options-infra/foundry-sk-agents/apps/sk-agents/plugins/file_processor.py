@@ -55,10 +55,10 @@ class FileProcessorPlugin:
                 return result.get("summary", "No summary available")
                 
             except httpx.TimeoutException:
-                logger.error("File Processor API timeout")
+                logger.exception("File Processor API timeout")
                 return f"Error: File processing timed out for {file_name}. Please try again later."
             except Exception as e:
-                logger.error(f"File Processor API error: {e}")
+                logger.exception(f"File Processor API error: {e}")
                 return f"Error processing file {file_name}: {str(e)}"
     
     async def close(self) -> None:

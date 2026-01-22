@@ -174,7 +174,7 @@ class AgentManager:
         # Client and threads
         self.agent_client = None
         self.master_thread: Optional[AzureAIAgentThread] = None
-        # Note: Large Context Agent threads are created per-invocation for parallel support
+        self.large_context_thread: Optional[AzureAIAgentThread] = None
         
         # Plugins
         self.file_processor_plugin: Optional[FileProcessorPlugin] = None
@@ -211,7 +211,9 @@ class AgentManager:
                 logger.info("Agent Manager initialized successfully")
                 
             except Exception as e:
-                logger.exception(f"Failed to initialize Agent Manager: {e}")
+                logger.error(f"Failed to initialize Agent Manager: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 raise
     
     async def _setup_agents(self) -> None:
@@ -353,14 +355,13 @@ class AgentManager:
             span.set_attribute("message.length", len(message))
             
             plugins_invoked = []
-            thread = None  # Each invocation gets its own thread for parallel support
             
             try:
                 if self.large_context_agent:
-                    # Create a NEW thread for each invocation to support parallel calls
-                    # (Azure AI Agent Service only allows one active run per thread)
-                    thread = AzureAIAgentThread(client=self.agent_client)
-                    logger.info(f"Created new Large Context Agent thread for this invocation")
+                    # Create thread if not exists
+                    if self.large_context_thread is None:
+                        self.large_context_thread = AzureAIAgentThread(client=self.agent_client)
+                        logger.info("Created new Large Context Agent thread")
                     
                     response_text = ""
                     
@@ -368,7 +369,7 @@ class AgentManager:
                     
                     async for agent_response in self.large_context_agent.invoke(
                         messages=message,
-                        thread=thread,
+                        thread=self.large_context_thread,
                         on_intermediate_message=on_intermediate_message,
                     ):
                         # Process items in the response
@@ -379,16 +380,10 @@ class AgentManager:
                                 plugins_invoked.append(item.name)
                         
                         # Update thread reference
-                        thread = agent_response.thread
+                        self.large_context_thread = agent_response.thread
                     
                     if not response_text and agent_response:
                         response_text = str(agent_response.content) if agent_response.content else str(agent_response)
-                    
-                    # Clean up thread after use
-                    try:
-                        await thread.delete()
-                    except Exception as cleanup_error:
-                        logger.warning(f"Failed to delete thread: {cleanup_error}")
                     
                 else:
                     # Mock mode
@@ -402,8 +397,9 @@ class AgentManager:
                 )
                 
             except Exception as e:
-                logger.exception(f"Error in Large Context Agent: {e}")
-                span.record_exception(e)
+                logger.error(f"Error in Large Context Agent: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 
                 return InvokeResult(
                     response=f"Error processing file: {str(e)}",
@@ -476,7 +472,6 @@ class AgentManager:
                         thread=self.master_thread,
                         additional_instructions=additional_instructions,
                         on_intermediate_message=on_intermediate or on_intermediate_message,
-                        parallel_tool_calls=True,  # Enable parallel tool execution
                     ):
                         response_count += 1
                         logger.info(f"Processing response #{response_count}")
@@ -514,7 +509,9 @@ class AgentManager:
                 )
                 
             except Exception as e:
-                logger.exception(f"Error in master agent: {e}")
+                logger.error(f"Error in master agent: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 span.record_exception(e)
                 
                 return InvokeResult(
@@ -554,7 +551,6 @@ class AgentManager:
                         thread=self.master_thread,
                         additional_instructions=additional_instructions,
                         on_intermediate_message=on_intermediate_message,
-                        parallel_tool_calls=True,  # Enable parallel tool execution
                     ):
                         # Process items and yield text
                         for item in agent_response.items or []:
@@ -573,7 +569,7 @@ class AgentManager:
                     yield response_text
                     
             except Exception as e:
-                logger.exception(f"Error in streaming: {e}")
+                logger.error(f"Error in streaming: {e}")
                 yield f"Error: {str(e)}"
     
     async def _generate_mock_response(self, message: str) -> tuple[str, list[str]]:
@@ -681,12 +677,14 @@ How can I assist you today?
     async def cleanup(self) -> None:
         """Cleanup resources including Azure AI Foundry agents."""
         try:
-            # Delete Master Agent thread
+            # Delete threads
             if self.master_thread:
                 await self.master_thread.delete()
                 logger.info("Deleted Master Agent thread")
             
-            # Note: Large Context Agent threads are created and deleted per-invocation
+            if self.large_context_thread:
+                await self.large_context_thread.delete()
+                logger.info("Deleted Large Context Agent thread")
             
             # Note: We don't delete the agents from Foundry on cleanup
             # so they persist between restarts. Uncomment below to delete:
