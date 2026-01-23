@@ -10,6 +10,9 @@ class InvokeRequest(BaseModel):
     """Request model for agent invocation."""
 
     message: str
+    user_id: Optional[str] = None
+    user_first_name: Optional[str] = None
+    user_last_name: Optional[str] = None
     context: Optional[dict] = None
 
 

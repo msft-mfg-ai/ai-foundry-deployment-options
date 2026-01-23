@@ -51,7 +51,11 @@ async def invoke_agent(request: InvokeRequest) -> InvokeResponse:
 
     try:
         result = await agent_manager.invoke_master_agent(
-            message=request.message, context=request.context
+            message=request.message,
+            user_id=request.user_id,
+            user_first_name=request.user_first_name,
+            user_last_name=request.user_last_name,
+            context=request.context,
         )
 
         return InvokeResponse(
@@ -74,7 +78,16 @@ async def invoke_agent_stream(request: InvokeRequest):
     if not agent_manager or not agent_manager.is_initialized:
         raise HTTPException(status_code=503, detail="Agents not initialized")
 
-    logger.info(f"Stream started - message length: {len(request.message)}")
+    logger.info(
+        f"Stream started - message length: {len(request.message)}, user: {request.user_id or 'anonymous'}"
+    )
+
+    # Capture user context for tool call events
+    user_context = {
+        "user_id": request.user_id or "anonymous",
+        "user_first_name": request.user_first_name or "",
+        "user_last_name": request.user_last_name or "",
+    }
 
     async def generate_events():
         """Generate SSE events from agent response."""
@@ -91,6 +104,7 @@ async def invoke_agent_stream(request: InvokeRequest):
                         "arguments": (
                             str(item.arguments)[:200] if item.arguments else None
                         ),
+                        "user_context": user_context,  # Include user context
                     }
                     await event_queue.put(event_data)
                 elif isinstance(item, FunctionResultContent):
@@ -122,6 +136,9 @@ async def invoke_agent_stream(request: InvokeRequest):
             try:
                 result = await agent_manager.invoke_master_agent(
                     message=request.message,
+                    user_id=request.user_id,
+                    user_first_name=request.user_first_name,
+                    user_last_name=request.user_last_name,
                     context=request.context,
                     on_intermediate=on_intermediate,
                 )

@@ -21,14 +21,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from agent_manager import AgentManager  # noqa: E402
-from semantic_kernel.contents import (
-    FunctionCallContent,
-    FunctionResultContent,
-)  # noqa: E402
-from semantic_kernel.contents.chat_message_content import (
-    ChatMessageContent,
-    TextContent,
-)  # noqa: E402
+from semantic_kernel.contents import FunctionCallContent  # noqa: E402
+from semantic_kernel.contents import FunctionResultContent  # noqa: E402
+from semantic_kernel.contents.chat_message_content import ChatMessageContent  # noqa: E402
+from semantic_kernel.contents.chat_message_content import TextContent  # noqa: E402
 
 
 async def print_intermediate_message(agent_response: ChatMessageContent):
@@ -55,9 +51,9 @@ async def print_intermediate_message(agent_response: ChatMessageContent):
 
 async def test_single_message(message: str) -> None:
     """Test the agent with a single message."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Master Agent Test (Semantic Kernel + Azure AI Foundry)")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     manager = AgentManager()
 
@@ -89,12 +85,12 @@ async def test_single_message(message: str) -> None:
 
 async def test_interactive() -> None:
     """Interactive test mode."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Master Agent Interactive Test")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print("Type 'quit' or 'exit' to stop")
     print("Type 'info' to see agent information")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     manager = AgentManager()
 
@@ -150,9 +146,9 @@ async def test_interactive() -> None:
 
 async def test_examples() -> None:
     """Run through example test cases."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Master Agent Example Tests")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     manager = AgentManager()
 
@@ -168,9 +164,9 @@ async def test_examples() -> None:
         print("✅ Agent Manager initialized\n")
 
         for i, message in enumerate(examples, 1):
-            print(f"\n{'─'*60}")
+            print(f"\n{'─' * 60}")
             print(f"Test {i}/{len(examples)}")
-            print(f"{'─'*60}")
+            print(f"{'─' * 60}")
             print(f"📤 User: {message}\n")
 
             result = await manager.invoke_master_agent(
@@ -182,9 +178,9 @@ async def test_examples() -> None:
             if result.plugins_invoked:
                 print(f"🔧 Tools: {', '.join(result.plugins_invoked)}")
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("All tests completed!")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
 
     finally:
         await manager.cleanup()

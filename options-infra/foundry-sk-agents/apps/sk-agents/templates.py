@@ -209,6 +209,18 @@ def get_ui_html() -> str:
             <p class="subtitle">Powered by Semantic Kernel & Azure AI Foundry</p>
         </header>
         
+        <div class="user-info" style="background: rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+            <h3 style="color: #00d9ff; margin-bottom: 10px; font-size: 14px;">👤 User Information (for personalization)</h3>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <input type="text" id="userId" placeholder="User ID (e.g., user123)" 
+                    style="flex: 1; min-width: 150px; padding: 10px; border: none; border-radius: 5px; background: rgba(255, 255, 255, 0.1); color: #fff; font-size: 13px;">
+                <input type="text" id="userFirstName" placeholder="First Name" value="John"
+                    style="flex: 1; min-width: 120px; padding: 10px; border: none; border-radius: 5px; background: rgba(255, 255, 255, 0.1); color: #fff; font-size: 13px;">
+                <input type="text" id="userLastName" placeholder="Last Name" value="Doe"
+                    style="flex: 1; min-width: 120px; padding: 10px; border: none; border-radius: 5px; background: rgba(255, 255, 255, 0.1); color: #fff; font-size: 13px;">
+            </div>
+        </div>
+        
         <div class="chat-container">
             <div id="messages">
                 <div class="message agent">
@@ -255,6 +267,12 @@ def get_ui_html() -> str:
         const intermediateStepsEl = document.getElementById('intermediateSteps');
         const sendBtn = document.getElementById('sendBtn');
         const statusEl = document.getElementById('status');
+        const userIdEl = document.getElementById('userId');
+        const userFirstNameEl = document.getElementById('userFirstName');
+        const userLastNameEl = document.getElementById('userLastName');
+        
+        // Generate a random user ID on load
+        userIdEl.value = 'user_' + Math.random().toString(36).substring(2, 10);
         
         // Check health on load
         checkHealth();
@@ -326,6 +344,29 @@ def get_ui_html() -> str:
             intermediateStepsEl.innerHTML = '';
         }
         
+        function moveToolCallsToMessage() {
+            // Move intermediate steps to message area so they persist after response
+            if (intermediateStepsEl.children.length > 0) {
+                const toolCallsDiv = document.createElement('div');
+                toolCallsDiv.className = 'message agent';
+                toolCallsDiv.innerHTML = '<strong>🔧 Tool Calls</strong>';
+                
+                const stepsContainer = document.createElement('div');
+                stepsContainer.style.marginTop = '10px';
+                stepsContainer.style.fontSize = '12px';
+                
+                // Clone all steps
+                Array.from(intermediateStepsEl.children).forEach(step => {
+                    const clonedStep = step.cloneNode(true);
+                    stepsContainer.appendChild(clonedStep);
+                });
+                
+                toolCallsDiv.appendChild(stepsContainer);
+                messagesEl.appendChild(toolCallsDiv);
+                messagesEl.scrollTop = messagesEl.scrollHeight;
+            }
+        }
+        
         async function sendMessage() {
             const message = inputEl.value.trim();
             if (!message) return;
@@ -341,13 +382,23 @@ def get_ui_html() -> str:
             sendBtn.disabled = true;
             
             try {
+                // Get user info
+                const userId = userIdEl.value.trim() || null;
+                const userFirstName = userFirstNameEl.value.trim() || null;
+                const userLastName = userLastNameEl.value.trim() || null;
+                
                 // Use streaming endpoint with SSE
                 const response = await fetch('/invoke/stream', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ message })
+                    body: JSON.stringify({ 
+                        message,
+                        user_id: userId,
+                        user_first_name: userFirstName,
+                        user_last_name: userLastName
+                    })
                 });
                 
                 if (!response.ok) {
@@ -390,7 +441,8 @@ def get_ui_html() -> str:
             switch (data.type) {
                 case 'tool_call':
                     loadingTextEl.textContent = `Calling: ${data.tool}...`;
-                    addIntermediateStep('tool-call', `🔧 <strong>Calling:</strong> ${data.tool}${data.arguments ? '<br><small>' + data.arguments.substring(0, 100) + '</small>' : ''}`);
+                    const userInfo = data.user_context ? `<br><small style="color: #888;">👤 User: ${data.user_context.user_first_name || ''} ${data.user_context.user_last_name || ''} (${data.user_context.user_id})</small>` : '';
+                    addIntermediateStep('tool-call', `🔧 <strong>Calling:</strong> ${data.tool}${userInfo}${data.arguments ? '<br><small>' + data.arguments.substring(0, 100) + '</small>' : ''}`);
                     break;
                     
                 case 'tool_result':
@@ -402,6 +454,8 @@ def get_ui_html() -> str:
                     break;
                     
                 case 'final':
+                    // Move tool calls to message area before adding final response
+                    moveToolCallsToMessage();
                     addMessage(data.response, false, {
                         agent_used: data.agent_used,
                         plugins_invoked: data.plugins_invoked
