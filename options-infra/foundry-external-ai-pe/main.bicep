@@ -1,5 +1,10 @@
 // creates ai foundry and project with external AI resource
 param location string = resourceGroup().location
+@allowed([
+  'SystemAssigned'
+  'UserAssigned'
+])
+param identityType string = 'SystemAssigned'
 
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
 
@@ -83,7 +88,7 @@ module logAnalytics '../modules/monitor/loganalytics.bicep' = {
   }
 }
 
-module identity '../modules/iam/identity.bicep' = {
+module project_identity '../modules/iam/identity.bicep' = if (identityType == 'UserAssigned') {
   name: 'app-identity'
   params: {
     location: location
@@ -97,7 +102,6 @@ module foundry '../modules/ai/ai-foundry.bicep' = {
   params: {
     location: location
     tags: tags
-    managedIdentityResourceId: '' // Use System Assigned Identity
     name: 'ai-foundry-${resourceToken}'
     publicNetworkAccess: 'Enabled'
     agentSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId // Use the first agent subnet
@@ -113,7 +117,7 @@ module aiProject '../modules/ai/ai-project.bicep' = {
     project_name: 'ai-project1'
     project_description: 'AI Project with existing, external AI resource'
     display_name: 'AI Project with'
-    managedIdentityResourceId: identity.outputs.MANAGED_IDENTITY_RESOURCE_ID
+    managedIdentityResourceId: identityType == 'UserAssigned' ? project_identity.outputs.MANAGED_IDENTITY_RESOURCE_ID : '' // Use System Assigned Identity
     existingAiResourceId: foundryWithModels.outputs.FOUNDRY_RESOURCE_ID
     existingAiKind: 'AIServices'
     usingFoundryAiConnection: true // Use the AI Foundry connection for the project
@@ -122,26 +126,11 @@ module aiProject '../modules/ai/ai-project.bicep' = {
   }
 }
 
-module projects '../modules/ai/ai-project-with-caphost.bicep' = {
-  name: 'ai-project-with-caphost-${resourceToken}'
-  params: {
-    tags: tags
-    location: location
-    foundryName: foundry.outputs.FOUNDRY_NAME
-    project_description: 'AI Project with existing, external AI resource'
-    display_name: 'AI Project with'
-    aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
-    managedIdentityResourceId: identity.outputs.MANAGED_IDENTITY_RESOURCE_ID
-    existingAiResourceId: foundryWithModels.outputs.FOUNDRY_RESOURCE_ID
-    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
-  }
-}
-
 module ai_role_assignment '../modules/iam/role-assignment-cognitiveServices.bicep' = {
   name: take('ai-user-role-assignments-foundry-${resourceToken}', 64)
   params: {
     accountName: foundryWithModels.outputs.FOUNDRY_NAME
-    projectPrincipalId: identity.outputs.MANAGED_IDENTITY_PRINCIPAL_ID
+    projectPrincipalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
     roleName: 'Azure AI User'
   }
 }
@@ -150,8 +139,35 @@ module cognitive_services_role_assignment '../modules/iam/role-assignment-cognit
   name: take('cog-user-role-assignments-foundry-${resourceToken}', 64)
   params: {
     accountName: foundryWithModels.outputs.FOUNDRY_NAME
-    projectPrincipalId: identity.outputs.MANAGED_IDENTITY_PRINCIPAL_ID
+    projectPrincipalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
     roleName: 'Cognitive Services User'
+  }
+}
+
+module cognitive_contributor_services_role_assignment '../modules/iam/role-assignment-cognitiveServices.bicep' = {
+  name: take('cog-contributor-role-assignments-foundry-${resourceToken}', 64)
+  params: {
+    accountName: foundryWithModels.outputs.FOUNDRY_NAME
+    projectPrincipalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
+    roleName: 'Cognitive Services Contributor'
+  }
+}
+
+module cognitive_services_role_assignment_account '../modules/iam/role-assignment-cognitiveServices.bicep' = {
+  name: take('cog-user-role-assignments-account-${resourceToken}', 64)
+  params: {
+    accountName: foundryWithModels.outputs.FOUNDRY_NAME
+    projectPrincipalId: foundry.outputs.FOUNDRY_PRINCIPAL_ID
+    roleName: 'Cognitive Services User'
+  }
+}
+
+module cognitive_contributor_services_role_assignment_account '../modules/iam/role-assignment-cognitiveServices.bicep' = {
+  name: take('cog-contributor-role-assignments-account-${resourceToken}', 64)
+  params: {
+    accountName: foundryWithModels.outputs.FOUNDRY_NAME
+    projectPrincipalId: foundry.outputs.FOUNDRY_PRINCIPAL_ID
+    roleName: 'Cognitive Services Contributor'
   }
 }
 

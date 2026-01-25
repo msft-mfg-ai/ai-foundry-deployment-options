@@ -207,6 +207,16 @@ module ai_gateway '../modules/apim/ai-gateway-pe.bicep' = {
         }
       }
       {
+        name: 'gpt-4o'
+        properties: {
+          model: {
+            name: 'gpt-4o'
+            version: '2025-01-01-preview'
+            format: 'OpenAI'
+          }
+        }
+      }
+      {
         name: 'gpt-5-mini'
         properties: {
           model: {

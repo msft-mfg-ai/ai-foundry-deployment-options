@@ -243,7 +243,7 @@ callback_settings:
   otel:
     message_logging: True
     '''
-    modelsStatic: [
+    staticModels: [
       {
         name: 'gpt-4.1-mini'
         properties: {

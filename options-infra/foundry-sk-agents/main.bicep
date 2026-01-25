@@ -20,14 +20,17 @@ var AZURE_OPENAI_DEPLOYMENT = 'gpt-4.1-mini'
 module vnet '../modules/networking/vnet.bicep' = {
   name: 'vnet'
   params: {
-    vnetName: 'project-vnet-${resourceToken}'
+    tags: tags
     location: location
+    vnetName: 'project-vnet-${resourceToken}'
   }
 }
 
 module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
   name: 'ai-dependencies-with-dns'
   params: {
+    tags: tags
+    location: location
     peSubnetName: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.name
     vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     resourceToken: resourceToken
@@ -42,18 +45,20 @@ module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
 module logAnalytics '../modules/monitor/loganalytics.bicep' = {
   name: 'log-analytics'
   params: {
+    tags: tags
+    location: location
     newLogAnalyticsName: 'log-analytics'
     newApplicationInsightsName: 'app-insights'
-    location: location
   }
 }
 
 module foundry '../modules/ai/ai-foundry.bicep' = {
   name: 'foundry-deployment'
   params: {
+    tags: tags
+    location: location
     managedIdentityResourceId: '' // Use System Assigned Identity
     name: 'ai-foundry-${resourceToken}'
-    location: location
     publicNetworkAccess: 'Enabled'
     agentSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId // Use the first agent subnet
     deployments: [
@@ -81,7 +86,6 @@ module project_identities '../modules/iam/identity.bicep' = [
     params: {
       tags: tags
       location: location
-
       identityName: 'ai-project-${i}-identity-${resourceToken}'
     }
   }
@@ -109,9 +113,9 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
 module managedEnvironment '../modules/aca/container-app-environment.bicep' = {
   name: 'container-app-environment'
   params: {
-    name: 'aca-environment-${resourceToken}'
-    location: location
     tags: tags
+    location: location
+    name: 'aca-environment-${resourceToken}'
     logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
     infrastructureSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.acaSubnet.resourceId
     appInsightsConnectionString: logAnalytics.outputs.APPLICATION_INSIGHTS_CONNECTION_STRING
@@ -145,8 +149,8 @@ module acrDnsZone 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
 module containerRegistry '../modules/aml/container-registry.bicep' = {
   name: 'container-registry'
   params: {
-    location: location
     tags: tags
+    location: location
     name: 'acr${resourceToken}'
     logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
     privateEndpointSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
@@ -172,8 +176,8 @@ module appAgents '../modules/aca/container-app.bicep' = {
   name: 'app-sk-agents'
   dependsOn: [appFileProcessor] // Ensure file processor is deployed first
   params: {
-    location: location
     tags: tags
+    location: location
     name: 'aca-sk-agents'
     workloadProfileName: managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
     applicationInsightsConnectionString: logAnalytics.outputs.APPLICATION_INSIGHTS_CONNECTION_STRING
@@ -223,8 +227,8 @@ module appAgents '../modules/aca/container-app.bicep' = {
 module appFileProcessor '../modules/aca/container-app.bicep' = {
   name: 'app-file-processor'
   params: {
-    location: location
     tags: tags
+    location: location
     name: 'aca-file-processor'
     workloadProfileName: managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
     applicationInsightsConnectionString: logAnalytics.outputs.APPLICATION_INSIGHTS_CONNECTION_STRING
