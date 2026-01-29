@@ -45,7 +45,7 @@ param staticModels ModelType[] = []
 type ModelType = {
   name: string
   properties: {
-    model:{
+    model: {
       format: string
       name: string
       version: string
@@ -62,6 +62,7 @@ param customHeaders object = {}
 param authConfig object = {}
 
 // Connection configuration
+@allowed(['ApiKey', 'ProjectManagedIdentity'])
 param authType string = 'ApiKey'
 param isSharedToAll bool = false
 
@@ -73,33 +74,45 @@ var metadata = union(
     deploymentInPath: deploymentInPath
   },
   // Conditionally include inference API version
-  hasInferenceAPIVersion ? {
-    inferenceAPIVersion: inferenceAPIVersion
-  } : {},
+  hasInferenceAPIVersion
+    ? {
+        inferenceAPIVersion: inferenceAPIVersion
+      }
+    : {},
   // Conditionally include deployment API version
-  hasDeploymentAPIVersion ? {
-    deploymentAPIVersion: deploymentAPIVersion
-  } : {},
+  hasDeploymentAPIVersion
+    ? {
+        deploymentAPIVersion: deploymentAPIVersion
+      }
+    : {},
   // Conditionally include model discovery configuration
-  hasModelDiscovery ? { 
-    modelDiscovery: string({
-      listModelsEndpoint: listModelsEndpoint
-      getModelEndpoint: getModelEndpoint
-      deploymentProvider: deploymentProvider
-    })
-  } : {},
+  hasModelDiscovery
+    ? {
+        modelDiscovery: string({
+          listModelsEndpoint: listModelsEndpoint
+          getModelEndpoint: getModelEndpoint
+          deploymentProvider: deploymentProvider
+        })
+      }
+    : {},
   // Conditionally include static models (only if no dynamic discovery)
-  hasStaticModels && !hasModelDiscovery ? { 
-    models: string(staticModels)
-  } : {},
+  hasStaticModels && !hasModelDiscovery
+    ? {
+        models: string(staticModels)
+      }
+    : {},
   // Conditionally include custom headers
-  hasCustomHeaders ? {
-    customHeaders: string(customHeaders)
-  } : {},
+  hasCustomHeaders
+    ? {
+        customHeaders: string(customHeaders)
+      }
+    : {},
   // Conditionally include custom auth configuration
-  hasAuthConfig ? {
-    authConfig: string(authConfig)
-  } : {}
+  hasAuthConfig
+    ? {
+        authConfig: string(authConfig)
+      }
+    : {}
 )
 
 // Helper variables for conditional logic
@@ -112,13 +125,13 @@ var hasAuthConfig = !empty(authConfig)
 
 // Validation: Fail deployment if both static models and dynamic discovery are configured
 var modelDiscoveryValid = hasModelDiscovery && hasStaticModels
-? fail('ERROR: Cannot configure both static models and dynamic discovery. Use either staticModels array OR modelDiscovery parameters, not both.')
-: true
+  ? fail('ERROR: Cannot configure both static models and dynamic discovery. Use either staticModels array OR modelDiscovery parameters, not both.')
+  : true
 
 // Validation: Fail deployment if neither static models nor dynamic discovery is configured
 var configurationValid = !hasModelDiscovery && !hasStaticModels
-? fail('ERROR: Must configure either static models (staticModels array) OR dynamic discovery (listModelsEndpoint, getModelEndpoint, deploymentProvider). Cannot have neither.')
-: true
+  ? fail('ERROR: Must configure either static models (staticModels array) OR dynamic discovery (listModelsEndpoint, getModelEndpoint, deploymentProvider). Cannot have neither.')
+  : true
 
 output validationStatus bool = modelDiscoveryValid && configurationValid
 
@@ -157,7 +170,7 @@ resource apimSubscription 'Microsoft.ApiManagement/service/subscriptions@2021-08
 }
 
 // Create the connection with ApiKey authentication
-resource connectionApiKey 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-preview' = if (authType == 'ApiKey' && aiFoundryProjectName == null) {
+resource connectionApiKeyAccount 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-preview' = if (authType == 'ApiKey' && aiFoundryProjectName == null) {
   name: connectionName
   parent: aiFoundry
   properties: {
@@ -173,7 +186,7 @@ resource connectionApiKey 'Microsoft.CognitiveServices/accounts/connections@2025
 }
 
 // Create the connection with ApiKey authentication
-resource connectionProjectApiKey 'Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview' = if (authType == 'ApiKey' && aiFoundryProjectName != null) {
+resource connectionApiKeyProject 'Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview' = if (authType == 'ApiKey' && aiFoundryProjectName != null) {
   name: connectionName
   parent: aiProject
   properties: {
@@ -188,23 +201,39 @@ resource connectionProjectApiKey 'Microsoft.CognitiveServices/accounts/projects/
   }
 }
 
-// TODO: Future AAD connection (when role assignments are implemented)
-// resource connectionAAD 'Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview' = if (authType == 'AAD') {
-//   name: connectionName
-//   parent: aiProject
-//   properties: {
-//     category: 'ApiManagement'
-//     target: '${existingApim.properties.gatewayUrl}/${apimApi.properties.path}'
-//     authType: 'AAD'
-//     isSharedToAll: isSharedToAll
-//     credentials: {}
-//     metadata: metadata
-//   }
-// }
+resource connectionAADProject 'Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview' = if (authType == 'ProjectManagedIdentity' && aiFoundryProjectName != null) {
+  name: connectionName
+  parent: aiProject
+  properties: {
+    category: 'ApiManagement'
+    target: '${existingApim.properties.gatewayUrl}/${apimApi.properties.path}'
+    authType: 'ProjectManagedIdentity'
+    audience: 'https://cognitiveservices.azure.com'
+    isSharedToAll: isSharedToAll
+    metadata: union(metadata, {
+      customHeaders: string({ 'api-key': apimSubscription.listSecrets(apimSubscription.apiVersion).primaryKey })
+    })
+  }
+}
+
+resource connectionAADAccount 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-preview' = if (authType == 'ProjectManagedIdentity' && aiFoundryProjectName == null) {
+  name: connectionName
+  parent: aiFoundry
+  properties: {
+    category: 'ApiManagement'
+    target: '${existingApim.properties.gatewayUrl}/${apimApi.properties.path}'
+    authType: 'ProjectManagedIdentity'
+    audience: 'https://cognitiveservices.azure.com'
+    isSharedToAll: isSharedToAll
+    metadata: union(metadata, {
+      customHeaders: string({ 'api-key': apimSubscription.listSecrets(apimSubscription.apiVersion).primaryKey })
+    })
+  }
+}
 
 // Outputs (only from the created connection)
-output connectionName string = authType == 'ApiKey' ? connectionApiKey.name : ''
-output connectionId string = authType == 'ApiKey' ? connectionApiKey.id : ''
+output connectionName string = (connectionAADAccount.?name ?? connectionAADProject.?name ?? connectionApiKeyAccount.?name ?? connectionApiKeyProject.?name) ?? ''
+output connectionId string = (connectionAADAccount.?id ?? connectionAADProject.?id ?? connectionApiKeyAccount.?id ?? connectionApiKeyProject.?id) ?? ''
 output targetUrl string = '${existingApim.properties.gatewayUrl}/${apimApi.properties.path}'
 output authType string = authType
 output metadata object = metadata

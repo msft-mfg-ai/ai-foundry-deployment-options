@@ -8,6 +8,8 @@ param appInsightsInstrumentationKey string = ''
 param appInsightsId string = ''
 param inferenceAPIType string = 'AzureOpenAI'
 param inferenceAPIPath string = 'inference' // Path to the inference API in the APIM service
+@allowed(['ApiKey', 'ProjectManagedIdentity'])
+param gatewayAuthenticationType string = 'ApiKey'
 
 @description('Configuration array for AI Services')
 param aiServicesConfig aiServiceConfigType[] = []
@@ -51,7 +53,9 @@ param hostnameConfigurations hostnameConfigurationType[] = []
   'UserAssigned'
   'SystemAssigned, UserAssigned'
 ])
-param apimManagedIdentityType string = apimUserAssignedManagedIdentityResourceId != null ? 'UserAssigned' : 'SystemAssigned'
+param apimManagedIdentityType string = apimUserAssignedManagedIdentityResourceId != null
+  ? 'UserAssigned'
+  : 'SystemAssigned'
 
 module apim 'v2/apim.bicep' = {
   name: 'apim-v2'
@@ -79,10 +83,24 @@ var updatedInferencePolicyXml = replace(
   string(max(length(aiServicesConfig) - 1, 1)) // Ensure at least 1 retry
 ) // Try all backends
 
+var updatedJwtInferencePolicyXml = replace(
+  replace(
+    replace(
+      loadTextContent('policy_jwt.xml'),
+      '{retry-count}',
+      string(max(length(aiServicesConfig) - 1, 1)) // Ensure at least 1 retry
+    ),
+    'SUBSCRIPTION_ID',
+    subscription().subscriptionId
+  ),
+  'TENANT_ID',
+  subscription().tenantId
+)
+
 module inference_api 'v2/inference-api.bicep' = {
   name: 'inference-api-deployment'
   params: {
-    policyXml: updatedInferencePolicyXml
+    policyXml: gatewayAuthenticationType == 'ProjectManagedIdentity' ? updatedJwtInferencePolicyXml : updatedInferencePolicyXml
     apiManagementName: apim.outputs.name
     apimLoggerId: apim.outputs.loggerId
     aiServicesConfig: aiServicesConfig
@@ -101,7 +119,7 @@ module inference_api 'v2/inference-api.bicep' = {
 module openAiv2Api 'v2/inference-api.bicep' = if (apimSku == 'Premium' || apimSku == 'Standardv2') {
   name: 'openai-v2-api-deployment'
   params: {
-    policyXml: updatedInferencePolicyXml
+    policyXml: gatewayAuthenticationType == 'ProjectManagedIdentity' ? updatedJwtInferencePolicyXml : updatedInferencePolicyXml
     apiManagementName: apim.outputs.name
     apimLoggerId: apim.outputs.loggerId
     aiServicesConfig: aiServicesConfig
