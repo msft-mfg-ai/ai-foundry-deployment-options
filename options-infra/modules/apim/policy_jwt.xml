@@ -11,8 +11,10 @@
                 <audience>https://cognitiveservices.azure.com</audience>
             </audiences>
             <!--<required-claims>
-                    <claim name="xms_mirid" match="any">
+                <claim name="xms_mirid" match="any">
                     <value>/subscriptions/YOUR-SUBSCRIPTION-ID/resourcegroups/YOUR-RESOURCE-GROUP/providers/Microsoft.CognitiveServices/accounts/YOUR-FOUNDRY-ACCOUNT/projects/YOUR-FOUNDRY-PROJECT</value>
+                    or
+                    <value>/subscriptions/YOUR-SUBSCRIPTION-ID/resourcegroups/YOUR-RESOURCE-GROUP/providers/Microsoft.ManagedIdentity/userAssignedIdentities/YOUR-USER-ASSIGNED-IDENTITY</value>
                 </claim> 
             </required-claims>-->
         </validate-azure-ad-token>
@@ -26,6 +28,41 @@
             </when>
         </choose>
         <set-variable name="caller-resource-id" value="@(((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("xms_mirid", "unknown"))" />
+        <!-- Extract foundry/project name from resource ID for cleaner metrics -->
+        <!-- Path format: /subscriptions/{sub}/resourcegroups/{rg}/providers/Microsoft.CognitiveServices/accounts/{foundry}/projects/{project} -->
+        <set-variable name="caller-name" value="@{
+            var callerId = (string)context.Variables["caller-resource-id"];
+            if (callerId.Contains("Microsoft.CognitiveServices"))
+            {
+                var parts = callerId.Split('/');
+                return (parts.Length > 10) ? parts[8] + "/" + parts[10] : "N/A";
+            }
+            if (callerId.Contains("Microsoft.ManagedIdentity"))
+            {
+                var parts = callerId.Split('/');
+                return (parts.Length > 8) ? parts[8] : "N/A";
+            }
+            return context.Subscription.Id;
+        }" />
+        <set-variable name="foundry-name" value="@{
+            var callerId = (string)context.Variables["caller-resource-id"];
+            if (callerId.Contains("Microsoft.CognitiveServices"))
+            {
+                var parts = callerId.Split('/');
+                return (parts.Length > 10) ? parts[10] : "N/A";
+            }
+            return "N/A";
+        }" />
+        <!-- Set custom header with Project Name for gateway logging (will be captured in ApiManagementGatewayLogs.RequestHeaders) -->
+        <set-header name="x-caller-name" exists-action="override">
+            <value>@((string)context.Variables["caller-name"])</value>
+        </set-header>
+        <set-header name="x-caller-id" exists-action="override">
+            <value>@((string)context.Variables["caller-resource-id"])</value>
+        </set-header>
+        <set-header name="x-foundry-name" exists-action="override">
+            <value>@((string)context.Variables["foundry-name"])</value>
+        </set-header>
         <!-- CORS policy to allow Azure AI Foundry portal -->
         <cors allow-credentials="true">
             <allowed-origins>
@@ -47,19 +84,22 @@
             <value>@("Bearer " + (string)context.Variables["managed-id-access-token"])</value>
         </set-header>
         <set-backend-service backend-id="{backend-id}" />
-        <!--Policy 2 - Emit the Azure OpenAI Token Metrics -->
+        <!--Policy 2 - Emit the Azure OpenAI Token Metrics to Application Insights -->
+        <!-- Note: Azure Monitor limits to 10 dimension keys per metric, 5 are used by default (Region, Service ID/Name/Type) -->
+        <!-- Custom dimensions (max 5): Project ID, Caller Name, API ID, User ID -->
+        <!-- For model/deployment tracking, use ApiManagementGatewayLlmLog which has DeploymentName natively -->
         <azure-openai-emit-token-metric namespace="openai">
-            <dimension name="Subscription ID" value="@(context.Subscription.Id)" />
-            <dimension name="Client IP" value="@(context.Request.IpAddress)" />
+            <dimension name="Caller ID" value="@((string)context.Variables["caller-id"])" />
+            <dimension name="Caller Name" value="@((string)context.Variables["caller-name"])" />
+            <dimension name="Foundry Name" value="@((string)context.Variables["foundry-name"])" />
             <dimension name="API ID" value="@(context.Api.Id)" />
             <dimension name="User ID" value="@(context.Request.Headers.GetValueOrDefault("x-user-id", "N/A"))" />
-            <dimension name="Project ID" value="@((string)context.Variables["caller-resource-id"])" />
         </azure-openai-emit-token-metric>
     </inbound>
     <backend>
         <!--Policy 1 - Apply load-balancing and retry mechanisms -->
         <!--Set count to one less than the number of backends in the pool to try all backends until the backend pool is temporarily unavailable.-->
-        <retry count="{retry-count}" interval="0" first-fast-retry="true" condition="@(context.Response.StatusCode == 429 || (context.Response.StatusCode == 503 && !context.Response.StatusReason.Contains("Backend pool") && !context.Response.StatusReason.Contains("is temporarily unavailable")))">
+        <retry count="{retry-count}" interval="0" first-fast-retry="true" condition="@(context.Response.StatusCode == 429 || (context.Response.StatusCode == 503 &amp;&amp; !context.Response.StatusReason.Contains("Backend pool") &amp;&amp; !context.Response.StatusReason.Contains("is temporarily unavailable")))">
             <forward-request buffer-request-body="true" />
         </retry>
     </backend>

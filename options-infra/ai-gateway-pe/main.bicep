@@ -51,6 +51,7 @@ module vnet '../modules/networking/vnet.bicep' = {
     location: location
     vnetName: 'project-vnet-${resourceToken}'
     extraAgentSubnets: 1
+    vnetAddressPrefix: '192.168.0.0/20'
   }
 }
 
@@ -263,6 +264,7 @@ module dashboard_setup '../modules/dashboard/dashboard-setup.bicep' = {
   name: 'dashboard-setup-deployment-${resourceToken}'
   params: {
     location: location
+    applicationInsightsName: logAnalytics.outputs.APPLICATION_INSIGHTS_NAME
     logAnalyticsWorkspaceName: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_NAME
     dashboardDisplayName: 'APIM Token Usage Dashboard for ${resourceToken}'
   }

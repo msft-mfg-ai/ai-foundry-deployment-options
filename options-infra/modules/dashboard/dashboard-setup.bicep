@@ -5,7 +5,10 @@
 //    PARAMETERS
 // ------------------
 
-@description('Name of the existing Log Analytics workspace')
+@description('Name of the existing Application Insights resource for metrics queries')
+param applicationInsightsName string
+
+@description('Name of the existing Log Analytics workspace (for workbook and saved queries)')
 param logAnalyticsWorkspaceName string
 
 @description('Location for the dashboard (defaults to resource group location)')
@@ -14,13 +17,17 @@ param location string = resourceGroup().location
 @description('Dashboard display name')
 param dashboardDisplayName string = 'APIM Token Usage Dashboard'
 
-var params_are_valid = empty(logAnalyticsWorkspaceName)
-  ? fail('LOG_ANALYTICS_WORKSPACE_NAME environment variable must be set')
+var params_are_valid = empty(applicationInsightsName) || empty(logAnalyticsWorkspaceName)
+  ? fail('APPLICATION_INSIGHTS_NAME and LOG_ANALYTICS_WORKSPACE_NAME environment variables must be set')
   : true
 
 // ------------------
 //    EXISTING RESOURCES
 // ------------------
+
+resource applicationInsights 'Microsoft.Insights/components@2020-02-02' existing = {
+  name: applicationInsightsName
+}
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = {
   name: logAnalyticsWorkspaceName
@@ -35,8 +42,9 @@ module dashboard 'dashboard.bicep' = {
   params: {
     location: location
     dashboardDisplayName: dashboardDisplayName
+    applicationInsightsId: applicationInsights.id
+    applicationInsightsName: applicationInsights.name
     logAnalyticsWorkspaceId: logAnalytics.id
-    logAnalyticsWorkspaceName: logAnalytics.name
   }
 }
 

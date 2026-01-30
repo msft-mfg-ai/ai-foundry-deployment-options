@@ -85,7 +85,8 @@ type aiServiceConfigType = {
 // ------------------
 
 var logSettings = {
-  headers: [ 'Content-type', 'User-agent', 'x-ms-region', 'x-ratelimit-remaining-tokens' , 'x-ratelimit-remaining-requests', 'x-aml-data-proxy-url', 'x-aml-vnet-identifier', 'x-aml-static-ingress-ip' ]
+  // Include x-caller-id and x-caller-name header for Caller ID correlation with gateway logs
+  headers: [ 'Content-type', 'User-agent', 'x-ms-region', 'x-ratelimit-remaining-tokens' , 'x-ratelimit-remaining-requests', 'x-aml-data-proxy-url', 'x-aml-vnet-identifier', 'x-aml-static-ingress-ip', 'x-caller-name', 'x-foundry-name', 'x-caller-id' ]
   body: { bytes: 8192 }
 }
 
@@ -320,12 +321,7 @@ resource apiDiagnostics 'Microsoft.ApiManagement/service/apis/diagnostics@2024-0
       }
     }
     backend: {
-      request: {
-        headers: []
-        body: {
-          bytes: 0
-        }
-      }
+      request: logSettings
       response: logSettings
     }
     largeLanguageModel: {
