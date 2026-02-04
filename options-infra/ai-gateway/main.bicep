@@ -60,7 +60,7 @@ module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
     #disable-next-line what-if-short-circuiting
     vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     resourceToken: resourceToken
-    aiServicesName: '' // create AI serviced PE later
+    aiServicesName: '' // create AI services PE later
     aiAccountNameResourceGroupName: ''
   }
 }

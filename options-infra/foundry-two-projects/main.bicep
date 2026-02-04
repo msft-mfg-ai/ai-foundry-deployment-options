@@ -29,18 +29,21 @@ var resourceToken = toLower(uniqueString(resourceGroup().id, location))
 module vnet '../modules/networking/vnet.bicep' = {
   name: 'vnet'
   params: {
-    vnetName: 'project-vnet-${resourceToken}'
+    tags: tags
     location: location
+    vnetName: 'project-vnet-${resourceToken}'
   }
 }
 
 module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
   name: 'ai-dependencies-with-dns'
   params: {
+    tags: tags
+    location: location
     peSubnetName: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.name
     vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     resourceToken: resourceToken
-    aiServicesName: '' // create AI serviced PE later
+    aiServicesName: '' // create AI services PE later
     aiAccountNameResourceGroupName: ''
   }
 }
@@ -51,18 +54,20 @@ module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
 module logAnalytics '../modules/monitor/loganalytics.bicep' = {
   name: 'log-analytics'
   params: {
+    tags: tags
+    location: location
     newLogAnalyticsName: 'log-analytics'
     newApplicationInsightsName: 'app-insights'
-    location: location
   }
 }
 
 module foundry '../modules/ai/ai-foundry.bicep' = {
   name: 'foundry-deployment'
   params: {
+    tags: tags
+    location: location
     managedIdentityResourceId: '' // Use System Assigned Identity
     name: 'ai-foundry-${resourceToken}'
-    location: location
     publicNetworkAccess: 'Enabled'
     agentSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId // Use the first agent subnet
     deployments: [
@@ -90,7 +95,6 @@ module project_identities '../modules/iam/identity.bicep' = [
     params: {
       tags: tags
       location: location
-
       identityName: 'ai-project-${i}-identity-${resourceToken}'
     }
   }
@@ -115,11 +119,11 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
   }
 ]
 
-
-
-module dnsSites 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
+module dnsZoneSites 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
   name: 'dns-sites'
   params: {
+    tags: tags
+    location: 'global'
     name: 'privatelink.azurewebsites.net'
     virtualNetworkLinks: [
       {
@@ -129,10 +133,15 @@ module dnsSites 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
   }
 }
 
-module dnsAca 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
+var dnsZoneToCreate = map(filter(externalApis, (api) => api.type == 'managedEnvironments'), api => api.dnsZoneName)
+var acaDnsZoneName = empty(dnsZoneToCreate) ? 'privatelink.${location}.azurecontainerapps.io' : first(dnsZoneToCreate)
+
+module dnsZoneAca 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
   name: 'dns-aca'
   params: {
-    name: 'privatelink.${location}.azurecontainerapps.io'
+    tags: tags
+    location: 'global'
+    name: acaDnsZoneName
     virtualNetworkLinks: [
       {
         virtualNetworkResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
@@ -142,8 +151,8 @@ module dnsAca 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
 }
 
 var dnsZones = {
-  'privatelink.azurewebsites.net': dnsSites.outputs.resourceId
-  'privatelink.${location}.azurecontainerapps.io': dnsAca.outputs.resourceId
+  'privatelink.azurewebsites.net': dnsZoneSites.outputs.resourceId
+  '${acaDnsZoneName}': dnsZoneAca.outputs.resourceId
 }
 
 // private endpoints for external APIs
@@ -151,8 +160,9 @@ module privateEndpoints '../modules/networking/private-endpoint.bicep' = [
   for (api, index) in externalApis: {
     name: 'private-endpoint-${api.name}'
     params: {
-      privateEndpointName: 'pe-${api.name}'
+      tags: tags
       location: location
+      privateEndpointName: 'pe-${api.name}'
       subnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId // Use the private endpoint subnet
       targetResourceId: api.resourceId
       groupIds: [api.type] // Use the type as group ID
@@ -163,6 +173,10 @@ module privateEndpoints '../modules/networking/private-endpoint.bicep' = [
         }
       ]
     }
+    dependsOn: [
+      dnsZoneSites
+      dnsZoneAca
+    ]
   }
 ]
 

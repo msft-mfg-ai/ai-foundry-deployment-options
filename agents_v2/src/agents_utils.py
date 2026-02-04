@@ -3,9 +3,10 @@ from azure.ai.projects.models import PromptAgentDefinition, Tool, AgentObject
 from azure.ai.projects.aio import AIProjectClient
 from openai import AsyncStream, AsyncOpenAI
 from openai.types.conversations import Conversation
-from openai.types.responses import ResponseStreamEvent, Response
+from openai.types.responses import ResponseStreamEvent, Response, ResponseReasoningItem, ResponseOutputText
 from openai.types.responses.response_input_param import (
     McpApprovalResponse,
+    
 )
 import logging
 
@@ -136,6 +137,11 @@ async def process_response(response: Response):
     response_id = None
     full_response = ""
 
+    if response.status == "incomplete":
+        print(f"⚠️ Response incomplete! Reason: {response.incomplete_details}")
+    else:
+        print(f"✅ Response complete with status: {response.status}.")
+
     for event in response.output:
         previous_event = events_received[-1] if len(events_received) > 0 else None
         if previous_event and previous_event["type"] == event.type:
@@ -147,6 +153,13 @@ async def process_response(response: Response):
             print(f"🆕 Stream started (ID: {event.response.id})\n")
         elif event.type == "response.output_text.delta":
             print(event.delta, end="", flush=True)
+        elif event.type == "reasoning":
+            reasoning_item: ResponseReasoningItem = event
+            print(f"🧠 Reasoning update ({reasoning_item.status}): {reasoning_item.content} Summary: {reasoning_item.summary}")
+        elif event.type == "bing_grounding_call":
+            print(f"🔎 Bing grounding call: {event.arguments}")
+        elif event.type == "bing_grounding_call_output":
+            print("📥 Bing grounding call completed")
         elif event.type == "response.text.done":
             print("\n\n✅ Text complete")
         elif event.type == "response.output_item.added":
@@ -165,6 +178,12 @@ async def process_response(response: Response):
             full_response = event.response.output_text
         elif event.type == "mcp_list_tools":
             print(f"🔧 Listing tools...")
+        elif event.type == "message":
+            for message in event.content:
+                if isinstance(message, ResponseOutputText):
+                    full_response += message.text
+                for annotation in message.annotations:
+                    print(f"💬 Message annotation: {annotation}")
 
     return events_received, input_list, response_id, full_response
 

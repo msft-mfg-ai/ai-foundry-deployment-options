@@ -194,6 +194,14 @@ module models_policy_assignment '../modules/policy/models-policy-assignment.bice
   }
 }
 
+module bing_connection '../modules/bing/connection-bing-grounding.bicep' = {
+  name: 'bing-connection-deployment-${resourceToken}'
+  params: {
+    aiFoundryName: foundry.outputs.FOUNDRY_NAME
+    tags: tags
+  }
+}
+
 output FOUNDRY_PROJECTS_CONNECTION_STRINGS string[] = [
   for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_CONNECTION_STRING
 ]
