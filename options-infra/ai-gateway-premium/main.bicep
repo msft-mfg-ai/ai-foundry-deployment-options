@@ -320,6 +320,7 @@ module dashboard_setup '../modules/dashboard/dashboard-setup.bicep' = {
   name: 'dashboard-setup-deployment-${resourceToken}'
   params: {
     location: location
+    applicationInsightsName: logAnalytics.outputs.APPLICATION_INSIGHTS_NAME
     logAnalyticsWorkspaceName: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_NAME
     dashboardDisplayName: 'APIM Token Usage Dashboard for ${resourceToken}'
   }

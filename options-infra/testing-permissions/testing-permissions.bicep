@@ -47,11 +47,11 @@ module vnet '../modules/networking/vnet.bicep' = {
 module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
   name: 'ai-dependencies-with-dns'
   params: {
-    peSubnetName: vnet.outputs.peSubnetName
-    vnetResourceId: vnet.outputs.virtualNetworkId
+    peSubnetName: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.name
+    vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     resourceToken: resourceToken
-    aiServicesName: foundry.outputs.name
-    aiAccountNameResourceGroupName: foundry.outputs.resourceGroupName
+    aiServicesName: foundry.outputs.FOUNDRY_NAME
+    aiAccountNameResourceGroupName: foundry.outputs.FOUNDRY_RESOURCE_GROUP_NAME
   }
 }
 
@@ -70,7 +70,7 @@ module logAnalytics '../modules/monitor/loganalytics.bicep' = {
 module foundry '../modules/ai/ai-foundry.bicep' = {
   name: 'foundry-deployment'
   params: {
-    managedIdentityId: '' // Use System Assigned Identity
+    managedIdentityResourceId: '' // Use System Assigned Identity
     name: 'ai-foundry-with-models-${resourceToken}'
     location: location
     publicNetworkAccess: 'Disabled'
@@ -96,22 +96,22 @@ module foundry '../modules/ai/ai-foundry.bicep' = {
 module foundry_projects '../modules/ai/ai-foundry.bicep' = {
   name: 'foundry-projects-deployment'
   params: {
-    managedIdentityId: '' // Use System Assigned Identity
+    managedIdentityResourceId: '' // Use System Assigned Identity
     name: 'ai-foundry-projects-${resourceToken}'
     location: location
     publicNetworkAccess: 'Enabled'
-    agentSubnetId: vnet.outputs.agentSubnetId // Use the first agent subnet
+    agentSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId // Use the first agent subnet
   }
 }
 
 module ai_foundry_projects_pe '../modules/networking/ai-pe-dns.bicep' = {
   name: 'ai-foundry-projects-pe-dns-deployment'
   params: {
-    aiAccountName: foundry_projects.outputs.name
-    aiAccountNameResourceGroup: foundry_projects.outputs.resourceGroupName
-    peSubnetId: vnet.outputs.peSubnetId
+    aiAccountName: foundry_projects.outputs.FOUNDRY_NAME
+    aiAccountNameResourceGroup: foundry_projects.outputs.FOUNDRY_RESOURCE_GROUP_NAME
+    peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
     resourceToken: resourceToken
-    existingDnsZones: ai_dependencies.outputs.DNSZones
+    existingDnsZones: ai_dependencies.outputs.DNS_ZONES
   }
 }
 
@@ -130,13 +130,13 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
   for i in range(1, 3): {
     name: 'ai-project-${i}-with-caphost-${resourceToken}'
     params: {
-      foundryName: foundry_projects.outputs.name
+      foundryName: foundry_projects.outputs.FOUNDRY_NAME
       location: location
       projectId: i
-      aiDependencies: ai_dependencies.outputs.aiDependencies
-      existingAiResourceId: foundry.outputs.id
-      managedIdentityId: identities[i - 1].outputs.managedIdentityId
-      appInsightsId: logAnalytics.outputs.applicationInsightsId
+      aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
+      existingAiResourceId: foundry.outputs.FOUNDRY_RESOURCE_ID
+      managedIdentityResourceId: identities[i - 1].outputs.MANAGED_IDENTITY_RESOURCE_ID
+      appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
     }
   }
 ]
@@ -144,11 +144,11 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
 module projects_keys '../modules/ai/ai-project-with-caphost.bicep' = {
     name: 'ai-project-keys-with-caphost-${resourceToken}'
     params: {
-      foundryName: foundry_projects.outputs.name
+      foundryName: foundry_projects.outputs.FOUNDRY_NAME
       location: location
       projectId: 4
-      aiDependencies: ai_dependencies.outputs.aiDependencies
-      existingAiResourceId: foundry.outputs.id
+      aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
+      existingAiResourceId: foundry.outputs.FOUNDRY_RESOURCE_ID
     }
   }
 
@@ -159,15 +159,15 @@ module projects_keys '../modules/ai/ai-project-with-caphost.bicep' = {
 module all_role_assignments '../modules/iam/all-role-assignments.bicep' = {
   name: 'all-role-assignments-deployment'
   params: {
-    aiDependencies: ai_dependencies.outputs.aiDependencies
-    foundryName: foundry_projects.outputs.name
-    projectName: projects[0].outputs.projectName
-    foundryResourceGroupName: foundry_projects.outputs.resourceGroupName
-    foundrySubscriptionId: foundry_projects.outputs.subscriptionId
+    aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
+    foundryName: foundry_projects.outputs.FOUNDRY_NAME
+    projectName: projects[0].outputs.FOUNDRY_PROJECT_NAME
+    foundryResourceGroupName: foundry_projects.outputs.FOUNDRY_RESOURCE_GROUP_NAME
+    foundrySubscriptionId: foundry_projects.outputs.FOUNDRY_SUBSCRIPTION_ID
 
-    aiServicesName: foundry.outputs.name
-    aiServicesResourceGroupName: foundry.outputs.resourceGroupName
-    aiServicesSubscriptionId: foundry.outputs.subscriptionId
+    aiServicesName: foundry.outputs.FOUNDRY_NAME
+    aiServicesResourceGroupName: foundry.outputs.FOUNDRY_RESOURCE_GROUP_NAME
+    aiServicesSubscriptionId: foundry.outputs.FOUNDRY_SUBSCRIPTION_ID
 
     userPrincipalId: userPrincipalId
     roleAssignments: roleAssignments
