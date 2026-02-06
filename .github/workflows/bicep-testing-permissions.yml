@@ -1,0 +1,22 @@
+name: 'Bicep: testing-permissions'
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'options-infra/testing-permissions/**'
+      - 'options-infra/modules/**'
+      - '.github/workflows/bicep-validate-reusable.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'options-infra/testing-permissions/**'
+      - 'options-infra/modules/**'
+      - '.github/workflows/bicep-validate-reusable.yml'
+
+jobs:
+  validate:
+    uses: ./.github/workflows/bicep-validate-reusable.yml
+    with:
+      bicep-file: testing-permissions.bicep
+      working-directory: options-infra/testing-permissions
