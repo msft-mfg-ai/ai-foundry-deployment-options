@@ -121,7 +121,7 @@ Agent Service with BYO VNet is available in the following regions:
 **📍 Resource Placement Requirements**
 - ✅ **All Foundry workspace resources** (Cosmos, Storage, Search, Managed Identity) → **Same region as VNet (Recommended but not required)**
 - ✅ **Model deployments** → Can be in different regions (handled by Azure's secure network)
-- ⚠️ **Dependent resources** → Can be in different resource groups **but must be same region and subscription**
+- ⚠️ **Dependent resources** → Can be in different resource groups **but must be same subscription. Regional placement is recommeded.**
 
 **🔧 Subnet Requirements**
 - **Two subnets required**: Agent Subnet and Private Endpoint Subnet
