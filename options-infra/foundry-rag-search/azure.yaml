@@ -1,0 +1,296 @@
+# deploying using AZD because https://github.com/Azure/azure-cli/pull/31990
+name: foundry-rag-search
+
+infra:
+  provider: bicep
+  path: .
+  module: main
+
+hooks:
+  postup:
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host "=========================================="
+        Write-Host "Creating agents"
+        Write-Host "=========================================="
+        
+        # Install dependencies
+        Write-Host "Installing v1 Python dependencies with uv..."
+        Push-Location scripts/agents_v1
+        uv sync
+        
+        # Create agents v1
+        Write-Host ""
+        Write-Host "Creating agents v1"
+        uv run python create_agents_v1.py
+        
+        Pop-Location
+
+        # Install dependencies
+        Write-Host "Installing v2 Python dependencies with uv..."
+        Push-Location scripts/agents_v2
+        uv sync
+        
+        # Create agents v2
+        Write-Host ""
+        Write-Host "Creating agents v2"
+        uv run python create_agents_v2.py
+        
+        Pop-Location
+        
+        Write-Host ""
+        Write-Host "=========================================="
+        Write-Host "All 🤖🤖🤖 agents created successfully!"
+        Write-Host "=========================================="
+        Write-Host ""
+        Write-Host "=========================================="
+        Write-Host "🤖 go to https://ai.azure.com/foundryProject/overview?wsid=/subscriptions/$env:AZURE_SUBSCRIPTION_ID/resourceGroups/$env:AZURE_RESOURCE_GROUP/providers/Microsoft.CognitiveServices/accounts/$env:FOUNDRY_NAME/projects/$env:FOUNDRY_PROJECT_NAME&tid=$env:AZURE_TENANT_ID to test the agents"
+        Write-Host "=========================================="
+      interactive: true
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        echo "=========================================="
+        echo "Creating agents"
+        echo "=========================================="
+        
+        # Install dependencies
+        echo "Installing v1 Python dependencies with uv..."
+        cd scripts/agents_v1
+        uv sync
+        
+        # Create agents v1
+        echo ""
+        echo "Creating agents v1"
+        uv run python create_agents_v1.py
+        
+        cd ..
+
+        # Install dependencies
+        echo "Installing v2 Python dependencies with uv..."
+        cd agents_v2
+        uv sync
+        
+        # Create agents v2
+        echo ""
+        echo "Creating agents v2"
+        uv run python create_agents_v2.py
+        
+        cd ../..
+        
+        echo ""
+        echo "=========================================="
+        echo "All 🤖🤖🤖 agents created successfully!"
+        echo "=========================================="
+        echo ""
+        echo "=========================================="
+        echo "🤖 go to https://ai.azure.com/foundryProject/overview?wsid=/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${AZURE_RESOURCE_GROUP}/providers/Microsoft.CognitiveServices/accounts/${FOUNDRY_NAME}/projects/${FOUNDRY_PROJECT_NAME}&tid=${AZURE_TENANT_ID} to test the agents"
+        echo "=========================================="
+      interactive: true
+      continueOnError: false  
+
+  postprovision:
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host "=========================================="
+        Write-Host "Deployment complete! Approving AI Search pending Private Endpoint connections..."
+        Write-Host "=========================================="
+
+        $approvalMessage = "Approved automatically via script"
+
+        # Approve pending Storage private endpoint connections
+        $pendingConnections = az network private-endpoint-connection list `
+            --id $env:STORAGE_ACCOUNT_RESOURCE_ID `
+            --query "[?properties.privateLinkServiceConnectionState.status=='Pending'].id" -o tsv
+
+        Write-Host "Found pending storage private endpoint connections:"
+        Write-Host $pendingConnections
+
+        foreach ($connectionId in $pendingConnections) {
+            Write-Host "Approving connection: $connectionId"
+            az network private-endpoint-connection approve `
+                --id $connectionId `
+                --description $approvalMessage
+        }
+
+        # Approve pending OpenAI private endpoint connections
+        $pendingConnections = az network private-endpoint-connection list `
+            --id $env:FOUNDRY_RESOURCE_ID `
+            --query "[?properties.privateLinkServiceConnectionState.status=='Pending'].id" -o tsv
+
+        Write-Host "Found pending OpenAI private endpoint connections:"
+        Write-Host $pendingConnections
+
+        foreach ($connectionId in $pendingConnections) {
+            Write-Host "Approving connection: $connectionId"
+            az network private-endpoint-connection approve `
+                --id $connectionId `
+                --description $approvalMessage
+        }
+
+        Write-Host "=========================================="
+        Write-Host "Opening firewall for storage account..."
+        Write-Host "=========================================="
+
+        # Open storage firewall - need to enable public access AND allow all networks
+        az storage account update --name $env:STORAGE_ACCOUNT_NAME --resource-group $env:AZURE_RESOURCE_GROUP --public-network-access Enabled --default-action Allow --output none
+        Write-Host "Waiting 10 seconds for firewall changes to propagate..."
+        Start-Sleep -Seconds 10
+
+        Write-Host "=========================================="
+        Write-Host "Setting up search indexes..."
+        Write-Host "=========================================="
+        
+        Push-Location scripts
+        Write-Host "Installing Python dependencies with uv..."
+        uv sync
+
+        # Run setup_indexer_pipeline.py - creates container, uploads PDFs, sets up indexer pipeline
+        Write-Host ""
+        Write-Host "Setting up indexer pipeline (documents-for-indexer container)..."
+        uv run python setup_indexer_pipeline.py \
+            --search-endpoint "$env:AI_SEARCH_SERVICE_PUBLIC_PE" \
+            --storage-account "$env:STORAGE_ACCOUNT_NAME" \
+            --pdf-folder "./pdfs" \
+            --doc-intelligence-endpoint "$env:FOUNDRY_COGNITIVE_SERVICE_ENDPOINT" \
+            --embedding-endpoint "$env:FOUNDRY_COGNITIVE_SERVICE_ENDPOINT" \
+            --embedding-deployment "$env:FOUNDRY_EMBEDDING_DEPLOYMENT" \
+            --embedding-dimensions 1536 \
+            --run-indexer
+
+        # Run create_index.py - custom code processing to 'documents' index
+        Write-Host ""
+        Write-Host "Creating custom index (documents container)..."
+        uv run python create_index.py `
+          --search-endpoint "$env:AI_SEARCH_SERVICE_PUBLIC_PE" `
+          --storage-account "$env:STORAGE_ACCOUNT_NAME" `
+          --doc-intelligence-endpoint "$env:FOUNDRY_COGNITIVE_SERVICE_ENDPOINT" `
+          --openai-endpoint "$env:FOUNDRY_OPENAI_ENDPOINT" `
+          --openai-deployment "$env:FOUNDRY_DEPLOYMENT_NAME" `
+          --pdf-folder "./pdfs" `
+          --index-name "documents" `
+          --use-vectors `
+          --embedding-endpoint "$env:FOUNDRY_OPENAI_ENDPOINT" `
+          --embedding-deployment "$env:FOUNDRY_EMBEDDING_DEPLOYMENT" `
+          --embedding-dimensions 1536
+        
+        Pop-Location
+        
+        Write-Host ""
+        Write-Host "=========================================="
+        Write-Host "All search indexes created successfully!"
+        Write-Host "=========================================="
+
+        Write-Host "=========================================="
+        Write-Host "Closing firewall for storage account..."
+        Write-Host "=========================================="
+
+        # Close storage firewall - disable public access and deny by default
+        az storage account update --name $env:STORAGE_ACCOUNT_NAME --resource-group $env:AZURE_RESOURCE_GROUP --public-network-access Disabled --default-action Deny --output none
+      interactive: true
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        echo "=========================================="
+        echo "Deployment complete! Approving AI Search pending Private Endpoint connections..."
+        echo "=========================================="
+
+        approvalMessage="Approved automatically via script"
+
+        # List all private endpoint connections with 'Pending' status on the resource
+        pendingConnections=$(az network private-endpoint-connection list \
+          --id "${STORAGE_ACCOUNT_RESOURCE_ID}" \
+          --query "[?properties.privateLinkServiceConnectionState.status=='Pending'].id" -o tsv)
+
+        echo "Found pending storage private endpoint connections:"
+        echo "$pendingConnections"
+
+        # Loop over each connection and approve it
+        for connectionId in $pendingConnections; do
+          echo "Approving connection: $connectionId"
+          az network private-endpoint-connection approve \
+            --id "$connectionId" \
+            --description "$approvalMessage"
+        done
+
+        pendingConnections=$(az network private-endpoint-connection list \
+          --id "${FOUNDRY_RESOURCE_ID}" \
+          --query "[?properties.privateLinkServiceConnectionState.status=='Pending'].id" -o tsv)
+
+        echo "Found pending OpenAI private endpoint connections:"
+        echo "$pendingConnections"
+
+        # Loop over each connection and approve it
+        for connectionId in $pendingConnections; do
+          echo "Approving connection: $connectionId"
+          az network private-endpoint-connection approve \
+            --id "$connectionId" \
+            --description "$approvalMessage"
+        done
+
+        echo "=========================================="
+        echo "Opening firewall for storage account..."
+        echo "=========================================="
+
+        # Open storage firewall - need to enable public access AND allow all networks
+        az storage account update --name "${STORAGE_ACCOUNT_NAME}" --resource-group "${AZURE_RESOURCE_GROUP}" --public-network-access Enabled --default-action Allow --output none
+        echo "Waiting 10 seconds for firewall changes to propagate..."
+        sleep 10
+
+        echo "=========================================="
+        echo "Setting up search indexer..."
+        echo "=========================================="
+        
+        # Install dependencies
+        echo "Installing Python dependencies with uv..."
+        cd scripts
+        uv sync
+
+        # Use create_index.py for custom code processing instead.
+        uv run python setup_indexer_pipeline.py \
+            --search-endpoint "${AI_SEARCH_SERVICE_PUBLIC_PE}" \
+            --storage-account "${STORAGE_ACCOUNT_NAME}" \
+            --doc-intelligence-endpoint "${FOUNDRY_COGNITIVE_SERVICE_ENDPOINT}" \
+            --embedding-endpoint "${FOUNDRY_COGNITIVE_SERVICE_ENDPOINT}" \
+            --embedding-deployment "${FOUNDRY_EMBEDDING_DEPLOYMENT}" \
+            --embedding-dimensions 1536 \
+            --pdf-folder ./pdfs \
+            --run-indexer
+
+        echo "=========================================="
+        echo "Deployment complete! Setting up search indexes..."
+        echo "=========================================="
+        
+        echo ""
+        echo "Creating index on AI_SEARCH_SERVICE_PUBLIC_PE..."
+        uv run python create_index.py \
+          --search-endpoint "${AI_SEARCH_SERVICE_PUBLIC_PE}" \
+          --storage-account "${STORAGE_ACCOUNT_NAME}" \
+          --doc-intelligence-endpoint "${FOUNDRY_COGNITIVE_SERVICE_ENDPOINT}" \
+          --openai-endpoint "${FOUNDRY_OPENAI_ENDPOINT}" \
+          --pdf-folder "./pdfs" \
+          --index-name "documents" \
+          --use-vectors \
+          --embedding-endpoint "${FOUNDRY_OPENAI_ENDPOINT}" \
+          --embedding-deployment "${FOUNDRY_EMBEDDING_DEPLOYMENT}" \
+          --embedding-dimensions 1536
+        
+        cd ..
+        
+        echo ""
+        echo "=========================================="
+        echo "All search indexes created successfully!"
+        echo "=========================================="
+
+        echo "=========================================="
+        echo "Closing firewall for storage account..."
+        echo "=========================================="
+
+        # Close storage firewall - disable public access and deny by default
+        az storage account update --name "${STORAGE_ACCOUNT_NAME}" --resource-group "${AZURE_RESOURCE_GROUP}" --public-network-access Disabled --default-action Deny --output none
+      interactive: true
+      continueOnError: false

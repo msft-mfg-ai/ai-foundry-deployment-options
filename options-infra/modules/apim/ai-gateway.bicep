@@ -10,6 +10,8 @@ param appInsightsResourceId string = ''
 param aiFoundryName string
 param aiFoundryProjectNames string[] = []
 param resourceToken string
+@allowed(['ApiKey', 'ProjectManagedIdentity'])
+param gatewayAuthenticationType string = 'ApiKey'
 
 param staticModels ModelType[] = []
 param aiServicesConfig aiServiceConfigType[] = []
@@ -39,6 +41,7 @@ module apim 'apim.bicep' = {
     resourceSuffix: resourceToken
     aiServicesConfig: aiServicesConfig
     subscriptions: subscriptions
+    gatewayAuthenticationType: gatewayAuthenticationType
   }
 }
 
@@ -55,6 +58,7 @@ module aiGatewayConnectionDynamic '../ai/connection-apim-gateway.bicep' = if (!c
     getModelEndpoint: '/deployments/{deploymentName}'
     deploymentProvider: 'AzureOpenAI'
     inferenceAPIVersion: '2025-03-01-preview'
+    authType: gatewayAuthenticationType
   }
 }
 
@@ -69,6 +73,7 @@ module aiGatewayConnectionStatic '../ai/connection-apim-gateway.bicep' = if (!co
     isSharedToAll: true
     staticModels: staticModels
     inferenceAPIVersion: '2025-03-01-preview'
+    authType: gatewayAuthenticationType
   }
 }
 
@@ -85,6 +90,7 @@ module aiGatewayProjectConnectionStatic '../ai/connection-apim-gateway.bicep' = 
       isSharedToAll: false
       staticModels: staticModels
       inferenceAPIVersion: '2025-03-01-preview'
+      authType: gatewayAuthenticationType
     }
   }
 ]
@@ -104,6 +110,7 @@ module aiGatewayProjectConnectionDynamic '../ai/connection-apim-gateway.bicep' =
       getModelEndpoint: '/deployments/{deploymentName}'
       deploymentProvider: 'AzureOpenAI'
       inferenceAPIVersion: '2025-03-01-preview'
+      authType: gatewayAuthenticationType
     }
   }
 ]

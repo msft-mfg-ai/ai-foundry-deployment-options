@@ -1,6 +1,6 @@
 // Azure Portal Dashboard for APIM Token Usage Monitoring
 // Based on AI-Gateway FinOps Framework patterns
-// Layout derived from exported Azure Portal dashboard JSON
+// Uses AppMetrics (Log Analytics) for token data with Project ID, and ApiManagementGatewayLlmLog for model usage
 
 @description('Location for the dashboard')
 param location string
@@ -8,11 +8,14 @@ param location string
 @description('Dashboard display name')
 param dashboardDisplayName string
 
-@description('Log Analytics Workspace resource ID')
-param logAnalyticsWorkspaceId string
+@description('Application Insights resource ID for metrics queries')
+param applicationInsightsId string
 
-@description('Log Analytics Workspace name')
-param logAnalyticsWorkspaceName string
+@description('Application Insights name')
+param applicationInsightsName string
+
+@description('Log Analytics Workspace resource ID for AppMetrics and gateway logs')
+param logAnalyticsWorkspaceId string
 
 // ------------------
 //    VARIABLES
@@ -21,121 +24,121 @@ param logAnalyticsWorkspaceName string
 var dashboardName = 'apim-token-dashboard-${toLower(uniqueString(resourceGroup().id, location))}'
 
 // KQL Queries for dashboard tiles
+// Uses AppMetrics for project-based stats (has Project ID in Properties)
+// Uses ApiManagementGatewayLlmLog joined with ApiManagementGatewayLogs for model usage by project
+// The x-caller-name header is logged in RequestHeaders via API diagnostics configuration
+
 var kqlTodayStats = '''
-ApiManagementGatewayLlmLog
-| where DeploymentName != ''
+AppMetrics
+| where Name in ("Prompt Tokens", "Completion Tokens", "Total Tokens")
 | where TimeGenerated >= startofday(now())
 | summarize
-    TodayTokens = sum(TotalTokens),
-    TodayRequests = count(),
-    AvgTokensPerRequest = avg(TotalTokens)
+    TodayPromptTokens = sumif(Sum, Name == "Prompt Tokens"),
+    TodayCompletionTokens = sumif(Sum, Name == "Completion Tokens"),
+    TodayTotalTokens = sumif(Sum, Name == "Total Tokens"),
+    TodayRequests = countif(Name == "Total Tokens")
 '''
 
 var kqlMonthStats = '''
-ApiManagementGatewayLlmLog
-| where DeploymentName != ''
+AppMetrics
+| where Name in ("Prompt Tokens", "Completion Tokens", "Total Tokens")
 | where TimeGenerated >= startofmonth(now())
+| extend CallerName = tostring(parse_json(Properties)["Caller Name"])
 | summarize
-    MonthTokens = sum(TotalTokens),
-    MonthRequests = count(),
-    UniqueSubscriptions = dcount(CorrelationId)
+    MonthTotalTokens = sumif(Sum, Name == "Total Tokens"),
+    MonthRequests = countif(Name == "Total Tokens"),
+    UniqueProjects = dcount(CallerName)
 '''
 
+// Token usage over time by Project - using AppMetrics which has Project ID
 var kqlTokenUsageOverTime = '''
-let llmHeaderLogs = ApiManagementGatewayLlmLog
-| where DeploymentName != '';
-let llmLogsWithSubscriptionId = llmHeaderLogs
-| join kind=leftouter ApiManagementGatewayLogs on CorrelationId
-| project
-    TimeGenerated,
-    SubscriptionName = ApimSubscriptionId,
-    TotalTokens;
-llmLogsWithSubscriptionId
-| summarize TotalTokens = sum(TotalTokens) by bin(TimeGenerated, 1h), SubscriptionName
+AppMetrics
+| where Name == "Total Tokens"
+| extend CallerName = tostring(parse_json(Properties)["Caller Name"])
+| summarize TotalTokens = sum(Sum) by bin(TimeGenerated, 1h), CallerName
 | order by TimeGenerated asc
 '''
 
 var kqlTopConsumers = '''
-let llmHeaderLogs = ApiManagementGatewayLlmLog
-| where DeploymentName != ''
-| where TimeGenerated >= ago(30d);
-llmHeaderLogs
-| join kind=leftouter ApiManagementGatewayLogs on CorrelationId
-| summarize TotalTokens = sum(TotalTokens), Requests = count() by SubscriptionId = ApimSubscriptionId
-| top 10 by TotalTokens desc
-| extend Percentage = round(TotalTokens * 100.0 / toscalar(
-    ApiManagementGatewayLlmLog
-    | where DeploymentName != ''
+let totalTokens = toscalar(
+    AppMetrics
+    | where Name == "Total Tokens"
     | where TimeGenerated >= ago(30d)
-    | summarize sum(TotalTokens)
-), 1)
+    | summarize sum(Sum)
+);
+AppMetrics
+| where Name == "Total Tokens"
+| where TimeGenerated >= ago(30d)
+| extend CallerName = tostring(parse_json(Properties)["Caller Name"])
+| summarize TotalTokens = sum(Sum), Requests = dcount(OperationId) by CallerName
+| top 10 by TotalTokens desc
+| extend Percentage = round(TotalTokens * 100.0 / totalTokens, 1)
 '''
 
 var kqlDailyUsageSummary = '''
-let llmHeaderLogs = ApiManagementGatewayLlmLog
-| where DeploymentName != '';
-let llmLogsWithSubscriptionId = llmHeaderLogs
-| join kind=leftouter ApiManagementGatewayLogs on CorrelationId
-| project
-    TimeGenerated,
-    SubscriptionName = ApimSubscriptionId,
-    PromptTokens,
-    CompletionTokens,
-    TotalTokens;
-llmLogsWithSubscriptionId
+AppMetrics
+| where Name in ("Prompt Tokens", "Completion Tokens", "Total Tokens")
+| extend CallerName = tostring(parse_json(Properties)["Caller Name"])
 | summarize
-    PromptTokens = sum(PromptTokens),
-    CompletionTokens = sum(CompletionTokens),
-    TotalTokens = sum(TotalTokens),
-    Requests = count()
-by bin(TimeGenerated, 1d)
+    PromptTokens = sumif(Sum, Name == "Prompt Tokens"),
+    CompletionTokens = sumif(Sum, Name == "Completion Tokens"),
+    TotalTokens = sumif(Sum, Name == "Total Tokens"),
+    Requests = countif(Name == "Total Tokens")
+by bin(TimeGenerated, 1d), CallerName
 | order by TimeGenerated desc
 '''
 
-var kqlUsageBySubscription = '''
-let llmHeaderLogs = ApiManagementGatewayLlmLog
-| where DeploymentName != '';
-let llmLogsWithSubscriptionId = llmHeaderLogs
-| join kind=leftouter ApiManagementGatewayLogs on CorrelationId
-| project
-    SubscriptionName = ApimSubscriptionId,
-    DeploymentName,
-    PromptTokens,
-    CompletionTokens,
-    TotalTokens;
-llmLogsWithSubscriptionId
-| summarize
-    PromptTokens = sum(PromptTokens),
-    CompletionTokens = sum(CompletionTokens),
-    TotalTokens = sum(TotalTokens),
-    Requests = count()
-by SubscriptionName, DeploymentName
-| order by TotalTokens desc
-'''
-
 var kqlModelUsage = '''
-ApiManagementGatewayLlmLog
-| where DeploymentName != ''
+// Join LLM logs (has DeploymentName) with Gateway logs (has x-caller-name header)
+let llmLogs = ApiManagementGatewayLlmLog
+| where DeploymentName != ""
+| project TimeGenerated, DeploymentName, ModelName, PromptTokens, CompletionTokens, TotalTokens, CorrelationId;
+let gatewayLogs = ApiManagementGatewayLogs
+| where BackendRequestHeaders has "x-caller-name"
+| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(BackendRequestHeaders))
+| project CorrelationId, CallerName;
+llmLogs
+| join kind=leftouter gatewayLogs on CorrelationId
 | summarize
     PromptTokens = sum(PromptTokens),
     CompletionTokens = sum(CompletionTokens),
     TotalTokens = sum(TotalTokens),
-    Requests = count()
+    Requests = dcount(CorrelationId)
 by DeploymentName, ModelName
 | order by TotalTokens desc
 '''
 
-var kqlTotalTokensPerSubscription = '''
-let llmHeaderLogs = ApiManagementGatewayLlmLog
-| where DeploymentName != '';
-llmHeaderLogs
-| join kind=leftouter ApiManagementGatewayLogs on CorrelationId
+// Model usage by project - answers "what models is each project using?"
+var kqlModelUsageByProject = '''
+// Join LLM logs (has DeploymentName) with Gateway logs (has x-caller-name header)
+let llmLogs = ApiManagementGatewayLlmLog
+| where DeploymentName != ""
+| project TimeGenerated, DeploymentName, ModelName, PromptTokens, CompletionTokens, TotalTokens, CorrelationId;
+let gatewayLogs = ApiManagementGatewayLogs
+| where BackendRequestHeaders has "x-caller-name"
+| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(BackendRequestHeaders))
+| project CorrelationId, CallerName;
+llmLogs
+| join kind=leftouter gatewayLogs on CorrelationId
 | summarize
     PromptTokens = sum(PromptTokens),
     CompletionTokens = sum(CompletionTokens),
     TotalTokens = sum(TotalTokens),
-    Requests = count()
-by SubscriptionId = ApimSubscriptionId
+    Requests = dcount(CorrelationId)
+by CallerName, DeploymentName
+| order by CallerName, TotalTokens desc
+'''
+
+var kqlTotalTokensPerProject = '''
+AppMetrics
+| where Name in ("Prompt Tokens", "Completion Tokens", "Total Tokens")
+| extend CallerName = tostring(parse_json(Properties)["Caller Name"])
+| summarize
+    PromptTokens = sumif(Sum, Name == "Prompt Tokens"),
+    CompletionTokens = sumif(Sum, Name == "Completion Tokens"),
+    TotalTokens = sumif(Sum, Name == "Total Tokens"),
+    Requests = countif(Name == "Total Tokens")
+by CallerName
 | order by TotalTokens desc
 '''
 
@@ -167,7 +170,7 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
               inputs: []
               settings: {
                 content: {
-                  content: '# 🤖 APIM Token Usage Dashboard\n\nMonitor LLM token consumption across APIM subscriptions. Data sourced from `ApiManagementGatewayLlmLog` following the [AI-Gateway FinOps Framework](https://github.com/Azure-Samples/AI-Gateway).'
+                  content: '# 🤖 APIM Token Usage Dashboard\n\nMonitor LLM token consumption by AI Foundry Project. Data sourced from `AppMetrics` (Project ID, token counts) and `ApiManagementGatewayLlmLog` (deployment/model details).'
                   title: 'APIM Token Usage Dashboard'
                   subtitle: ''
                   markdownSource: 1
@@ -194,7 +197,7 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
                 { name: 'DashboardId', isOptional: true }
                 { name: 'PartId', value: 'today-stats', isOptional: true }
                 { name: 'PartTitle', value: '📊 Today\'s Usage', isOptional: true }
-                { name: 'PartSubTitle', value: logAnalyticsWorkspaceName, isOptional: true }
+                { name: 'PartSubTitle', value: applicationInsightsName, isOptional: true }
                 { name: 'Query', value: kqlTodayStats, isOptional: true }
                 { name: 'ControlType', value: 'AnalyticsGrid', isOptional: true }
                 { name: 'DraftRequestParameters', isOptional: true }
@@ -222,7 +225,7 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
                 { name: 'TimeRange', value: 'P30D', isOptional: true }
                 { name: 'PartId', value: 'month-stats', isOptional: true }
                 { name: 'PartTitle', value: '📅 This Month', isOptional: true }
-                { name: 'PartSubTitle', value: logAnalyticsWorkspaceName, isOptional: true }
+                { name: 'PartSubTitle', value: applicationInsightsName, isOptional: true }
                 { name: 'Query', value: kqlMonthStats, isOptional: true }
                 { name: 'ControlType', value: 'AnalyticsGrid', isOptional: true }
                 { name: 'resourceTypeMode', isOptional: true }
@@ -252,8 +255,8 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
                 { name: 'Version', value: '2.0', isOptional: true }
                 { name: 'TimeRange', value: 'P7D', isOptional: true }
                 { name: 'PartId', value: 'usage-over-time', isOptional: true }
-                { name: 'PartTitle', value: '📈 Token Usage Over Time', isOptional: true }
-                { name: 'PartSubTitle', value: 'Hourly token consumption by subscription', isOptional: true }
+                { name: 'PartTitle', value: '📈 Token Usage Over Time by Project', isOptional: true }
+                { name: 'PartSubTitle', value: 'Hourly token consumption by project/subscription', isOptional: true }
                 { name: 'Query', value: kqlTokenUsageOverTime, isOptional: true }
                 { name: 'ControlType', value: 'AnalyticsGrid', isOptional: true }
                 { name: 'resourceTypeMode', isOptional: true }
@@ -273,7 +276,7 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
                   Dimensions: {
                     xAxis: { name: 'TimeGenerated', type: 'datetime' }
                     yAxis: [ { name: 'TotalTokens', type: 'long' } ]
-                    splitBy: [ { name: 'SubscriptionName', type: 'string' } ]
+                    splitBy: [ { name: 'CallerName', type: 'string' } ]
                     aggregation: 'Sum'
                   }
                   LegendOptions: { isEnabled: true, position: 'Bottom' }
@@ -296,7 +299,7 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
                 { name: 'Version', value: '2.0', isOptional: true }
                 { name: 'TimeRange', value: 'P30D', isOptional: true }
                 { name: 'PartId', value: 'top-consumers', isOptional: true }
-                { name: 'PartTitle', value: '🏆 Top Token Consumers', isOptional: true }
+                { name: 'PartTitle', value: '🏆 Top Token Consumers by Project', isOptional: true }
                 { name: 'PartSubTitle', value: 'Last 30 days', isOptional: true }
                 { name: 'Query', value: kqlTopConsumers, isOptional: true }
                 { name: 'ControlType', value: 'AnalyticsGrid', isOptional: true }
@@ -327,8 +330,8 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
                 { name: 'Version', value: '2.0', isOptional: true }
                 { name: 'TimeRange', value: 'P30D', isOptional: true }
                 { name: 'PartId', value: 'daily-summary', isOptional: true }
-                { name: 'PartTitle', value: '📊 Daily Usage Summary', isOptional: true }
-                { name: 'PartSubTitle', value: 'Prompt, Completion, and Total tokens per day', isOptional: true }
+                { name: 'PartTitle', value: '📊 Daily Usage by Project', isOptional: true }
+                { name: 'PartSubTitle', value: 'Prompt, Completion, and Total tokens per day by project', isOptional: true }
                 { name: 'Query', value: kqlDailyUsageSummary, isOptional: true }
                 { name: 'ControlType', value: 'AnalyticsGrid', isOptional: true }
                 { name: 'resourceTypeMode', isOptional: true }
@@ -343,42 +346,11 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
               settings: {}
             }
           }
-          // Usage by Subscription & Model - Row 13-16, full width
+          // Usage by Model - Row 13-15, full width
           {
             position: {
               x: 0
               y: 13
-              colSpan: 12
-              rowSpan: 4
-            }
-            metadata: {
-              type: 'Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart'
-              inputs: [
-                { name: 'Scope', value: { resourceIds: [ logAnalyticsWorkspaceId ] }, isOptional: true }
-                { name: 'Version', value: '2.0', isOptional: true }
-                { name: 'TimeRange', value: 'P30D', isOptional: true }
-                { name: 'PartId', value: 'usage-by-subscription', isOptional: true }
-                { name: 'PartTitle', value: '📋 Usage by Subscription & Model', isOptional: true }
-                { name: 'PartSubTitle', value: 'Detailed breakdown', isOptional: true }
-                { name: 'Query', value: kqlUsageBySubscription, isOptional: true }
-                { name: 'ControlType', value: 'AnalyticsGrid', isOptional: true }
-                { name: 'resourceTypeMode', isOptional: true }
-                { name: 'ComponentId', isOptional: true }
-                { name: 'DashboardId', isOptional: true }
-                { name: 'DraftRequestParameters', isOptional: true }
-                { name: 'SpecificChart', isOptional: true }
-                { name: 'Dimensions', isOptional: true }
-                { name: 'LegendOptions', isOptional: true }
-                { name: 'IsQueryContainTimeRange', isOptional: true }
-              ]
-              settings: {}
-            }
-          }
-          // Usage by Model - Row 17-19, full width
-          {
-            position: {
-              x: 0
-              y: 17
               colSpan: 12
               rowSpan: 3
             }
@@ -392,6 +364,37 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
                 { name: 'PartTitle', value: '🧠 Usage by Model', isOptional: true }
                 { name: 'PartSubTitle', value: 'Token consumption per deployment', isOptional: true }
                 { name: 'Query', value: kqlModelUsage, isOptional: true }
+                { name: 'ControlType', value: 'AnalyticsGrid', isOptional: true }
+                { name: 'resourceTypeMode', isOptional: true }
+                { name: 'ComponentId', isOptional: true }
+                { name: 'DashboardId', isOptional: true }
+                { name: 'DraftRequestParameters', isOptional: true }
+                { name: 'SpecificChart', isOptional: true }
+                { name: 'Dimensions', isOptional: true }
+                { name: 'LegendOptions', isOptional: true }
+                { name: 'IsQueryContainTimeRange', isOptional: true }
+              ]
+              settings: {}
+            }
+          }
+          // Model Usage by Project - Row 16-19, full width - answers "what models is each project using?"
+          {
+            position: {
+              x: 0
+              y: 16
+              colSpan: 12
+              rowSpan: 4
+            }
+            metadata: {
+              type: 'Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart'
+              inputs: [
+                { name: 'Scope', value: { resourceIds: [ logAnalyticsWorkspaceId ] }, isOptional: true }
+                { name: 'Version', value: '2.0', isOptional: true }
+                { name: 'TimeRange', value: 'P30D', isOptional: true }
+                { name: 'PartId', value: 'model-usage-by-project', isOptional: true }
+                { name: 'PartTitle', value: '🔗 Models Used by Project', isOptional: true }
+                { name: 'PartSubTitle', value: 'Which deployments/models each project is consuming', isOptional: true }
+                { name: 'Query', value: kqlModelUsageByProject, isOptional: true }
                 { name: 'ControlType', value: 'AnalyticsGrid', isOptional: true }
                 { name: 'resourceTypeMode', isOptional: true }
                 { name: 'ComponentId', isOptional: true }
@@ -419,10 +422,10 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
                 { name: 'Scope', value: { resourceIds: [ logAnalyticsWorkspaceId ] }, isOptional: true }
                 { name: 'Version', value: '2.0', isOptional: true }
                 { name: 'TimeRange', value: 'P30D', isOptional: true }
-                { name: 'PartId', value: 'total-tokens-subscription', isOptional: true }
-                { name: 'PartTitle', value: '💰 Total Tokens per Subscription', isOptional: true }
-                { name: 'PartSubTitle', value: 'All-time token usage by subscription', isOptional: true }
-                { name: 'Query', value: kqlTotalTokensPerSubscription, isOptional: true }
+                { name: 'PartId', value: 'total-tokens-project', isOptional: true }
+                { name: 'PartTitle', value: '💰 Total Tokens by Project', isOptional: true }
+                { name: 'PartSubTitle', value: 'All-time token usage by project', isOptional: true }
+                { name: 'Query', value: kqlTotalTokensPerProject, isOptional: true }
                 { name: 'ControlType', value: 'AnalyticsGrid', isOptional: true }
                 { name: 'resourceTypeMode', isOptional: true }
                 { name: 'ComponentId', isOptional: true }

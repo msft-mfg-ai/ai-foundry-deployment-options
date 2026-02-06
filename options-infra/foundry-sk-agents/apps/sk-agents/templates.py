@@ -1,0 +1,473 @@
+"""
+HTML templates for the SK Agents web UI.
+"""
+
+
+def get_ui_html() -> str:
+    """Return the HTML for the simple web UI."""
+    return """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SK Agents - Master Agent Interface</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+            padding: 20px;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        h1 {
+            color: #00d9ff;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #888;
+            font-size: 14px;
+        }
+        .chat-container {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        #messages {
+            height: 400px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+        }
+        .message {
+            margin-bottom: 15px;
+            padding: 12px 15px;
+            border-radius: 8px;
+            max-width: 85%;
+        }
+        .message.user {
+            background: #0078d4;
+            margin-left: auto;
+        }
+        .message.agent {
+            background: rgba(255, 255, 255, 0.1);
+            border-left: 3px solid #00d9ff;
+        }
+        .message .meta {
+            font-size: 11px;
+            color: #888;
+            margin-top: 8px;
+        }
+        .input-container {
+            display: flex;
+            gap: 10px;
+        }
+        #userInput {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 14px;
+        }
+        #userInput:focus {
+            outline: 2px solid #00d9ff;
+        }
+        #userInput::placeholder {
+            color: #666;
+        }
+        button {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 8px;
+            background: #0078d4;
+            color: #fff;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #005a9e;
+        }
+        button:disabled {
+            background: #444;
+            cursor: not-allowed;
+        }
+        .status {
+            text-align: center;
+            padding: 10px;
+            background: rgba(0, 217, 255, 0.1);
+            border-radius: 8px;
+            font-size: 12px;
+            color: #00d9ff;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        .loading.show {
+            display: block;
+        }
+        .intermediate-steps {
+            margin-top: 15px;
+            text-align: left;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .step {
+            padding: 8px 12px;
+            margin: 5px 0;
+            border-radius: 5px;
+            font-size: 12px;
+            animation: fadeIn 0.3s ease-in;
+        }
+        .step.tool-call {
+            background: rgba(255, 165, 0, 0.2);
+            border-left: 3px solid #ffa500;
+        }
+        .step.tool-result {
+            background: rgba(0, 255, 100, 0.1);
+            border-left: 3px solid #00ff64;
+        }
+        .step.text-chunk {
+            background: rgba(0, 217, 255, 0.1);
+            border-left: 3px solid #00d9ff;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .spinner {
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top: 3px solid #00d9ff;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .examples {
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+        }
+        .examples h3 {
+            color: #00d9ff;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        .example-btn {
+            display: inline-block;
+            padding: 8px 12px;
+            margin: 5px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.3s;
+        }
+        .example-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        pre {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🤖 Master Agent Interface</h1>
+            <p class="subtitle">Powered by Semantic Kernel & Azure AI Foundry</p>
+        </header>
+        
+        <div class="user-info" style="background: rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+            <h3 style="color: #00d9ff; margin-bottom: 10px; font-size: 14px;">👤 User Information (for personalization)</h3>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <input type="text" id="userId" placeholder="User ID (e.g., user123)" 
+                    style="flex: 1; min-width: 150px; padding: 10px; border: none; border-radius: 5px; background: rgba(255, 255, 255, 0.1); color: #fff; font-size: 13px;">
+                <input type="text" id="userFirstName" placeholder="First Name" value="John"
+                    style="flex: 1; min-width: 120px; padding: 10px; border: none; border-radius: 5px; background: rgba(255, 255, 255, 0.1); color: #fff; font-size: 13px;">
+                <input type="text" id="userLastName" placeholder="Last Name" value="Doe"
+                    style="flex: 1; min-width: 120px; padding: 10px; border: none; border-radius: 5px; background: rgba(255, 255, 255, 0.1); color: #fff; font-size: 13px;">
+            </div>
+        </div>
+        
+        <div class="chat-container">
+            <div id="messages">
+                <div class="message agent">
+                    <strong>Master Agent</strong>
+                    <p>Hello! I'm the Master Agent. I can help you with various tasks by orchestrating specialized agents and plugins. Try asking me to:</p>
+                    <ul style="margin-top: 10px; margin-left: 20px;">
+                        <li>Summarize files (I'll delegate to the Large Context Agent)</li>
+                        <li>Answer questions using my knowledge plugins</li>
+                        <li>Process and analyze data</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p id="loadingText">Processing your request...</p>
+                <div id="intermediateSteps" class="intermediate-steps"></div>
+            </div>
+            
+            <div class="input-container">
+                <input type="text" id="userInput" placeholder="Type your message here..." onkeypress="handleKeyPress(event)">
+                <button onclick="sendMessage()" id="sendBtn">Send</button>
+            </div>
+        </div>
+        
+        <div class="examples">
+            <h3>💡 Example Prompts</h3>
+            <span class="example-btn" onclick="setExample('Summarize the following files: report.pdf, analysis.docx, data.csv')">Summarize files</span>
+            <span class="example-btn" onclick="setExample('What can you help me with?')">Capabilities</span>
+            <span class="example-btn" onclick="setExample('Process the quarterly reports from Q1 to Q4')">Process reports</span>
+            <span class="example-btn" onclick="setExample('Analyze the project documentation')">Analyze docs</span>
+        </div>
+        
+        <div class="status" id="status">
+            Checking agent status...
+        </div>
+    </div>
+    
+    <script>
+        const messagesEl = document.getElementById('messages');
+        const inputEl = document.getElementById('userInput');
+        const loadingEl = document.getElementById('loading');
+        const loadingTextEl = document.getElementById('loadingText');
+        const intermediateStepsEl = document.getElementById('intermediateSteps');
+        const sendBtn = document.getElementById('sendBtn');
+        const statusEl = document.getElementById('status');
+        const userIdEl = document.getElementById('userId');
+        const userFirstNameEl = document.getElementById('userFirstName');
+        const userLastNameEl = document.getElementById('userLastName');
+        
+        // Generate a random user ID on load
+        userIdEl.value = 'user_' + Math.random().toString(36).substring(2, 10);
+        
+        // Check health on load
+        checkHealth();
+        
+        async function checkHealth() {
+            try {
+                const response = await fetch('/health');
+                const data = await response.json();
+                if (data.agents_initialized) {
+                    statusEl.textContent = '✅ Agents initialized and ready';
+                    statusEl.style.background = 'rgba(0, 255, 100, 0.1)';
+                    statusEl.style.color = '#00ff64';
+                } else {
+                    statusEl.textContent = '⏳ Agents initializing...';
+                }
+            } catch (error) {
+                statusEl.textContent = '❌ Error connecting to service';
+                statusEl.style.background = 'rgba(255, 0, 0, 0.1)';
+                statusEl.style.color = '#ff6464';
+            }
+        }
+        
+        function setExample(text) {
+            inputEl.value = text;
+            inputEl.focus();
+        }
+        
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+        
+        function addMessage(content, isUser, meta = null) {
+            const div = document.createElement('div');
+            div.className = `message ${isUser ? 'user' : 'agent'}`;
+            
+            let html = '';
+            if (!isUser) {
+                html += '<strong>Master Agent</strong><br>';
+            }
+            html += `<p>${content.replace(/\\n/g, '<br>')}</p>`;
+            
+            if (meta) {
+                html += `<div class="meta">`;
+                if (meta.agent_used) {
+                    html += `Agent: ${meta.agent_used} | `;
+                }
+                if (meta.plugins_invoked && meta.plugins_invoked.length > 0) {
+                    html += `Plugins: ${meta.plugins_invoked.join(', ')}`;
+                }
+                html += `</div>`;
+            }
+            
+            div.innerHTML = html;
+            messagesEl.appendChild(div);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+        
+        function addIntermediateStep(type, content) {
+            const step = document.createElement('div');
+            step.className = `step ${type}`;
+            step.innerHTML = content;
+            intermediateStepsEl.appendChild(step);
+            intermediateStepsEl.scrollTop = intermediateStepsEl.scrollHeight;
+        }
+        
+        function clearIntermediateSteps() {
+            intermediateStepsEl.innerHTML = '';
+        }
+        
+        function moveToolCallsToMessage() {
+            // Move intermediate steps to message area so they persist after response
+            if (intermediateStepsEl.children.length > 0) {
+                const toolCallsDiv = document.createElement('div');
+                toolCallsDiv.className = 'message agent';
+                toolCallsDiv.innerHTML = '<strong>🔧 Tool Calls</strong>';
+                
+                const stepsContainer = document.createElement('div');
+                stepsContainer.style.marginTop = '10px';
+                stepsContainer.style.fontSize = '12px';
+                
+                // Clone all steps
+                Array.from(intermediateStepsEl.children).forEach(step => {
+                    const clonedStep = step.cloneNode(true);
+                    stepsContainer.appendChild(clonedStep);
+                });
+                
+                toolCallsDiv.appendChild(stepsContainer);
+                messagesEl.appendChild(toolCallsDiv);
+                messagesEl.scrollTop = messagesEl.scrollHeight;
+            }
+        }
+        
+        async function sendMessage() {
+            const message = inputEl.value.trim();
+            if (!message) return;
+            
+            // Add user message
+            addMessage(message, true);
+            inputEl.value = '';
+            
+            // Show loading and clear previous steps
+            loadingEl.classList.add('show');
+            loadingTextEl.textContent = 'Processing your request...';
+            clearIntermediateSteps();
+            sendBtn.disabled = true;
+            
+            try {
+                // Get user info
+                const userId = userIdEl.value.trim() || null;
+                const userFirstName = userFirstNameEl.value.trim() || null;
+                const userLastName = userLastNameEl.value.trim() || null;
+                
+                // Use streaming endpoint with SSE
+                const response = await fetch('/invoke/stream', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        message,
+                        user_id: userId,
+                        user_first_name: userFirstName,
+                        user_last_name: userLastName
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\\n');
+                    buffer = lines.pop(); // Keep incomplete line in buffer
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                handleStreamEvent(data);
+                            } catch (e) {
+                                console.log('Parse error:', e);
+                            }
+                        }
+                    }
+                }
+                
+            } catch (error) {
+                addMessage(`Error: ${error.message}. Please try again.`, false);
+            } finally {
+                loadingEl.classList.remove('show');
+                sendBtn.disabled = false;
+            }
+        }
+        
+        function handleStreamEvent(data) {
+            switch (data.type) {
+                case 'tool_call':
+                    loadingTextEl.textContent = `Calling: ${data.tool}...`;
+                    const userInfo = data.user_context ? `<br><small style="color: #888;">👤 User: ${data.user_context.user_first_name || ''} ${data.user_context.user_last_name || ''} (${data.user_context.user_id})</small>` : '';
+                    addIntermediateStep('tool-call', `🔧 <strong>Calling:</strong> ${data.tool}${userInfo}${data.arguments ? '<br><small>' + data.arguments.substring(0, 100) + '</small>' : ''}`);
+                    break;
+                    
+                case 'tool_result':
+                    addIntermediateStep('tool-result', `✅ <strong>${data.tool}</strong> completed<br><small>${data.result.substring(0, 150)}...</small>`);
+                    break;
+                    
+                case 'text_chunk':
+                    addIntermediateStep('text-chunk', `💬 ${data.content}`);
+                    break;
+                    
+                case 'final':
+                    // Move tool calls to message area before adding final response
+                    moveToolCallsToMessage();
+                    addMessage(data.response, false, {
+                        agent_used: data.agent_used,
+                        plugins_invoked: data.plugins_invoked
+                    });
+                    break;
+                    
+                case 'error':
+                    addMessage(`Error: ${data.message}`, false);
+                    break;
+            }
+        }
+    </script>
+</body>
+</html>
+"""

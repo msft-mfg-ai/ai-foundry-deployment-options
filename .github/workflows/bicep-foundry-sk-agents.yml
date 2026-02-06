@@ -1,0 +1,22 @@
+name: 'Bicep: foundry-sk-agents'
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'options-infra/foundry-sk-agents/**'
+      - 'options-infra/modules/**'
+      - '.github/workflows/bicep-validate-reusable.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'options-infra/foundry-sk-agents/**'
+      - 'options-infra/modules/**'
+      - '.github/workflows/bicep-validate-reusable.yml'
+
+jobs:
+  validate:
+    uses: ./.github/workflows/bicep-validate-reusable.yml
+    with:
+      bicep-file: main.bicep
+      working-directory: options-infra/foundry-sk-agents

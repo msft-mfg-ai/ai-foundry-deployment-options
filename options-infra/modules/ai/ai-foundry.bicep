@@ -39,7 +39,7 @@ type aiModelTDeploymentType = {
       name: string
       @description('The version of the model, e.g. "2024-11-20" or "0125"')
       version: string
-      format: 'OpenAI'
+      format: 'OpenAI' | 'Cohere'
     }
   }
   sku: {

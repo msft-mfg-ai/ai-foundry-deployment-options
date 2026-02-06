@@ -16,7 +16,7 @@ param keyVaultDnsZoneResourceId string
 param postgressDnsZoneResourceId string
 
 param liteLlmConfigYaml string
-param modelsStatic array = []
+param staticModels array = []
 param litlLlmPublicFqdn string?
 param tags object = {}
 
@@ -56,7 +56,6 @@ module managedEnvironment '../aca/container-app-environment.bicep' = {
     appInsightsConnectionString: appInsightsConnectionString
     name: 'aca${resourceToken}'
     logAnalyticsWorkspaceResourceId: logAnalyticsWorkspaceResourceId
-    storages: []
     publicNetworkAccess: 'Disabled'
     infrastructureSubnetId: acaSubnetResourceId
   }
@@ -319,7 +318,7 @@ module liteLlmConnectionDynamic '../ai/connection-modelgateway-dynamic.bicep' = 
   }
 }
 
-module liteLlmConnectionStatic '../ai/connection-modelgateway-static.bicep' = if (!empty(modelsStatic)) {
+module liteLlmConnectionStatic '../ai/connection-modelgateway-static.bicep' = if (!empty(staticModels)) {
   name: 'lite-llm-connection-static'
   params: {
     aiFoundryName: aiFoundryName
@@ -328,7 +327,7 @@ module liteLlmConnectionStatic '../ai/connection-modelgateway-static.bicep' = if
     isSharedToAll: true
     gatewayName: 'litellm'
     targetUrl: liteLlmApp.outputs.CONTAINER_APP_FQDN
-    staticModels: modelsStatic
+    staticModels: staticModels
   }
 }
 

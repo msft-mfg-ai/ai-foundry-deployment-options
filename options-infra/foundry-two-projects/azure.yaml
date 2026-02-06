@@ -1,7 +1,7 @@
 # deploying using AZD because https://github.com/Azure/azure-cli/pull/31990
-name: main-option-4
+name: foundry-two-projects
 
 infra:
   provider: bicep
-  path: ../
-  module: main-option-4
+  path: .
+  module: main

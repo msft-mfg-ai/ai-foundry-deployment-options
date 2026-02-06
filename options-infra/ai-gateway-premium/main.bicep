@@ -93,7 +93,7 @@ module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
     peSubnetName: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.name
     vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     resourceToken: resourceToken
-    aiServicesName: '' // create AI serviced PE later
+    aiServicesName: '' // create AI services PE later
     aiAccountNameResourceGroupName: ''
   }
 }
@@ -264,6 +264,16 @@ module ai_gateway '../modules/apim/ai-gateway-premium.bicep' = {
         }
       }
       {
+        name: 'gpt-4o'
+        properties: {
+          model: {
+            name: 'gpt-4o'
+            version: '2025-01-01-preview'
+            format: 'OpenAI'
+          }
+        }
+      }
+      {
         name: 'gpt-5-mini'
         properties: {
           model: {
@@ -310,6 +320,7 @@ module dashboard_setup '../modules/dashboard/dashboard-setup.bicep' = {
   name: 'dashboard-setup-deployment-${resourceToken}'
   params: {
     location: location
+    applicationInsightsName: logAnalytics.outputs.APPLICATION_INSIGHTS_NAME
     logAnalyticsWorkspaceName: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_NAME
     dashboardDisplayName: 'APIM Token Usage Dashboard for ${resourceToken}'
   }

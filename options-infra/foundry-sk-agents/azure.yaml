@@ -1,0 +1,26 @@
+# deploying using AZD because https://github.com/Azure/azure-cli/pull/31990
+name: foundry-sk-agents
+
+infra:
+  provider: bicep
+  path: .
+  module: main
+
+services:
+  aca-sk-agents:
+    project: ./apps/sk-agents
+    host: containerapp
+    language: python
+
+  aca-file-processor:
+    project: ./apps/file-processor
+    host: containerapp
+    language: python
+
+hooks:
+  postprovision:
+    shell: sh
+    run: |
+      echo "Provisioning complete!"
+      echo "SK Agents URL: ${SERVICE_SK_AGENTS_ENDPOINTS}"
+      echo "File Processor URL: ${SERVICE_FILE_PROCESSOR_ENDPOINTS}"

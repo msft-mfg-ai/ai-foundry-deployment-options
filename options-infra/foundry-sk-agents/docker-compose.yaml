@@ -1,0 +1,54 @@
+# Docker Compose for local development and testing
+# Usage: docker-compose up --build
+
+services:
+  sk-agents:
+    build:
+      context: ./apps/sk-agents
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
+      - AZURE_AI_PROJECT_CONNECTION_STRING=${AZURE_AI_PROJECT_CONNECTION_STRING:-}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
+      - AZURE_OPENAI_DEPLOYMENT=${AZURE_OPENAI_DEPLOYMENT:-gpt-4.1-mini}
+      - FILE_PROCESSOR_URL=http://file-processor:3000
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
+      - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
+      - OTEL_PYTHON_EXCLUDED_URLS=/health,/healthz,/ready,/readiness,/liveness,/invoke/stream
+    depends_on:
+      file-processor:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - agents-network
+
+  file-processor:
+    build:
+      context: ./apps/file-processor
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3000"
+    environment:
+      - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
+      - PROCESSING_DELAY_SECONDS=${PROCESSING_DELAY_SECONDS:-20}
+      - OTEL_PYTHON_EXCLUDED_URLS=/health,/healthz,/ready,/readiness,/liveness
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    networks:
+      - agents-network
+
+networks:
+  agents-network:
+    driver: bridge

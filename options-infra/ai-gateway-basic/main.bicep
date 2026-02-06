@@ -107,12 +107,23 @@ module ai_gateway '../modules/apim/ai-gateway.bicep' = {
     logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
     appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
     appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
+    gatewayAuthenticationType: 'ProjectManagedIdentity'
     staticModels: [
       {
         name: 'gpt-4.1-mini'
         properties: {
           model: {
             name: 'gpt-4.1-mini'
+            version: '2025-01-01-preview'
+            format: 'OpenAI'
+          }
+        }
+      }
+      {
+        name: 'gpt-4o'
+        properties: {
+          model: {
+            name: 'gpt-4o'
             version: '2025-01-01-preview'
             format: 'OpenAI'
           }
@@ -164,6 +175,7 @@ module dashboard_setup '../modules/dashboard/dashboard-setup.bicep' = {
   name: 'dashboard-setup-deployment-${resourceToken}'
   params: {
     location: location
+    applicationInsightsName: logAnalytics.outputs.APPLICATION_INSIGHTS_NAME
     logAnalyticsWorkspaceName: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_NAME
     dashboardDisplayName: 'APIM Token Usage Dashboard for ${resourceToken}'
   }
@@ -179,6 +191,14 @@ module models_policy_assignment '../modules/policy/models-policy-assignment.bice
   params: {
     cognitiveServicesPolicyDefinitionId: models_policy.outputs.cognitiveServicesPolicyDefinitionId
     allowedCognitiveServicesModels: []
+  }
+}
+
+module bing_connection '../modules/bing/connection-bing-grounding.bicep' = {
+  name: 'bing-connection-deployment-${resourceToken}'
+  params: {
+    aiFoundryName: foundry.outputs.FOUNDRY_NAME
+    tags: tags
   }
 }
 

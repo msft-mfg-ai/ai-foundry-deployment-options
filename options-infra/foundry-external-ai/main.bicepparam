@@ -1,4 +1,4 @@
-using 'main-option-2.bicep'
+using 'main.bicep'
 
 // Parameters for the main Bicep template
 param location = 'westus'

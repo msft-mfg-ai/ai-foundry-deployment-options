@@ -6,6 +6,11 @@
 targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
+param projectsCount int = 2
+var tags = {
+  'created-by': 'foundry-two-projects'
+  'hidden-title': 'Foundry Standard - BYO Vnet'
+}
 
 @export()
 type apiType = {
@@ -24,18 +29,21 @@ var resourceToken = toLower(uniqueString(resourceGroup().id, location))
 module vnet '../modules/networking/vnet.bicep' = {
   name: 'vnet'
   params: {
-    vnetName: 'project-vnet-${resourceToken}'
+    tags: tags
     location: location
+    vnetName: 'project-vnet-${resourceToken}'
   }
 }
 
 module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
   name: 'ai-dependencies-with-dns'
   params: {
+    tags: tags
+    location: location
     peSubnetName: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.name
     vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     resourceToken: resourceToken
-    aiServicesName: '' // create AI serviced PE later
+    aiServicesName: '' // create AI services PE later
     aiAccountNameResourceGroupName: ''
   }
 }
@@ -46,18 +54,20 @@ module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
 module logAnalytics '../modules/monitor/loganalytics.bicep' = {
   name: 'log-analytics'
   params: {
+    tags: tags
+    location: location
     newLogAnalyticsName: 'log-analytics'
     newApplicationInsightsName: 'app-insights'
-    location: location
   }
 }
 
 module foundry '../modules/ai/ai-foundry.bicep' = {
   name: 'foundry-deployment'
   params: {
+    tags: tags
+    location: location
     managedIdentityResourceId: '' // Use System Assigned Identity
     name: 'ai-foundry-${resourceToken}'
-    location: location
     publicNetworkAccess: 'Enabled'
     agentSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId // Use the first agent subnet
     deployments: [
@@ -79,33 +89,41 @@ module foundry '../modules/ai/ai-foundry.bicep' = {
   }
 }
 
-module project1 '../modules/ai/ai-project-with-caphost.bicep' = {
-  name: 'ai-project-1-with-caphost-${resourceToken}'
-  params: {
-    foundryName: foundry.outputs.FOUNDRY_NAME
-    location: location
-    projectId: 1
-    aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
-    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+module project_identities '../modules/iam/identity.bicep' = [
+  for i in range(1, projectsCount): {
+    name: 'ai-project-${i}-identity-${resourceToken}'
+    params: {
+      tags: tags
+      location: location
+      identityName: 'ai-project-${i}-identity-${resourceToken}'
+    }
   }
-}
+]
 
-module project2 '../modules/ai/ai-project-with-caphost.bicep' = {
-  name: 'ai-project-2-with-caphost-${resourceToken}'
-  params: {
-    foundryName: foundry.outputs.FOUNDRY_NAME
-    location: location
-    projectId: 2
-    aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
+@batchSize(1)
+module projects '../modules/ai/ai-project-with-caphost.bicep' = [
+  for i in range(1, projectsCount): {
+    name: 'ai-project-${i}-with-caphost-${resourceToken}'
+    params: {
+      tags: tags
+      location: location
+      foundryName: foundry.outputs.FOUNDRY_NAME
+      project_description: 'AI Project ${i} ${resourceToken}'
+      display_name: 'AI Project ${i} ${resourceToken}'
+      projectId: i
+      aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
+      existingAiResourceId: null
+      managedIdentityResourceId: project_identities[i - 1].outputs.MANAGED_IDENTITY_RESOURCE_ID
+      appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    }
   }
-  dependsOn: [
-    project1 // Ensure project1 is created before project2
-  ]
-}
+]
 
-module dnsSites 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
+module dnsZoneSites 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
   name: 'dns-sites'
   params: {
+    tags: tags
+    location: 'global'
     name: 'privatelink.azurewebsites.net'
     virtualNetworkLinks: [
       {
@@ -115,10 +133,15 @@ module dnsSites 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
   }
 }
 
-module dnsAca 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
+var dnsZoneToCreate = map(filter(externalApis, (api) => api.type == 'managedEnvironments'), api => api.dnsZoneName)
+var acaDnsZoneName = empty(dnsZoneToCreate) ? 'privatelink.${location}.azurecontainerapps.io' : first(dnsZoneToCreate)
+
+module dnsZoneAca 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
   name: 'dns-aca'
   params: {
-    name: 'privatelink.${location}.azurecontainerapps.io'
+    tags: tags
+    location: 'global'
+    name: acaDnsZoneName
     virtualNetworkLinks: [
       {
         virtualNetworkResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
@@ -128,8 +151,8 @@ module dnsAca 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
 }
 
 var dnsZones = {
-  'privatelink.azurewebsites.net': dnsSites.outputs.resourceId
-  'privatelink.${location}.azurecontainerapps.io': dnsAca.outputs.resourceId
+  'privatelink.azurewebsites.net': dnsZoneSites.outputs.resourceId
+  '${acaDnsZoneName}': dnsZoneAca.outputs.resourceId
 }
 
 // private endpoints for external APIs
@@ -137,8 +160,9 @@ module privateEndpoints '../modules/networking/private-endpoint.bicep' = [
   for (api, index) in externalApis: {
     name: 'private-endpoint-${api.name}'
     params: {
-      privateEndpointName: 'pe-${api.name}'
+      tags: tags
       location: location
+      privateEndpointName: 'pe-${api.name}'
       subnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId // Use the private endpoint subnet
       targetResourceId: api.resourceId
       groupIds: [api.type] // Use the type as group ID
@@ -149,8 +173,14 @@ module privateEndpoints '../modules/networking/private-endpoint.bicep' = [
         }
       ]
     }
+    dependsOn: [
+      dnsZoneSites
+      dnsZoneAca
+    ]
   }
 ]
 
-output FOUNDRY_PROJECT_1_CONNECTION_STRING string = project1.outputs.FOUNDRY_PROJECT_CONNECTION_STRING
-output FOUNDRY_PROJECT_2_CONNECTION_STRING string = project2.outputs.FOUNDRY_PROJECT_CONNECTION_STRING
+output project_connection_strings string[] = [
+  for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_CONNECTION_STRING
+]
+output project_names string[] = [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]

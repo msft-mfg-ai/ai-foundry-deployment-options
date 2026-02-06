@@ -30,7 +30,7 @@ module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.15.0' = 
   }
 }
 
-module appInsights 'br/public:avm/res/insights/component:0.4.2' = {
+module appInsights 'br/public:avm/res/insights/component:0.7.1' = {
   name: 'appinsights-${resourceToken}'
   params: {
     name: 'appinsights01'

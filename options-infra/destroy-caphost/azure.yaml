@@ -1,5 +1,5 @@
 # deploying using AZD because https://github.com/Azure/azure-cli/pull/31990
-name: create-project
+name: destroy-caphost
 
 infra:
   provider: bicep

@@ -235,7 +235,7 @@ resource serverfarmForFunctions 'Microsoft.Web/serverfarms@2023-12-01' = {
   }
 }
 
-module func 'br/public:avm/res/web/site:0.20.0' = {
+module func 'br/public:avm/res/web/site:0.21.0' = {
   name: 'function-deployment'
   params: {
     location: location
@@ -290,7 +290,7 @@ module func 'br/public:avm/res/web/site:0.20.0' = {
   }
 }
 
-module logicApp 'br/public:avm/res/web/site:0.20.0' = {
+module logicApp 'br/public:avm/res/web/site:0.21.0' = {
   name: 'logicAppDeployment'
   params: {
     // Required parameters

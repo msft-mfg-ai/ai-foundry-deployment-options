@@ -2,6 +2,9 @@
     <inbound>
         <base />
         <!-- CORS policy to allow Azure AI Foundry portal -->
+        <set-header name="x-caller-name" exists-action="override">
+            <value>@((string)context.Subscription.Id)</value>
+        </set-header>
         <cors allow-credentials="true">
             <allowed-origins>
                 <origin>https://ai.azure.com</origin>
@@ -22,12 +25,12 @@
             <value>@("Bearer " + (string)context.Variables["managed-id-access-token"])</value>
         </set-header>
         <set-backend-service backend-id="{backend-id}" />
-        <!--Policy 2 - Emit the Azure OpenAI Token Metrics -->
+        <!--Policy 2 - Emit the Azure OpenAI Token Metrics to Application Insights -->
         <azure-openai-emit-token-metric namespace="openai">
-            <dimension name="Subscription ID" value="@(context.Subscription.Id)" />
             <dimension name="Client IP" value="@(context.Request.IpAddress)" />
             <dimension name="API ID" value="@(context.Api.Id)" />
             <dimension name="User ID" value="@(context.Request.Headers.GetValueOrDefault("x-user-id", "N/A"))" />
+            <dimension name="Caller Name" value="@(context.Subscription.Id)" />
         </azure-openai-emit-token-metric>
     </inbound>
     <backend>

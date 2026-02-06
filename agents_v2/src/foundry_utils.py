@@ -106,3 +106,16 @@ def classify_connection(conn_name: str, gateway_connections: dict) -> tuple[str,
     mode = "static" if "static" in conn_lower else "dynamic"
     
     return gateway_type, mode
+
+async def get_bing_grounding_connection(client: AIProjectClient):
+
+    async for connection in client.connections.list():
+        print(
+            f"Connection ID: {connection.id}, Name: {connection.name}, Type: {connection.type} Default: {connection.is_default}"
+        )
+        if connection.type == "GroundingWithBingSearch":
+            print(
+                f"  Bing Grounding connection found: {connection.name}"
+            )
+            return connection.id
+    return None

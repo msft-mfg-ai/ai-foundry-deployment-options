@@ -41,7 +41,7 @@ module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
     peSubnetName: privateDns.outputs.VIRTUAL_NETWORK_SUBNET_PE_NAME
     vnetResourceId: privateDns.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     resourceToken: resourceToken
-    aiServicesName: '' // create AI serviced PE later
+    aiServicesName: '' // create AI services PE later
     aiAccountNameResourceGroupName: ''
   }
 }
