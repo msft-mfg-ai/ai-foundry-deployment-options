@@ -36,7 +36,7 @@ AppMetrics
     TodayPromptTokens = sumif(Sum, Name == "Prompt Tokens"),
     TodayCompletionTokens = sumif(Sum, Name == "Completion Tokens"),
     TodayTotalTokens = sumif(Sum, Name == "Total Tokens"),
-    TodayRequests = count( Name == "Total Tokens")
+    TodayRequests = countif(Name == "Total Tokens")
 '''
 
 var kqlMonthStats = '''
@@ -46,7 +46,7 @@ AppMetrics
 | extend CallerName = tostring(parse_json(Properties)["Caller Name"])
 | summarize
     MonthTotalTokens = sumif(Sum, Name == "Total Tokens"),
-    MonthRequests = count(Name == "Total Tokens"),
+    MonthRequests = countif(Name == "Total Tokens"),
     UniqueProjects = dcount(CallerName)
 '''
 
@@ -83,7 +83,7 @@ AppMetrics
     PromptTokens = sumif(Sum, Name == "Prompt Tokens"),
     CompletionTokens = sumif(Sum, Name == "Completion Tokens"),
     TotalTokens = sumif(Sum, Name == "Total Tokens"),
-    Requests = count(Name == "Total Tokens")
+    Requests = countif(Name == "Total Tokens")
 by bin(TimeGenerated, 1d), CallerName
 | order by TimeGenerated desc
 '''
@@ -137,7 +137,7 @@ AppMetrics
     PromptTokens = sumif(Sum, Name == "Prompt Tokens"),
     CompletionTokens = sumif(Sum, Name == "Completion Tokens"),
     TotalTokens = sumif(Sum, Name == "Total Tokens"),
-    Requests = count(Name == "Total Tokens")
+    Requests = countif(Name == "Total Tokens")
 by CallerName
 | order by TotalTokens desc
 '''

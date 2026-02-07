@@ -89,7 +89,7 @@
         <!-- Custom dimensions (max 5): Project ID, Caller Name, API ID, User ID -->
         <!-- For model/deployment tracking, use ApiManagementGatewayLlmLog which has DeploymentName natively -->
         <azure-openai-emit-token-metric namespace="openai">
-            <dimension name="Caller ID" value="@((string)context.Variables["caller-id"])" />
+            <dimension name="Caller ID" value="@((string)context.Variables["caller-resource-id"])" />
             <dimension name="Caller Name" value="@((string)context.Variables["caller-name"])" />
             <dimension name="Foundry Name" value="@((string)context.Variables["foundry-name"])" />
             <dimension name="API ID" value="@(context.Api.Id)" />
