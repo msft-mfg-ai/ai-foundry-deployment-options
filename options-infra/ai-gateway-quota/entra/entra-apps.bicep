@@ -124,4 +124,4 @@ output teamBetaAppId string = teamBetaApp.appId
 output teamGammaAppId string = teamGammaApp.appId
 
 // Caller tier mapping JSON for the APIM Named Value
-output callerTierMapping string = '{"${teamAlphaApp.appId}":{"tier":"gold","name":"Team Alpha"},"${teamBetaApp.appId}":{"tier":"silver","name":"Team Beta"},"${teamGammaApp.appId}":{"tier":"bronze","name":"Team Gamma"}}'
+output callerTierMapping string = '{"${teamAlphaApp.appId}":{"tier":"gold","name":"Team Alpha","tpm":200000,"monthlyQuota":10000000},"${teamBetaApp.appId}":{"tier":"silver","name":"Team Beta","tpm":50000,"monthlyQuota":5000000},"${teamGammaApp.appId}":{"tier":"bronze","name":"Team Gamma","tpm":10000,"monthlyQuota":100}}'
