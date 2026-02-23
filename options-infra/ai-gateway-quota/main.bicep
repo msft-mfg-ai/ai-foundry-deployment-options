@@ -597,5 +597,4 @@ output TEAM_BETA_APP_ID string = entraApps.outputs.teamBetaAppId
 output TEAM_GAMMA_APP_ID string = entraApps.outputs.teamGammaAppId
 output TENANT_ID string = entraApps.outputs.tenantId
 output CONFIG_VALIDATION_RESULT bool = valid_config
-output DCR_ENDPOINT string = callerQuotaDCR.properties.dataCollectionEndpointId ?? ''
 output DCR_IMMUTABLE_ID string = callerQuotaDCR.properties.immutableId
