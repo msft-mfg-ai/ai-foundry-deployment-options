@@ -276,6 +276,19 @@ resource callerQuotaTable 'Microsoft.OperationalInsights/workspaces/tables@2023-
   }
 }
 
+// Data Collection Endpoint for custom table ingestion
+resource callerQuotaDCE 'Microsoft.Insights/dataCollectionEndpoints@2023-03-11' = {
+  name: 'dce-caller-quota-${resourceToken}'
+  location: location
+  tags: tags
+  kind: 'Direct'
+  properties: {
+    networkAcls: {
+      publicNetworkAccess: 'Enabled'
+    }
+  }
+}
+
 // Data Collection Rule for CALLER_QUOTA_CL ingestion
 resource callerQuotaDCR 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
   name: 'dcr-caller-quota-${resourceToken}'
@@ -284,6 +297,7 @@ resource callerQuotaDCR 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
   dependsOn: [callerQuotaTable]
   kind: 'Direct'
   properties: {
+    dataCollectionEndpointId: callerQuotaDCE.id
     streamDeclarations: {
       'Custom-Json-CALLER_QUOTA_CL': {
         columns: [
@@ -608,3 +622,4 @@ output TEAM_GAMMA_APP_ID string = entraApps.outputs.teamGammaAppId
 output TENANT_ID string = entraApps.outputs.tenantId
 output CONFIG_VALIDATION_RESULT bool = valid_config
 output DCR_IMMUTABLE_ID string = callerQuotaDCR.properties.immutableId
+output DCE_ENDPOINT string = callerQuotaDCE.properties.logsIngestion.endpoint
