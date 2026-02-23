@@ -12,6 +12,9 @@ param openAiApiBase string
 param openAiResourceId string
 param openAiLocation string = location
 
+@description('Email address for budget alert notifications (optional)')
+param budgetAlertEmail string = ''
+
 var tags = {
   'created-by': 'option-ai-gateway-quota'
   'hidden-title': 'APIM AI Gateway - Bearer Auth + Quota Tiers'
@@ -444,6 +447,13 @@ resource budgetActionGroup 'Microsoft.Insights/actionGroups@2023-09-01-preview' 
   properties: {
     groupShortName: 'BudgetEnf'
     enabled: true
+    emailReceivers: empty(budgetAlertEmail) ? [] : [
+      {
+        name: 'budget-alert-email'
+        emailAddress: budgetAlertEmail
+        useCommonAlertSchema: true
+      }
+    ]
     logicAppReceivers: [
       {
         name: 'budget-enforcement-logic-app'
