@@ -287,7 +287,7 @@ resource callerQuotaDCR 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
           { name: 'TimeGenerated', type: 'datetime' }
           { name: 'CallerAzp', type: 'string' }
           { name: 'CallerName', type: 'string' }
-          { name: 'MonthlyTokenBudget', type: 'int' }
+          { name: 'MonthlyTokenBudget', type: 'long' }
         ]
       }
     }
@@ -459,7 +459,7 @@ resource budgetActionGroup 'Microsoft.Insights/actionGroups@2023-09-01-preview' 
 // -- Scheduled KQL Alert: Monthly Budget Enforcement ----------------------------------------------------------
 // -- Runs every 5 minutes, checks if any caller has exceeded their monthly token budget                      --
 // --------------------------------------------------------------------------------------------------------------
-resource budgetAlert 'Microsoft.Insights/scheduledQueryRules@2024-01-01-preview' = {
+resource budgetAlert 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = {
   name: 'alert-budget-exceeded-${resourceToken}'
   location: location
   tags: tags
@@ -525,7 +525,7 @@ monthlyUsage
 }
 
 // Monthly reset alert — clears blocked-callers at month start
-resource monthlyResetAlert 'Microsoft.Insights/scheduledQueryRules@2024-01-01-preview' = {
+resource monthlyResetAlert 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = {
   name: 'alert-monthly-reset-${resourceToken}'
   location: location
   tags: tags
