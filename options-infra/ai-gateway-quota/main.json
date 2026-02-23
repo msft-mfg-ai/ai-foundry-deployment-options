@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.38.33.27573",
-      "templateHash": "5523655069583425665"
+      "templateHash": "516008753672487245"
     }
   },
   "parameters": {
@@ -25,7 +25,7 @@
     }
   },
   "variables": {
-    "$fxv#0": "<policies>\n    <inbound>\n        <base />\n\n        <!-- ============================================================== -->\n        <!-- Step 1: Validate Bearer Token against Entra ID                 -->\n        <!-- ============================================================== -->\n        <validate-azure-ad-token\n            tenant-id=\"{tenant-id}\"\n            header-name=\"Authorization\"\n            failed-validation-httpcode=\"401\"\n            failed-validation-error-message=\"Unauthorized. A valid Entra ID bearer token is required.\"\n            output-token-variable-name=\"jwt\">\n            <audiences>\n                <audience>{audience}</audience>\n            </audiences>\n        </validate-azure-ad-token>\n\n        <!-- ============================================================== -->\n        <!-- Step 2: Extract azp (authorized party) claim                   -->\n        <!-- In Entra ID v2 tokens: \"azp\", in v1 tokens: \"appid\"           -->\n        <!-- ============================================================== -->\n        <set-variable name=\"azp\" value=\"@(((Jwt)context.Variables[\"jwt\"]).Claims.GetValueOrDefault(\"azp\", ((Jwt)context.Variables[\"jwt\"]).Claims.GetValueOrDefault(\"appid\", \"unknown\")))\" />\n\n        <!-- ============================================================== -->\n        <!-- Step 3: Load caller-to-tier mapping from Named Value           -->\n        <!-- Format: {\"<client-id>\": {\"tier\": \"gold\", \"name\": \"Team X\"}}   -->\n        <!-- ============================================================== -->\n        <set-variable name=\"caller-mapping\" value=\"{{caller-tier-mapping}}\" />\n\n        <!-- Parse caller tier and name from the mapping -->\n        <set-variable name=\"caller-tier\" value=\"@{\n            try {\n                var mapping = Newtonsoft.Json.Linq.JObject.Parse((string)context.Variables[\"caller-mapping\"]);\n                var azp = (string)context.Variables[\"azp\"];\n                var entry = mapping[azp];\n                if (entry == null) return \"\";\n                return entry[\"tier\"]?.ToString() ?? \"\";\n            } catch {\n                return \"\";\n            }\n        }\" />\n        <set-variable name=\"caller-name\" value=\"@{\n            try {\n                var mapping = Newtonsoft.Json.Linq.JObject.Parse((string)context.Variables[\"caller-mapping\"]);\n                var azp = (string)context.Variables[\"azp\"];\n                var entry = mapping[azp];\n                if (entry == null) return \"unknown\";\n                return entry[\"name\"]?.ToString() ?? \"unknown\";\n            } catch {\n                return \"unknown\";\n            }\n        }\" />\n\n        <!-- ============================================================== -->\n        <!-- Step 4: Authorization check - reject unknown callers           -->\n        <!-- ============================================================== -->\n        <choose>\n            <when condition=\"@(string.IsNullOrEmpty((string)context.Variables[\"caller-tier\"]))\">\n                <return-response>\n                    <set-status code=\"403\" reason=\"Forbidden\" />\n                    <set-header name=\"Content-Type\" exists-action=\"override\">\n                        <value>application/json</value>\n                    </set-header>\n                    <set-body>@{\n                        var azp = (string)context.Variables[\"azp\"];\n                        return \"{\\\"error\\\": \\\"forbidden\\\", \\\"message\\\": \\\"Application '\" + azp + \"' is not authorized. Contact the platform team to request access.\\\"}\";\n                    }</set-body>\n                </return-response>\n            </when>\n        </choose>\n\n        <!-- ============================================================== -->\n        <!-- Step 5: Apply azure-openai-token-limit based on caller tier    -->\n        <!-- Gold: 200,000 TPM | Silver: 50,000 TPM | Bronze: 10,000 TPM   -->\n        <!-- ============================================================== -->\n        <choose>\n            <when condition=\"@(((string)context.Variables[\"caller-tier\"]) == \"gold\")\">\n                <azure-openai-token-limit\n                    counter-key=\"@((string)context.Variables[\"azp\"])\"\n                    tokens-per-minute=\"200000\"\n                    estimate-prompt-tokens=\"true\"\n                    remaining-tokens-variable-name=\"remainingTokens\" />\n            </when>\n            <when condition=\"@(((string)context.Variables[\"caller-tier\"]) == \"silver\")\">\n                <azure-openai-token-limit\n                    counter-key=\"@((string)context.Variables[\"azp\"])\"\n                    tokens-per-minute=\"50000\"\n                    estimate-prompt-tokens=\"true\"\n                    remaining-tokens-variable-name=\"remainingTokens\" />\n            </when>\n            <otherwise>\n                <!-- Bronze tier (default for any recognized but unmatched tier) -->\n                <azure-openai-token-limit\n                    counter-key=\"@((string)context.Variables[\"azp\"])\"\n                    tokens-per-minute=\"10000\"\n                    estimate-prompt-tokens=\"true\"\n                    remaining-tokens-variable-name=\"remainingTokens\" />\n            </otherwise>\n        </choose>\n\n        <!-- ============================================================== -->\n        <!-- Set headers for logging and tracing                            -->\n        <!-- ============================================================== -->\n        <set-header name=\"x-caller-azp\" exists-action=\"override\">\n            <value>@((string)context.Variables[\"azp\"])</value>\n        </set-header>\n        <set-header name=\"x-caller-name\" exists-action=\"override\">\n            <value>@((string)context.Variables[\"caller-name\"])</value>\n        </set-header>\n        <set-header name=\"x-caller-tier\" exists-action=\"override\">\n            <value>@((string)context.Variables[\"caller-tier\"])</value>\n        </set-header>\n\n        <!-- CORS for Azure AI Foundry portal -->\n        <cors allow-credentials=\"true\">\n            <allowed-origins>\n                <origin>https://ai.azure.com</origin>\n            </allowed-origins>\n            <allowed-methods preflight-result-max-age=\"300\">\n                <method>*</method>\n            </allowed-methods>\n            <allowed-headers>\n                <header>*</header>\n            </allowed-headers>\n            <expose-headers>\n                <header>*</header>\n            </expose-headers>\n        </cors>\n\n        <!-- Authenticate to Azure OpenAI with APIM's managed identity -->\n        <authentication-managed-identity resource=\"https://cognitiveservices.azure.com\" output-token-variable-name=\"managed-id-access-token\" ignore-error=\"false\" />\n        <set-header name=\"Authorization\" exists-action=\"override\">\n            <value>@(\"Bearer \" + (string)context.Variables[\"managed-id-access-token\"])</value>\n        </set-header>\n        <set-backend-service backend-id=\"{backend-id}\" />\n\n        <!-- Emit token metrics with caller dimensions -->\n        <azure-openai-emit-token-metric namespace=\"openai\">\n            <dimension name=\"Caller AZP\" value=\"@((string)context.Variables[\"azp\"])\" />\n            <dimension name=\"Caller Name\" value=\"@((string)context.Variables[\"caller-name\"])\" />\n            <dimension name=\"Caller Tier\" value=\"@((string)context.Variables[\"caller-tier\"])\" />\n            <dimension name=\"API ID\" value=\"@(context.Api.Id)\" />\n        </azure-openai-emit-token-metric>\n    </inbound>\n    <backend>\n        <retry count=\"{retry-count}\" interval=\"0\" first-fast-retry=\"true\" condition=\"@(context.Response.StatusCode == 429 || (context.Response.StatusCode == 503 &amp;&amp; !context.Response.StatusReason.Contains(&quot;Backend pool&quot;) &amp;&amp; !context.Response.StatusReason.Contains(&quot;is temporarily unavailable&quot;)))\">\n            <forward-request buffer-request-body=\"true\" />\n        </retry>\n    </backend>\n    <outbound>\n        <base />\n        <!-- Return remaining token quota in response headers -->\n        <set-header name=\"x-ratelimit-remaining-tokens\" exists-action=\"override\">\n            <value>@(context.Variables.GetValueOrDefault<string>(\"remainingTokens\", \"unknown\"))</value>\n        </set-header>\n        <set-header name=\"x-caller-tier\" exists-action=\"override\">\n            <value>@((string)context.Variables[\"caller-tier\"])</value>\n        </set-header>\n    </outbound>\n    <on-error>\n        <base />\n        <choose>\n            <when condition=\"@(context.Response.StatusCode == 503)\">\n                <return-response>\n                    <set-status code=\"503\" reason=\"Service Unavailable\" />\n                </return-response>\n            </when>\n        </choose>\n    </on-error>\n</policies>\n",
+    "$fxv#0": "<policies>\n    <inbound>\n        <base />\n\n        <!-- Step 1: Validate Bearer Token against Entra ID -->\n        <validate-azure-ad-token\n            tenant-id=\"{tenant-id}\"\n            header-name=\"Authorization\"\n            failed-validation-httpcode=\"401\"\n            failed-validation-error-message=\"Unauthorized. A valid Entra ID bearer token is required.\"\n            output-token-variable-name=\"jwt\">\n            <audiences>\n                <audience>{audience}</audience>\n            </audiences>\n        </validate-azure-ad-token>\n\n        <!-- Step 2: Extract azp (authorized party) claim -->\n        <set-variable name=\"azp\" value=\"@(((Jwt)context.Variables[&quot;jwt&quot;]).Claims.GetValueOrDefault(&quot;azp&quot;, ((Jwt)context.Variables[&quot;jwt&quot;]).Claims.GetValueOrDefault(&quot;appid&quot;, &quot;unknown&quot;)))\" />\n\n        <!-- Step 3: Load caller-to-tier mapping from Named Value -->\n        <set-variable name=\"caller-mapping\" value=\"{{caller-tier-mapping}}\" />\n\n        <!-- Parse caller tier and name from the mapping -->\n        <set-variable name=\"caller-tier\" value=\"@{\n            try {\n                var mapping = Newtonsoft.Json.Linq.JObject.Parse((string)context.Variables[&quot;caller-mapping&quot;]);\n                var azp = (string)context.Variables[&quot;azp&quot;];\n                var entry = mapping[azp];\n                if (entry == null) { return &quot;&quot;; }\n                return entry[&quot;tier&quot;]?.ToString() ?? &quot;&quot;;\n            } catch {\n                return &quot;&quot;;\n            }\n        }\" />\n        <set-variable name=\"caller-name\" value=\"@{\n            try {\n                var mapping = Newtonsoft.Json.Linq.JObject.Parse((string)context.Variables[&quot;caller-mapping&quot;]);\n                var azp = (string)context.Variables[&quot;azp&quot;];\n                var entry = mapping[azp];\n                if (entry == null) { return &quot;unknown&quot;; }\n                return entry[&quot;name&quot;]?.ToString() ?? &quot;unknown&quot;;\n            } catch {\n                return &quot;unknown&quot;;\n            }\n        }\" />\n\n        <!-- Step 4: Authorization check - reject unknown callers -->\n        <choose>\n            <when condition=\"@(string.IsNullOrEmpty((string)context.Variables[&quot;caller-tier&quot;]))\">\n                <return-response>\n                    <set-status code=\"403\" reason=\"Forbidden\" />\n                    <set-header name=\"Content-Type\" exists-action=\"override\">\n                        <value>application/json</value>\n                    </set-header>\n                    <set-body>@{\n                        var azp = (string)context.Variables[\"azp\"];\n                        return \"{\\\"error\\\": \\\"forbidden\\\", \\\"message\\\": \\\"Application '\" + azp + \"' is not authorized. Contact the platform team to request access.\\\"}\";\n                    }</set-body>\n                </return-response>\n            </when>\n        </choose>\n\n        <!-- Step 4b: Monthly budget check - reject blocked callers -->\n        <set-variable name=\"blocked-callers\" value=\"{{blocked-callers}}\" />\n        <choose>\n            <when condition=\"@{\n                try {\n                    var blocked = Newtonsoft.Json.Linq.JObject.Parse((string)context.Variables[&quot;blocked-callers&quot;]);\n                    var azp = (string)context.Variables[&quot;azp&quot;];\n                    return blocked[azp] != null;\n                } catch {\n                    return false;\n                }\n            }\">\n                <return-response>\n                    <set-status code=\"429\" reason=\"Too Many Requests\" />\n                    <set-header name=\"Content-Type\" exists-action=\"override\">\n                        <value>application/json</value>\n                    </set-header>\n                    <set-header name=\"Retry-After\" exists-action=\"override\">\n                        <value>@{\n                            var endOfMonth = DateTime.UtcNow.AddMonths(1);\n                            endOfMonth = new DateTime(endOfMonth.Year, endOfMonth.Month, 1);\n                            return ((int)(endOfMonth - DateTime.UtcNow).TotalSeconds).ToString();\n                        }</value>\n                    </set-header>\n                    <set-body>@{\n                        var azp = (string)context.Variables[\"azp\"];\n                        var callerName = (string)context.Variables[\"caller-name\"];\n                        return \"{\\\"error\\\": \\\"monthly_budget_exceeded\\\", \\\"message\\\": \\\"\" + callerName + \" (\" + azp + \") has exceeded its monthly token budget. Access will be restored at the start of next month.\\\"}\";\n                    }</set-body>\n                </return-response>\n            </when>\n        </choose>\n\n        <!-- Step 5: Apply azure-openai-token-limit based on caller tier -->\n        <!-- Gold: 200,000 TPM | Silver: 50,000 TPM | Bronze: 10,000 TPM -->\n        <choose>\n            <when condition=\"@(((string)context.Variables[&quot;caller-tier&quot;]) == &quot;gold&quot;)\">\n                <azure-openai-token-limit\n                    counter-key=\"@((string)context.Variables[&quot;azp&quot;])\"\n                    tokens-per-minute=\"200000\"\n                    estimate-prompt-tokens=\"true\"\n                    remaining-tokens-variable-name=\"remainingTokens\" />\n            </when>\n            <when condition=\"@(((string)context.Variables[&quot;caller-tier&quot;]) == &quot;silver&quot;)\">\n                <azure-openai-token-limit\n                    counter-key=\"@((string)context.Variables[&quot;azp&quot;])\"\n                    tokens-per-minute=\"50000\"\n                    estimate-prompt-tokens=\"true\"\n                    remaining-tokens-variable-name=\"remainingTokens\" />\n            </when>\n            <otherwise>\n                <azure-openai-token-limit\n                    counter-key=\"@((string)context.Variables[&quot;azp&quot;])\"\n                    tokens-per-minute=\"10000\"\n                    estimate-prompt-tokens=\"true\"\n                    remaining-tokens-variable-name=\"remainingTokens\" />\n            </otherwise>\n        </choose>\n\n        <!-- Set headers for logging and tracing -->\n        <set-header name=\"x-caller-azp\" exists-action=\"override\">\n            <value>@((string)context.Variables[\"azp\"])</value>\n        </set-header>\n        <set-header name=\"x-caller-name\" exists-action=\"override\">\n            <value>@((string)context.Variables[\"caller-name\"])</value>\n        </set-header>\n        <set-header name=\"x-caller-tier\" exists-action=\"override\">\n            <value>@((string)context.Variables[\"caller-tier\"])</value>\n        </set-header>\n\n        <!-- CORS for Azure AI Foundry portal -->\n        <cors allow-credentials=\"true\">\n            <allowed-origins>\n                <origin>https://ai.azure.com</origin>\n            </allowed-origins>\n            <allowed-methods preflight-result-max-age=\"300\">\n                <method>*</method>\n            </allowed-methods>\n            <allowed-headers>\n                <header>*</header>\n            </allowed-headers>\n            <expose-headers>\n                <header>*</header>\n            </expose-headers>\n        </cors>\n\n        <!-- Authenticate to Azure OpenAI with APIM's managed identity -->\n        <authentication-managed-identity resource=\"https://cognitiveservices.azure.com\" output-token-variable-name=\"managed-id-access-token\" ignore-error=\"false\" />\n        <set-header name=\"Authorization\" exists-action=\"override\">\n            <value>@(\"Bearer \" + (string)context.Variables[\"managed-id-access-token\"])</value>\n        </set-header>\n        <set-backend-service backend-id=\"{backend-id}\" />\n\n        <!-- Emit token metrics with caller dimensions -->\n        <azure-openai-emit-token-metric namespace=\"openai\">\n            <dimension name=\"Caller AZP\" value=\"@((string)context.Variables[&quot;azp&quot;])\" />\n            <dimension name=\"Caller Name\" value=\"@((string)context.Variables[&quot;caller-name&quot;])\" />\n            <dimension name=\"Caller Tier\" value=\"@((string)context.Variables[&quot;caller-tier&quot;])\" />\n            <dimension name=\"API ID\" value=\"@(context.Api.Id)\" />\n        </azure-openai-emit-token-metric>\n    </inbound>\n    <backend>\n        <forward-request buffer-request-body=\"true\" />\n    </backend>\n    <outbound>\n        <base />\n        <!-- Return remaining token quota in response headers -->\n        <set-header name=\"x-ratelimit-remaining-tokens\" exists-action=\"override\">\n            <value>@(context.Variables.GetValueOrDefault(\"remainingTokens\", 0).ToString())</value>\n        </set-header>\n        <set-header name=\"x-ratelimit-limit-tokens\" exists-action=\"override\">\n            <value>@{\n                var tier = (string)context.Variables[\"caller-tier\"];\n                if (tier == \"gold\") { return \"200000\"; }\n                if (tier == \"silver\") { return \"50000\"; }\n                return \"10000\";\n            }</value>\n        </set-header>\n        <set-header name=\"x-caller-tier\" exists-action=\"override\">\n            <value>@((string)context.Variables[\"caller-tier\"])</value>\n        </set-header>\n        <set-header name=\"x-caller-name\" exists-action=\"override\">\n            <value>@((string)context.Variables[\"caller-name\"])</value>\n        </set-header>\n    </outbound>\n    <on-error>\n        <base />\n        <set-header name=\"x-error-reason\" exists-action=\"override\">\n            <value>@(context.LastError?.Reason ?? \"unknown\")</value>\n        </set-header>\n        <set-header name=\"x-error-message\" exists-action=\"override\">\n            <value>@(context.LastError?.Message ?? \"unknown\")</value>\n        </set-header>\n        <set-header name=\"x-error-section\" exists-action=\"override\">\n            <value>@(context.LastError?.Section ?? \"unknown\")</value>\n        </set-header>\n        <set-header name=\"x-error-source\" exists-action=\"override\">\n            <value>@(context.LastError?.Source ?? \"unknown\")</value>\n        </set-header>\n    </on-error>\n</policies>\n",
     "$fxv#1": {
       "openapi": "3.1.0",
       "info": {
@@ -16960,7 +16960,9 @@
       "body": {
         "bytes": 8192
       }
-    }
+    },
+    "monitoringMetricsPublisherRoleId": "[resourceId('Microsoft.Authorization/roleDefinitions', '3913510d-42f4-4e42-8a64-420c390055eb')]",
+    "apimServiceContributorRoleId": "[resourceId('Microsoft.Authorization/roleDefinitions', '312a565d-c81f-4fd8-895a-4e21e48d571c')]"
   },
   "resources": [
     {
@@ -16968,7 +16970,7 @@
       "apiVersion": "2024-06-01-preview",
       "name": "[format('{0}/{1}', format('apim-{0}', variables('resourceToken')), 'caller-tier-mapping')]",
       "properties": {
-        "displayName": "Caller Tier Mapping",
+        "displayName": "caller-tier-mapping",
         "value": "[reference(resourceId('Microsoft.Resources/deployments', 'entra-apps-deployment'), '2025-04-01').outputs.callerTierMapping.value]",
         "secret": false,
         "tags": [
@@ -17008,7 +17010,7 @@
       "name": "[format('{0}/{1}/{2}', format('apim-{0}', variables('resourceToken')), 'inference-api', 'policy')]",
       "properties": {
         "format": "rawxml",
-        "value": "[replace(replace(replace(replace(variables('$fxv#0'), '{retry-count}', '1'), '{tenant-id}', subscription().tenantId), '{audience}', reference(resourceId('Microsoft.Resources/deployments', 'entra-apps-deployment'), '2025-04-01').outputs.gatewayAudience.value), '{backend-id}', variables('backendId'))]"
+        "value": "[replace(replace(replace(variables('$fxv#0'), '{tenant-id}', subscription().tenantId), '{audience}', reference(resourceId('Microsoft.Resources/deployments', 'entra-apps-deployment'), '2025-04-01').outputs.gatewayAudience.value), '{backend-id}', variables('backendId'))]"
       },
       "dependsOn": [
         "[resourceId('Microsoft.ApiManagement/service/namedValues', format('apim-{0}', variables('resourceToken')), 'caller-tier-mapping')]",
@@ -17086,6 +17088,368 @@
       "dependsOn": [
         "[resourceId('Microsoft.Resources/deployments', 'apim-v2')]",
         "[resourceId('Microsoft.ApiManagement/service/apis', format('apim-{0}', variables('resourceToken')), 'inference-api')]"
+      ]
+    },
+    {
+      "type": "Microsoft.ApiManagement/service/namedValues",
+      "apiVersion": "2024-06-01-preview",
+      "name": "[format('{0}/{1}', format('apim-{0}', variables('resourceToken')), 'blocked-callers')]",
+      "properties": {
+        "displayName": "blocked-callers",
+        "value": "{}",
+        "secret": false,
+        "tags": [
+          "quota",
+          "monthly-budget"
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'apim-v2')]"
+      ]
+    },
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/tables",
+      "apiVersion": "2023-09-01",
+      "name": "[format('{0}/{1}', 'log-analytics', 'CALLER_QUOTA_CL')]",
+      "properties": {
+        "totalRetentionInDays": 365,
+        "plan": "Analytics",
+        "schema": {
+          "name": "CALLER_QUOTA_CL",
+          "columns": [
+            {
+              "name": "TimeGenerated",
+              "type": "datetime"
+            },
+            {
+              "name": "CallerAzp",
+              "type": "string",
+              "description": "Application (client) ID"
+            },
+            {
+              "name": "CallerName",
+              "type": "string",
+              "description": "Human-readable caller name"
+            },
+            {
+              "name": "MonthlyTokenBudget",
+              "type": "long",
+              "description": "Monthly token budget limit"
+            }
+          ]
+        },
+        "retentionInDays": 365
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'log-analytics')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Insights/dataCollectionRules",
+      "apiVersion": "2023-03-11",
+      "name": "[format('dcr-caller-quota-{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "kind": "Direct",
+      "properties": {
+        "streamDeclarations": {
+          "Custom-Json-CALLER_QUOTA_CL": {
+            "columns": [
+              {
+                "name": "TimeGenerated",
+                "type": "datetime"
+              },
+              {
+                "name": "CallerAzp",
+                "type": "string"
+              },
+              {
+                "name": "CallerName",
+                "type": "string"
+              },
+              {
+                "name": "MonthlyTokenBudget",
+                "type": "int"
+              }
+            ]
+          }
+        },
+        "destinations": {
+          "logAnalytics": [
+            {
+              "workspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', 'log-analytics')]",
+              "name": "log-analytics"
+            }
+          ]
+        },
+        "dataFlows": [
+          {
+            "streams": [
+              "Custom-Json-CALLER_QUOTA_CL"
+            ],
+            "destinations": [
+              "log-analytics"
+            ],
+            "transformKql": "source",
+            "outputStream": "Custom-CALLER_QUOTA_CL"
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces/tables', 'log-analytics', 'CALLER_QUOTA_CL')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.Insights/dataCollectionRules/{0}', format('dcr-caller-quota-{0}', variables('resourceToken')))]",
+      "name": "[guid(resourceId('Microsoft.Insights/dataCollectionRules', format('dcr-caller-quota-{0}', variables('resourceToken'))), variables('monitoringMetricsPublisherRoleId'), 'deployer')]",
+      "properties": {
+        "roleDefinitionId": "[variables('monitoringMetricsPublisherRoleId')]",
+        "principalId": "[deployer().objectId]",
+        "principalType": "User"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Insights/dataCollectionRules', format('dcr-caller-quota-{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2019-05-01",
+      "name": "[format('la-budget-enforcement-{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "state": "Enabled",
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0",
+          "triggers": {
+            "When_budget_alert_fires": {
+              "type": "Request",
+              "kind": "Http",
+              "inputs": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schemaId": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "essentials": {
+                          "type": "object"
+                        },
+                        "alertContext": {
+                          "type": "object"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "actions": {
+            "Parse_alert_results": {
+              "type": "ParseJson",
+              "inputs": {
+                "content": "@triggerBody()?['data']?['alertContext']?['condition']?['allOf']?[0]?['searchResult']?['tables']?[0]?['rows']",
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "array"
+                  }
+                }
+              },
+              "runAfter": {}
+            },
+            "Build_blocked_callers_json": {
+              "type": "Compose",
+              "inputs": "@body('Parse_alert_results')",
+              "runAfter": {
+                "Parse_alert_results": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Build_named_value_body": {
+              "type": "Compose",
+              "inputs": "@json(concat('{', join(body('Parse_alert_results'), ','), '}'))",
+              "runAfter": {
+                "Build_blocked_callers_json": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Update_APIM_Named_Value": {
+              "type": "Http",
+              "inputs": {
+                "uri": "[format('{0}{1}/namedValues/blocked-callers?api-version=2024-06-01-preview', environment().resourceManager, resourceId('Microsoft.ApiManagement/service', format('apim-{0}', variables('resourceToken'))))]",
+                "method": "PATCH",
+                "body": {
+                  "properties": {
+                    "value": "@{body('Build_named_value_body')}"
+                  }
+                },
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "audience": "[format('{0}', environment().resourceManager)]"
+                }
+              },
+              "runAfter": {
+                "Build_named_value_body": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Send_200_response": {
+              "type": "Response",
+              "inputs": {
+                "statusCode": 200,
+                "body": {
+                  "status": "Named value updated"
+                }
+              },
+              "runAfter": {
+                "Update_APIM_Named_Value": [
+                  "Succeeded"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.ApiManagement/service/{0}', format('apim-{0}', variables('resourceToken')))]",
+      "name": "[guid(resourceId('Microsoft.ApiManagement/service', format('apim-{0}', variables('resourceToken'))), variables('apimServiceContributorRoleId'), resourceId('Microsoft.Logic/workflows', format('la-budget-enforcement-{0}', variables('resourceToken'))))]",
+      "properties": {
+        "roleDefinitionId": "[variables('apimServiceContributorRoleId')]",
+        "principalId": "[reference(resourceId('Microsoft.Logic/workflows', format('la-budget-enforcement-{0}', variables('resourceToken'))), '2019-05-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Logic/workflows', format('la-budget-enforcement-{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Insights/actionGroups",
+      "apiVersion": "2023-09-01-preview",
+      "name": "[format('ag-budget-enforcement-{0}', variables('resourceToken'))]",
+      "location": "Global",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "groupShortName": "BudgetEnf",
+        "enabled": true,
+        "logicAppReceivers": [
+          {
+            "name": "budget-enforcement-logic-app",
+            "resourceId": "[resourceId('Microsoft.Logic/workflows', format('la-budget-enforcement-{0}', variables('resourceToken')))]",
+            "callbackUrl": "[listCallbackURL(format('{0}/triggers/When_budget_alert_fires', resourceId('Microsoft.Logic/workflows', format('la-budget-enforcement-{0}', variables('resourceToken')))), '2019-05-01').value]",
+            "useCommonAlertSchema": true
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Logic/workflows', format('la-budget-enforcement-{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Insights/scheduledQueryRules",
+      "apiVersion": "2024-01-01-preview",
+      "name": "[format('alert-budget-exceeded-{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "displayName": "Monthly Token Budget Exceeded",
+        "description": "Fires when a caller exceeds their monthly token budget. Triggers Logic App to block the caller.",
+        "severity": 2,
+        "enabled": true,
+        "evaluationFrequency": "PT5M",
+        "windowSize": "PT5M",
+        "overrideQueryTimeRange": "P31D",
+        "scopes": [
+          "[resourceId('Microsoft.OperationalInsights/workspaces', 'log-analytics')]"
+        ],
+        "criteria": {
+          "allOf": [
+            {
+              "query": "// Monthly usage per caller from LLM logs\nlet monthlyUsage = ApiManagementGatewayLlmLog\n| where TimeGenerated >= startofmonth(now())\n| join kind=leftouter (\n    ApiManagementGatewayLogs\n    | where BackendRequestHeaders has \"x-caller-azp\"\n    | extend CallerAzp = extract(@'\"x-caller-azp\":\"([^\"]+)\"', 1, tostring(BackendRequestHeaders))\n    | extend CallerName = extract(@'\"x-caller-name\":\"([^\"]+)\"', 1, tostring(BackendRequestHeaders))\n    | project CorrelationId, CallerAzp, CallerName\n) on CorrelationId\n| summarize MonthlyUsage = sum(TotalTokens) by CallerAzp, CallerName;\n// Join with budget table\nlet budgets = CALLER_QUOTA_CL\n| summarize arg_max(TimeGenerated, *) by CallerAzp\n| project CallerAzp, CallerName, MonthlyTokenBudget;\n// Find over-budget callers — output formatted for Logic App\nmonthlyUsage\n| join kind=inner budgets on CallerAzp\n| where MonthlyUsage > MonthlyTokenBudget\n| project CallerAzp, CallerName=CallerName, MonthlyUsage, MonthlyTokenBudget\n",
+              "operator": "GreaterThan",
+              "threshold": 0,
+              "timeAggregation": "Count",
+              "dimensions": [
+                {
+                  "name": "CallerAzp",
+                  "operator": "Include",
+                  "values": [
+                    "*"
+                  ]
+                }
+              ],
+              "failingPeriods": {
+                "numberOfEvaluationPeriods": 1,
+                "minFailingPeriodsToAlert": 1
+              }
+            }
+          ]
+        },
+        "actions": {
+          "actionGroups": [
+            "[resourceId('Microsoft.Insights/actionGroups', format('ag-budget-enforcement-{0}', variables('resourceToken')))]"
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Insights/actionGroups', format('ag-budget-enforcement-{0}', variables('resourceToken')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Insights/scheduledQueryRules",
+      "apiVersion": "2024-01-01-preview",
+      "name": "[format('alert-monthly-reset-{0}', variables('resourceToken'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "displayName": "Monthly Quota Reset",
+        "description": "At the start of each month, re-evaluates budgets. If no callers are over budget, the blocked list is cleared.",
+        "severity": 3,
+        "enabled": true,
+        "evaluationFrequency": "PT1H",
+        "windowSize": "PT1H",
+        "overrideQueryTimeRange": "P1D",
+        "scopes": [
+          "[resourceId('Microsoft.OperationalInsights/workspaces', 'log-analytics')]"
+        ],
+        "criteria": {
+          "allOf": [
+            {
+              "query": "// This query returns results only on the first day of the month when no callers are over budget\n// (i.e., the blocked list should be empty)\nlet isFirstDay = startofday(now()) == startofmonth(now());\nlet overBudget = ApiManagementGatewayLlmLog\n| where TimeGenerated >= startofmonth(now())\n| summarize MonthlyUsage = sum(TotalTokens) by CorrelationId\n| count;\nprint IsFirstDay=isFirstDay, OverBudgetCount=toscalar(overBudget)\n| where IsFirstDay == true and OverBudgetCount == 0\n",
+              "operator": "GreaterThan",
+              "threshold": 0,
+              "timeAggregation": "Count",
+              "failingPeriods": {
+                "numberOfEvaluationPeriods": 1,
+                "minFailingPeriodsToAlert": 1
+              }
+            }
+          ]
+        },
+        "actions": {
+          "actionGroups": [
+            "[resourceId('Microsoft.Insights/actionGroups', format('ag-budget-enforcement-{0}', variables('resourceToken')))]"
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Insights/actionGroups', format('ag-budget-enforcement-{0}', variables('resourceToken')))]"
       ]
     },
     {
@@ -18481,6 +18845,859 @@
       "dependsOn": [
         "[resourceId('Microsoft.Resources/deployments', 'apim-v2')]"
       ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "quota-dashboard-deployment",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "logAnalyticsWorkspaceId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'log-analytics'), '2025-04-01').outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID.value]"
+          },
+          "callerTierMapping": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'entra-apps-deployment'), '2025-04-01').outputs.callerTierMapping.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.38.33.27573",
+              "templateHash": "3676954161015010848"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Location for the dashboard"
+              }
+            },
+            "logAnalyticsWorkspaceId": {
+              "type": "string",
+              "metadata": {
+                "description": "Log Analytics Workspace resource ID"
+              }
+            },
+            "callerTierMapping": {
+              "type": "string",
+              "defaultValue": "{}",
+              "metadata": {
+                "description": "Caller tier mapping JSON string (for reference in quota panel)"
+              }
+            }
+          },
+          "variables": {
+            "dashboardName": "[format('apim-quota-dashboard-{0}', toLower(uniqueString(resourceGroup().id, parameters('location'))))]",
+            "kqlQuotaOverview": "let callerLogs = ApiManagementGatewayLogs\n| where BackendRequestHeaders has \"x-caller-tier\"\n| extend CallerName = extract(@'\"x-caller-name\":\"([^\"]+)\"', 1, tostring(BackendRequestHeaders))\n| extend CallerTier = extract(@'\"x-caller-tier\":\"([^\"]+)\"', 1, tostring(BackendRequestHeaders))\n| project CorrelationId, CallerName, CallerTier;\nApiManagementGatewayLlmLog\n| where TimeGenerated >= startofmonth(now())\n| join kind=leftouter callerLogs on CorrelationId\n| summarize\n    MonthlyTokens = sum(TotalTokens),\n    PromptTokens = sum(PromptTokens),\n    CompletionTokens = sum(CompletionTokens),\n    Requests = dcount(CorrelationId),\n    TierLimit = max(case(\n        CallerTier == \"gold\", 200000,\n        CallerTier == \"silver\", 50000,\n        CallerTier == \"bronze\", 10000,\n        0))\n    by CallerName, CallerTier\n| extend TPM_Limit = TierLimit\n| project CallerName, CallerTier, MonthlyTokens, PromptTokens, CompletionTokens, Requests, TPM_Limit\n| order by MonthlyTokens desc\n",
+            "kqlTokenUsageOverTime": "let callerLogs = ApiManagementGatewayLogs\n| where BackendRequestHeaders has \"x-caller-name\"\n| extend CallerName = extract(@'\"x-caller-name\":\"([^\"]+)\"', 1, tostring(BackendRequestHeaders))\n| project CorrelationId, CallerName;\nApiManagementGatewayLlmLog\n| where DeploymentName != \"\"\n| join kind=leftouter callerLogs on CorrelationId\n| summarize TotalTokens = sum(TotalTokens) by bin(TimeGenerated, 1h), CallerName\n| order by TimeGenerated asc\n",
+            "kqlRateLimitEvents": "ApiManagementGatewayLogs\n| where ResponseCode == 429\n| extend CallerName = extract(@'\"x-caller-name\":\"([^\"]+)\"', 1, tostring(BackendRequestHeaders))\n| extend CallerTier = extract(@'\"x-caller-tier\":\"([^\"]+)\"', 1, tostring(BackendRequestHeaders))\n| summarize\n    ThrottledRequests = count(),\n    FirstThrottle = min(TimeGenerated),\n    LastThrottle = max(TimeGenerated)\n    by CallerName, CallerTier\n| order by ThrottledRequests desc\n",
+            "kqlModelUsageByCaller": "let callerLogs = ApiManagementGatewayLogs\n| where BackendRequestHeaders has \"x-caller-name\"\n| extend CallerName = extract(@'\"x-caller-name\":\"([^\"]+)\"', 1, tostring(BackendRequestHeaders))\n| project CorrelationId, CallerName;\nApiManagementGatewayLlmLog\n| where DeploymentName != \"\"\n| join kind=leftouter callerLogs on CorrelationId\n| summarize\n    PromptTokens = sum(PromptTokens),\n    CompletionTokens = sum(CompletionTokens),\n    TotalTokens = sum(TotalTokens),\n    Requests = dcount(CorrelationId)\nby CallerName, DeploymentName, ModelName\n| order by CallerName asc, TotalTokens desc\n",
+            "kqlDailyUsageByCaller": "let callerLogs = ApiManagementGatewayLogs\n| where BackendRequestHeaders has \"x-caller-name\"\n| extend CallerName = extract(@'\"x-caller-name\":\"([^\"]+)\"', 1, tostring(BackendRequestHeaders))\n| extend CallerTier = extract(@'\"x-caller-tier\":\"([^\"]+)\"', 1, tostring(BackendRequestHeaders))\n| project CorrelationId, CallerName, CallerTier;\nApiManagementGatewayLlmLog\n| join kind=leftouter callerLogs on CorrelationId\n| summarize\n    TotalTokens = sum(TotalTokens),\n    PromptTokens = sum(PromptTokens),\n    CompletionTokens = sum(CompletionTokens),\n    Requests = dcount(CorrelationId)\nby bin(TimeGenerated, 1d), CallerName, CallerTier\n| order by TimeGenerated desc, TotalTokens desc\n",
+            "kqlErrorBreakdown": "ApiManagementGatewayLogs\n| where ResponseCode >= 400\n| extend CallerName = extract(@'\"x-caller-name\":\"([^\"]+)\"', 1, tostring(BackendRequestHeaders))\n| summarize Count = count() by ResponseCode, CallerName, bin(TimeGenerated, 1h)\n| order by TimeGenerated desc\n",
+            "kqlMonthlyBudgetBurnDown": "let callerLogs = ApiManagementGatewayLogs\n| where BackendRequestHeaders has \"x-caller-name\"\n| extend CallerName = extract(@'\"x-caller-name\":\"([^\"]+)\"', 1, tostring(BackendRequestHeaders))\n| project CorrelationId, CallerName;\nApiManagementGatewayLlmLog\n| where TimeGenerated >= startofmonth(now())\n| join kind=leftouter callerLogs on CorrelationId\n| summarize CumulativeTokens = sum(TotalTokens) by CallerName, bin(TimeGenerated, 1h)\n| order by CallerName, TimeGenerated asc\n| serialize\n| extend RunningTotal = row_cumsum(CumulativeTokens, CallerName != prev(CallerName))\n"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Portal/dashboards",
+              "apiVersion": "2022-12-01-preview",
+              "name": "[variables('dashboardName')]",
+              "location": "[parameters('location')]",
+              "tags": {
+                "hidden-title": "AI Gateway - Quota Tiers Dashboard"
+              },
+              "properties": {
+                "lenses": [
+                  {
+                    "order": 0,
+                    "parts": [
+                      {
+                        "position": {
+                          "x": 0,
+                          "y": 0,
+                          "colSpan": 17,
+                          "rowSpan": 2
+                        },
+                        "metadata": {
+                          "type": "Extension/HubsExtension/PartType/MarkdownPart",
+                          "inputs": [],
+                          "settings": {
+                            "content": {
+                              "content": "# 🔒 AI Gateway - Quota Tiers Dashboard\n\nMonitor per-caller token usage, TPM quota consumption, and rate limit events.\nTiers: **Gold** (200K TPM) · **Silver** (50K TPM) · **Bronze** (10K TPM)\n\nData sourced from `ApiManagementGatewayLlmLog` joined with `ApiManagementGatewayLogs` for caller identification.",
+                              "title": "",
+                              "subtitle": "",
+                              "markdownSource": 1
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "position": {
+                          "x": 0,
+                          "y": 2,
+                          "colSpan": 17,
+                          "rowSpan": 4
+                        },
+                        "metadata": {
+                          "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+                          "inputs": [
+                            {
+                              "name": "Scope",
+                              "value": {
+                                "resourceIds": [
+                                  "[parameters('logAnalyticsWorkspaceId')]"
+                                ]
+                              },
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Version",
+                              "value": "2.0",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "TimeRange",
+                              "value": "P30D",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartId",
+                              "value": "quota-overview",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartTitle",
+                              "value": "📊 Caller Quota Overview (This Month)",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartSubTitle",
+                              "value": "Monthly token usage per caller with tier and TPM limit",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Query",
+                              "value": "[variables('kqlQuotaOverview')]",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "ControlType",
+                              "value": "AnalyticsGrid",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "resourceTypeMode",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "ComponentId",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "DashboardId",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "DraftRequestParameters",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "SpecificChart",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Dimensions",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "LegendOptions",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "IsQueryContainTimeRange",
+                              "isOptional": true
+                            }
+                          ],
+                          "settings": {}
+                        }
+                      },
+                      {
+                        "position": {
+                          "x": 0,
+                          "y": 6,
+                          "colSpan": 17,
+                          "rowSpan": 5
+                        },
+                        "metadata": {
+                          "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+                          "inputs": [
+                            {
+                              "name": "Scope",
+                              "value": {
+                                "resourceIds": [
+                                  "[parameters('logAnalyticsWorkspaceId')]"
+                                ]
+                              },
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Version",
+                              "value": "2.0",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "TimeRange",
+                              "value": "P7D",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartId",
+                              "value": "usage-over-time",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartTitle",
+                              "value": "📈 Token Usage Over Time by Caller",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartSubTitle",
+                              "value": "Hourly token consumption",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Query",
+                              "value": "[variables('kqlTokenUsageOverTime')]",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "ControlType",
+                              "value": "AnalyticsGrid",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "resourceTypeMode",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "ComponentId",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "DashboardId",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "DraftRequestParameters",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "SpecificChart",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Dimensions",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "LegendOptions",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "IsQueryContainTimeRange",
+                              "isOptional": true
+                            }
+                          ],
+                          "settings": {
+                            "content": {
+                              "Query": "[format('{0}\n', variables('kqlTokenUsageOverTime'))]",
+                              "ControlType": "FrameControlChart",
+                              "SpecificChart": "StackedColumn",
+                              "Dimensions": {
+                                "xAxis": {
+                                  "name": "TimeGenerated",
+                                  "type": "datetime"
+                                },
+                                "yAxis": [
+                                  {
+                                    "name": "TotalTokens",
+                                    "type": "long"
+                                  }
+                                ],
+                                "splitBy": [
+                                  {
+                                    "name": "CallerName",
+                                    "type": "string"
+                                  }
+                                ],
+                                "aggregation": "Sum"
+                              },
+                              "LegendOptions": {
+                                "isEnabled": true,
+                                "position": "Bottom"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "position": {
+                          "x": 0,
+                          "y": 11,
+                          "colSpan": 8,
+                          "rowSpan": 4
+                        },
+                        "metadata": {
+                          "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+                          "inputs": [
+                            {
+                              "name": "Scope",
+                              "value": {
+                                "resourceIds": [
+                                  "[parameters('logAnalyticsWorkspaceId')]"
+                                ]
+                              },
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Version",
+                              "value": "2.0",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "TimeRange",
+                              "value": "P7D",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartId",
+                              "value": "rate-limits",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartTitle",
+                              "value": "🚫 Rate Limit Events (429)",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartSubTitle",
+                              "value": "Throttled requests by caller",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Query",
+                              "value": "[variables('kqlRateLimitEvents')]",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "ControlType",
+                              "value": "AnalyticsGrid",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "resourceTypeMode",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "ComponentId",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "DashboardId",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "DraftRequestParameters",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "SpecificChart",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Dimensions",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "LegendOptions",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "IsQueryContainTimeRange",
+                              "isOptional": true
+                            }
+                          ],
+                          "settings": {}
+                        }
+                      },
+                      {
+                        "position": {
+                          "x": 8,
+                          "y": 11,
+                          "colSpan": 9,
+                          "rowSpan": 4
+                        },
+                        "metadata": {
+                          "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+                          "inputs": [
+                            {
+                              "name": "Scope",
+                              "value": {
+                                "resourceIds": [
+                                  "[parameters('logAnalyticsWorkspaceId')]"
+                                ]
+                              },
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Version",
+                              "value": "2.0",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "TimeRange",
+                              "value": "P7D",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartId",
+                              "value": "error-breakdown",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartTitle",
+                              "value": "⚠️ Error Breakdown",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartSubTitle",
+                              "value": "HTTP errors (4xx/5xx) by caller and status code",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Query",
+                              "value": "[variables('kqlErrorBreakdown')]",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "ControlType",
+                              "value": "AnalyticsGrid",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "resourceTypeMode",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "ComponentId",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "DashboardId",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "DraftRequestParameters",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "SpecificChart",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Dimensions",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "LegendOptions",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "IsQueryContainTimeRange",
+                              "isOptional": true
+                            }
+                          ],
+                          "settings": {}
+                        }
+                      },
+                      {
+                        "position": {
+                          "x": 0,
+                          "y": 15,
+                          "colSpan": 17,
+                          "rowSpan": 4
+                        },
+                        "metadata": {
+                          "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+                          "inputs": [
+                            {
+                              "name": "Scope",
+                              "value": {
+                                "resourceIds": [
+                                  "[parameters('logAnalyticsWorkspaceId')]"
+                                ]
+                              },
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Version",
+                              "value": "2.0",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "TimeRange",
+                              "value": "P30D",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartId",
+                              "value": "model-by-caller",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartTitle",
+                              "value": "🧠 Model Usage by Caller",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartSubTitle",
+                              "value": "Token consumption per deployment/model by caller",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Query",
+                              "value": "[variables('kqlModelUsageByCaller')]",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "ControlType",
+                              "value": "AnalyticsGrid",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "resourceTypeMode",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "ComponentId",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "DashboardId",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "DraftRequestParameters",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "SpecificChart",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Dimensions",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "LegendOptions",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "IsQueryContainTimeRange",
+                              "isOptional": true
+                            }
+                          ],
+                          "settings": {}
+                        }
+                      },
+                      {
+                        "position": {
+                          "x": 0,
+                          "y": 19,
+                          "colSpan": 17,
+                          "rowSpan": 4
+                        },
+                        "metadata": {
+                          "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+                          "inputs": [
+                            {
+                              "name": "Scope",
+                              "value": {
+                                "resourceIds": [
+                                  "[parameters('logAnalyticsWorkspaceId')]"
+                                ]
+                              },
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Version",
+                              "value": "2.0",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "TimeRange",
+                              "value": "P30D",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartId",
+                              "value": "daily-usage",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartTitle",
+                              "value": "📊 Daily Usage by Caller",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartSubTitle",
+                              "value": "Daily token breakdown with tier info",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Query",
+                              "value": "[variables('kqlDailyUsageByCaller')]",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "ControlType",
+                              "value": "AnalyticsGrid",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "resourceTypeMode",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "ComponentId",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "DashboardId",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "DraftRequestParameters",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "SpecificChart",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Dimensions",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "LegendOptions",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "IsQueryContainTimeRange",
+                              "isOptional": true
+                            }
+                          ],
+                          "settings": {}
+                        }
+                      },
+                      {
+                        "position": {
+                          "x": 0,
+                          "y": 23,
+                          "colSpan": 17,
+                          "rowSpan": 5
+                        },
+                        "metadata": {
+                          "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+                          "inputs": [
+                            {
+                              "name": "Scope",
+                              "value": {
+                                "resourceIds": [
+                                  "[parameters('logAnalyticsWorkspaceId')]"
+                                ]
+                              },
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Version",
+                              "value": "2.0",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "TimeRange",
+                              "value": "P30D",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartId",
+                              "value": "budget-burndown",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartTitle",
+                              "value": "🔥 Monthly Token Burn-Down by Caller",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "PartSubTitle",
+                              "value": "Cumulative token usage this month",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Query",
+                              "value": "[variables('kqlMonthlyBudgetBurnDown')]",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "ControlType",
+                              "value": "AnalyticsGrid",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "resourceTypeMode",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "ComponentId",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "DashboardId",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "DraftRequestParameters",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "SpecificChart",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "Dimensions",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "LegendOptions",
+                              "isOptional": true
+                            },
+                            {
+                              "name": "IsQueryContainTimeRange",
+                              "isOptional": true
+                            }
+                          ],
+                          "settings": {
+                            "content": {
+                              "Query": "[format('{0}\n', variables('kqlMonthlyBudgetBurnDown'))]",
+                              "ControlType": "FrameControlChart",
+                              "SpecificChart": "Line",
+                              "Dimensions": {
+                                "xAxis": {
+                                  "name": "TimeGenerated",
+                                  "type": "datetime"
+                                },
+                                "yAxis": [
+                                  {
+                                    "name": "RunningTotal",
+                                    "type": "long"
+                                  }
+                                ],
+                                "splitBy": [
+                                  {
+                                    "name": "CallerName",
+                                    "type": "string"
+                                  }
+                                ],
+                                "aggregation": "Sum"
+                              },
+                              "LegendOptions": {
+                                "isEnabled": true,
+                                "position": "Bottom"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "position": {
+                          "x": 0,
+                          "y": 28,
+                          "colSpan": 17,
+                          "rowSpan": 2
+                        },
+                        "metadata": {
+                          "type": "Extension/HubsExtension/PartType/MarkdownPart",
+                          "inputs": [],
+                          "settings": {
+                            "content": {
+                              "content": "[format('## ⚙️ Caller Tier Configuration\n\nCurrent mapping (from APIM Named Value `caller-tier-mapping`):\n```json\n{0}\n```', parameters('callerTierMapping'))]",
+                              "title": "",
+                              "subtitle": "",
+                              "markdownSource": 1
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "metadata": {
+                  "model": {
+                    "timeRange": {
+                      "value": {
+                        "relative": {
+                          "duration": 24,
+                          "timeUnit": 1
+                        }
+                      },
+                      "type": "MsPortalFx.Composition.Configuration.ValueTypes.TimeRange"
+                    },
+                    "filterLocale": {
+                      "value": "en-us"
+                    },
+                    "filters": {
+                      "value": {
+                        "MsPortalFx_TimeRange": {
+                          "model": {
+                            "format": "utc",
+                            "granularity": "auto",
+                            "relative": "7d"
+                          },
+                          "displayCache": {
+                            "name": "UTC Time",
+                            "value": "Past 7 days"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "dashboardId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Portal/dashboards', variables('dashboardName'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'entra-apps-deployment')]",
+        "[resourceId('Microsoft.Resources/deployments', 'log-analytics')]"
+      ]
     }
   ],
   "outputs": {
@@ -18523,6 +19740,14 @@
     "CONFIG_VALIDATION_RESULT": {
       "type": "bool",
       "value": "[variables('valid_config')]"
+    },
+    "DCR_ENDPOINT": {
+      "type": "string",
+      "value": "[coalesce(reference(resourceId('Microsoft.Insights/dataCollectionRules', format('dcr-caller-quota-{0}', variables('resourceToken'))), '2023-03-11').dataCollectionEndpointId, '')]"
+    },
+    "DCR_IMMUTABLE_ID": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Insights/dataCollectionRules', format('dcr-caller-quota-{0}', variables('resourceToken'))), '2023-03-11').immutableId]"
     }
   }
 }

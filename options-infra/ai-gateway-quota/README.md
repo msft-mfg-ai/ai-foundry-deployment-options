@@ -2,6 +2,16 @@
 
 This deployment creates an **Azure API Management (APIM)** AI Gateway with **Entra ID app registrations** for client authentication. Client applications authenticate with **bearer tokens** (client credentials flow), are identified by the **`azp` claim**, and are subject to **per-caller token quotas** enforced via the `azure-openai-token-limit` policy with tiered limits (Gold / Silver / Bronze).
 
+## Features
+
+- **JWT Bearer Token Auth** — `validate-azure-ad-token` against Entra ID
+- **Caller Identification** — `azp` claim maps to caller name and tier
+- **Tiered TPM Quotas** — Gold (200K), Silver (50K), Bronze (10K) tokens per minute
+- **Monthly Token Budgets** — Async enforcement via KQL alerts + Logic App
+- **Response Headers** — `x-ratelimit-remaining-tokens`, `x-ratelimit-limit-tokens`, `x-caller-tier`, `x-caller-name`
+- **Azure Portal Dashboard** — Quota overview, usage charts, rate limit events, burn-down
+- **Entra ID via Bicep** — App registrations using Microsoft Graph Bicep extension
+
 ## Architecture Overview
 
 ```
@@ -23,13 +33,15 @@ This deployment creates an **Azure API Management (APIM)** AI Gateway with **Ent
        │ Bearer     │    │  2. Extract azp claim          ──→  Identify caller application           │   │
        └──token────►│    │  3. Lookup caller tier          ──→  Named Value: azp → {tier, name}      │   │
                     │    │  4. Authorization check         ──→  Reject unknown callers (403)          │   │
+                    │    │  4b. Monthly budget check       ──→  Reject over-budget callers (429)      │   │
                     │    │  5. azure-openai-token-limit    ──→  Apply TPM quota per tier              │   │
                     │    │  6. Forward to backend           ──→  Managed identity auth to Azure OpenAI │   │
                     │    └───────────────────────────────────────────────┬──────────────────────────┘   │
                     │                                                    │                              │
                     │    ┌──────────────────────────────────────────────┼────────────────────────────┐  │
                     │    │  Supporting Services                         │                            │  │
-                    │    │  Log Analytics │ App Insights                │                            │  │
+                    │    │  Log Analytics │ App Insights │ Dashboard    │                            │  │
+                    │    │  Logic App │ KQL Alerts │ CALLER_QUOTA_CL    │                            │  │
                     │    └──────────────────────────────────────────────┼────────────────────────────┘  │
                     └───────────────────────────────────────────────────┼────────────────────────────────┘
                                                                        │
@@ -193,3 +205,63 @@ ApiManagementGatewayLogs
 | summarize RateLimitedCount=count() by callerName, callerTier, bin(Timestamp, 1m)
 | order by Timestamp desc
 ```
+
+## Monthly Token Budgets
+
+In addition to per-minute TPM quotas, the gateway supports **monthly token budgets** that automatically block callers who exceed their allocation.
+
+### How It Works
+
+1. **CALLER_QUOTA_CL** custom Log Analytics table stores monthly budgets per caller
+2. **Scheduled KQL alert** (every 5 min) compares actual usage from `ApiManagementGatewayLlmLog` against budgets
+3. When a caller exceeds budget, the alert triggers a **Logic App**
+4. Logic App atomically updates the `blocked-callers` **Named Value** in APIM
+5. Policy checks `blocked-callers` before processing — returns **429** with `Retry-After` header
+6. At month start, the alert re-evaluates and clears the blocked list
+
+### Seeding Monthly Budgets
+
+After deployment, seed the quota table:
+
+```bash
+cd scripts
+./seed_quota.sh
+```
+
+Default budgets:
+| Team | Monthly Token Budget |
+|------|---------------------|
+| Team Alpha | 10,000,000 |
+| Team Beta | 5,000,000 |
+| Team Gamma | 1,000,000 |
+
+### Response Headers
+
+Every successful response includes:
+
+| Header | Description |
+|--------|-------------|
+| `x-ratelimit-remaining-tokens` | Remaining TPM quota for this minute |
+| `x-ratelimit-limit-tokens` | TPM limit for caller's tier |
+| `x-caller-tier` | Caller's tier (gold/silver/bronze) |
+| `x-caller-name` | Caller's display name |
+
+When monthly budget is exceeded:
+
+| Header | Description |
+|--------|-------------|
+| `Retry-After` | Seconds until the start of next month |
+
+## Dashboard
+
+The deployment includes an Azure Portal dashboard with:
+
+- **Quota Overview** — Monthly usage per caller with tier and TPM limit
+- **Token Usage Over Time** — Hourly stacked column chart by caller
+- **Rate Limit Events** — 429 throttle counts per caller
+- **Error Breakdown** — 4xx/5xx errors by caller and status code
+- **Model Usage by Caller** — Token consumption per model/deployment
+- **Daily Usage** — Daily breakdown with tier info
+- **Monthly Burn-Down** — Cumulative token chart for budget tracking
+
+Find the dashboard in the Azure Portal under **Dashboards** → "AI Gateway - Quota Tiers Dashboard".

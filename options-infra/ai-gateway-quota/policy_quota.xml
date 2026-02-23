@@ -60,6 +60,39 @@
             </when>
         </choose>
 
+        <!-- Step 4b: Monthly budget check - reject blocked callers -->
+        <set-variable name="blocked-callers" value="{{blocked-callers}}" />
+        <choose>
+            <when condition="@{
+                try {
+                    var blocked = Newtonsoft.Json.Linq.JObject.Parse((string)context.Variables[&quot;blocked-callers&quot;]);
+                    var azp = (string)context.Variables[&quot;azp&quot;];
+                    return blocked[azp] != null;
+                } catch {
+                    return false;
+                }
+            }">
+                <return-response>
+                    <set-status code="429" reason="Too Many Requests" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-header name="Retry-After" exists-action="override">
+                        <value>@{
+                            var endOfMonth = DateTime.UtcNow.AddMonths(1);
+                            endOfMonth = new DateTime(endOfMonth.Year, endOfMonth.Month, 1);
+                            return ((int)(endOfMonth - DateTime.UtcNow).TotalSeconds).ToString();
+                        }</value>
+                    </set-header>
+                    <set-body>@{
+                        var azp = (string)context.Variables["azp"];
+                        var callerName = (string)context.Variables["caller-name"];
+                        return "{\"error\": \"monthly_budget_exceeded\", \"message\": \"" + callerName + " (" + azp + ") has exceeded its monthly token budget. Access will be restored at the start of next month.\"}";
+                    }</set-body>
+                </return-response>
+            </when>
+        </choose>
+
         <!-- Step 5: Apply azure-openai-token-limit based on caller tier -->
         <!-- Gold: 200,000 TPM | Silver: 50,000 TPM | Bronze: 10,000 TPM -->
         <choose>
