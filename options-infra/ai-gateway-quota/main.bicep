@@ -470,7 +470,7 @@ resource budgetAlert 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = {
     enabled: true
     evaluationFrequency: 'PT5M'
     windowSize: 'PT5M'
-    overrideQueryTimeRange: 'P31D'
+    overrideQueryTimeRange: 'P2D'
     scopes: [
       logAnalyticsWorkspace.id
     ]
