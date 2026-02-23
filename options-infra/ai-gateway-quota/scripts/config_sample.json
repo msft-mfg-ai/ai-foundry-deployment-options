@@ -1,0 +1,25 @@
+{
+  "gateway_url": "https://apim-XXXXX.azure-api.net/inference/openai",
+  "tenant_id": "YOUR-TENANT-ID",
+  "audience": "api://ai-gw-quota-XXXXX-gateway",
+  "teams": [
+    {
+      "name": "Team Alpha",
+      "tier": "gold",
+      "client_id": "ALPHA-APP-ID-FROM-AZD-ENV",
+      "client_secret": "ALPHA-SECRET-FROM-AZD-ENV"
+    },
+    {
+      "name": "Team Beta",
+      "tier": "silver",
+      "client_id": "BETA-APP-ID-FROM-AZD-ENV",
+      "client_secret": "BETA-SECRET-FROM-AZD-ENV"
+    },
+    {
+      "name": "Team Gamma",
+      "tier": "bronze",
+      "client_id": "GAMMA-APP-ID-FROM-AZD-ENV",
+      "client_secret": "GAMMA-SECRET-FROM-AZD-ENV"
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+name: ai-gateway-quota
+
+infra:
+  provider: bicep
+  path: .
+  module: main
+
+hooks:
+  postprovision:
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host ""
+        Write-Host "Creating client secrets for team app registrations..."
+        & ./scripts/add_app_reg_secrets.ps1
+
+        Write-Host ""
+        Write-Host "Deployment complete!"
+        Write-Host "APIM Gateway URL: ${env:APIM_GATEWAY_URL}"
+        Write-Host "API URL:          ${env:APIM_API_URL}"
+        Write-Host "Tenant ID:        ${env:TENANT_ID}"
+        Write-Host "Gateway Audience:  ${env:GATEWAY_AUDIENCE}"
+        Write-Host ""
+        Write-Host "Team App IDs (azp claims):"
+        Write-Host "  Team Alpha (gold):   ${env:TEAM_ALPHA_APP_ID}"
+        Write-Host "  Team Beta (silver):   ${env:TEAM_BETA_APP_ID}"
+        Write-Host "  Team Gamma (bronze):  ${env:TEAM_GAMMA_APP_ID}"
+        Write-Host ""
+        Write-Host "Get a token:"
+        Write-Host "  `$secret = azd env get-value TEAM_ALPHA_SECRET"
+        Write-Host "  python scripts/generate_token.py --tenant-id ${env:TENANT_ID} --client-id ${env:TEAM_ALPHA_APP_ID} --client-secret `$secret --audience ${env:GATEWAY_AUDIENCE} --decode"
+    posix:
+      shell: sh
+      run: |
+        set -e
+
+        echo ""
+        echo "🔑 Creating client secrets for team app registrations..."
+        chmod +x ./scripts/add_app_reg_secrets.sh
+        ./scripts/add_app_reg_secrets.sh
+
+        echo ""
+        echo "✅ Deployment complete!"
+        echo "🎯 APIM Gateway URL: ${APIM_GATEWAY_URL}"
+        echo "🔗 API URL:          ${APIM_API_URL}"
+        echo "🏢 Tenant ID:        ${TENANT_ID}"
+        echo "🔒 Gateway Audience:  ${GATEWAY_AUDIENCE}"
+        echo ""
+        echo "Team App IDs (azp claims):"
+        echo "  🥇 Team Alpha (gold):   ${TEAM_ALPHA_APP_ID}"
+        echo "  🥈 Team Beta (silver):   ${TEAM_BETA_APP_ID}"
+        echo "  🥉 Team Gamma (bronze):  ${TEAM_GAMMA_APP_ID}"
+        echo ""
+        echo "Get a token:"
+        echo "  TEAM_ALPHA_SECRET=\$(azd env get-value TEAM_ALPHA_SECRET)"
+        echo "  python scripts/generate_token.py --tenant-id ${TENANT_ID} --client-id ${TEAM_ALPHA_APP_ID} --client-secret \$TEAM_ALPHA_SECRET --audience ${GATEWAY_AUDIENCE} --decode"
