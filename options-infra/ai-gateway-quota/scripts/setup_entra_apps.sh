@@ -68,7 +68,7 @@ for i in "${!TEAM_NAMES[@]}"; do
         --years 1 \
         --output json)
     TEAM_SECRET=$(echo "$SECRET_JSON" | jq -r '.password')
-    echo "   Client secret:   $TEAM_SECRET"
+    echo "   Created client secret"
     echo ""
 
     # Build caller mapping
