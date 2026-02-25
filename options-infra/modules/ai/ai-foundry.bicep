@@ -153,9 +153,6 @@ resource connection 'Microsoft.CognitiveServices/accounts/connections@2025-04-01
       location: existingKeyVault!.location
     }
   }
-  dependsOn: [
-    // foundry_project
-  ]
 }
 
 // Include RBAC on Key Vault for Foundry
