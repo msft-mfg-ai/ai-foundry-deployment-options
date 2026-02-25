@@ -100,6 +100,32 @@ Tier TPM limits and monthly quotas are defined in the `caller-tier-mapping` Name
     estimate-prompt-tokens="true" ... />
 ```
 
+## The `llm-token-limit` Policy
+
+The [`llm-token-limit`](https://learn.microsoft.com/en-us/azure/api-management/llm-token-limit-policy) policy is a built-in Azure API Management policy for AI gateway scenarios. It enforces both per-minute token rate limits and period-based token budgets natively within APIM — no external infrastructure (Logic Apps, KQL alerts, or custom tables) is required.
+
+### Key Attributes
+
+| Attribute | Description |
+|-----------|-------------|
+| `tokens-per-minute` | Per-minute token rate limit. Requests that exceed this rate receive **429 Too Many Requests**. Accepts a policy expression for dynamic values. |
+| `token-quota` | Total token budget for the configured period. Requests after budget exhaustion receive **403 Quota Exceeded**. Accepts a policy expression. |
+| `token-quota-period` | Reset period for the budget counter: `Hourly`, `Daily`, `Weekly`, or `Monthly`. Counters reset automatically at the start of each period. |
+| `counter-key` | Unique key for tracking consumption per caller (this deployment uses the `azp` claim). Each unique key maintains independent TPM and quota counters. |
+| `estimate-prompt-tokens` | When `true`, estimates prompt tokens before the backend call, enabling pre-request enforcement. |
+| `remaining-tokens-header-name` | Response header reporting remaining TPM quota for the current minute. |
+| `remaining-quota-tokens-header-name` | Response header reporting remaining tokens in the current quota period. |
+| `tokens-consumed-header-name` | Response header reporting tokens consumed by the request. |
+
+### How It Differs from `azure-openai-token-limit`
+
+The `llm-token-limit` policy is the successor to `azure-openai-token-limit`. Key additions:
+
+- **`token-quota` + `token-quota-period`** — native period-based budget enforcement without any async pipeline
+- **Dynamic expressions** — `tokens-per-minute` and `token-quota` accept policy expressions, enabling per-caller values read from a Named Value at runtime
+
+📖 [Azure APIM `llm-token-limit` policy reference](https://learn.microsoft.com/en-us/azure/api-management/llm-token-limit-policy)
+
 ## Prerequisites
 
 ### 1. Azure OpenAI Resource
