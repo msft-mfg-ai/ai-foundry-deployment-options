@@ -183,7 +183,7 @@ module appMcp '../modules/aca/container-app.bicep' = {
     }
     ingressTargetPort: 3000
     existingImage: 'ghcr.io/karpikpl/sample-mcp-fastmcp-python:main'
-    userAssignedManagedIdentityClientId: identity.outputs.resourceId
+    userAssignedManagedIdentityClientId: identity.outputs.clientId
     userAssignedManagedIdentityResourceId: identity.outputs.resourceId
     ingressExternal: true
     cpu: '0.25'
@@ -217,7 +217,7 @@ module SampleMcp '../modules/aca/container-app.bicep' = {
     }
     ingressTargetPort: 8080
     existingImage: 'docker.io/karpikpl/sample-mcp:latest'
-    userAssignedManagedIdentityClientId: identity.outputs.resourceId
+    userAssignedManagedIdentityClientId: identity.outputs.clientId
     userAssignedManagedIdentityResourceId: identity.outputs.resourceId
     ingressExternal: true
     cpu: '0.25'
@@ -251,7 +251,7 @@ module appOpenAPI '../modules/aca/container-app.bicep' = {
     }
     ingressTargetPort: 3000
     existingImage: 'ghcr.io/karpikpl/wttr-docker:main'
-    userAssignedManagedIdentityClientId: identity.outputs.resourceId
+    userAssignedManagedIdentityClientId: identity.outputs.clientId
     userAssignedManagedIdentityResourceId: identity.outputs.resourceId
     ingressExternal: true
     cpu: '0.25'
