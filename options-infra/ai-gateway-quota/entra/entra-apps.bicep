@@ -10,6 +10,10 @@ param tenantId string = tenant().tenantId
 resource gatewayApp 'Microsoft.Graph/applications@v1.0' = {
   displayName: '${appNamePrefix}-gateway'
   uniqueName: '${appNamePrefix}-gateway'
+  // identifierUris establishes the Application ID URI so that tokens requested with
+  // scope 'api://${appNamePrefix}-gateway/.default' carry aud = 'api://${appNamePrefix}-gateway',
+  // matching the audience the validate-azure-ad-token APIM policy checks.
+  identifierUris: ['api://${appNamePrefix}-gateway']
   api: {
     oauth2PermissionScopes: [
       {
@@ -116,7 +120,7 @@ resource teamGammaGrant 'Microsoft.Graph/oauth2PermissionGrants@v1.0' = {
 
 // -- Outputs ---------------------------------------------------------------------------------------------------
 output gatewayAppId string = gatewayApp.appId
-output gatewayAudience string = gatewayApp.appId
+output gatewayAudience string = 'api://${appNamePrefix}-gateway'
 output tenantId string = tenantId
 
 output teamAlphaAppId string = teamAlphaApp.appId

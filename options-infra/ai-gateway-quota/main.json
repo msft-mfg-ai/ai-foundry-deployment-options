@@ -17505,6 +17505,9 @@
               "properties": {
                 "displayName": "[format('{0}-gateway', parameters('appNamePrefix'))]",
                 "uniqueName": "[format('{0}-gateway', parameters('appNamePrefix'))]",
+                "identifierUris": [
+                  "[format('api://{0}-gateway', parameters('appNamePrefix'))]"
+                ],
                 "api": {
                   "oauth2PermissionScopes": [
                     {
@@ -17676,7 +17679,7 @@
             },
             "gatewayAudience": {
               "type": "string",
-              "value": "[reference('gatewayApp').appId]"
+              "value": "[format('api://{0}-gateway', parameters('appNamePrefix'))]"
             },
             "tenantId": {
               "type": "string",
