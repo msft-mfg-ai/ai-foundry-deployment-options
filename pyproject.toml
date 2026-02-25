@@ -15,7 +15,6 @@ dependencies = [
 [tool.uv.workspace]
 members = [
     "agents",
-    "options-infra/ai-gateway-quota/scripts",
 ]
 exclude = [
     "agents_v2",
