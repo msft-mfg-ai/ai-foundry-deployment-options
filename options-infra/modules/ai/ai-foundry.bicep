@@ -138,20 +138,6 @@ resource existingKeyVault 'Microsoft.KeyVault/vaults@2024-11-01' existing = if (
   scope: resourceGroup(keyVaultSubscriptionId!, keyVaultResourceGroupName!)
 }
 
-resource foundry_project 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-preview' = if (addKeyVault && !useExistingService) {
-  parent: account
-  name: 'project-for-keyvault'
-  tags: tags
-  location: location
-  identity: {
-    type: 'SystemAssigned'
-  }
-  properties: {
-    description: 'Project to enable Key Vault integration'
-    displayName: 'Project for Key Vault Integration'
-  }
-}
-
 @onlyIfNotExists()
 resource connection 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-preview' = if (addKeyVault && !useExistingService) {
   name: '${name}-keyvault-connection'
@@ -168,7 +154,7 @@ resource connection 'Microsoft.CognitiveServices/accounts/connections@2025-04-01
     }
   }
   dependsOn: [
-    foundry_project
+    // foundry_project
   ]
 }
 

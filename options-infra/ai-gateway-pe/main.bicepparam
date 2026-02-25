@@ -7,9 +7,6 @@ param openAiResourceId = readEnvironmentVariable('OPENAI_RESOURCE_ID', '')
 var openAiLocationValue = readEnvironmentVariable('OPENAI_LOCATION', '')
 param openAiLocation = empty(openAiLocationValue) ? null : openAiLocationValue
 
-var existingFoundryNameValue = readEnvironmentVariable('FOUNDRY_NAME', '')
-param existingFoundryName = empty(existingFoundryNameValue) ? null : existingFoundryNameValue
-
 var apimPublicEnabledValue = readEnvironmentVariable('APIM_PUBLIC_ENABLED', '')
 param apimPublicEnabled = toLower(apimPublicEnabledValue) == 'true' ? true : false
 
