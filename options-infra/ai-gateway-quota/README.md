@@ -1,13 +1,13 @@
 # Option: AI Gateway with Bearer Token Auth + Quota Tiers
 
-This deployment creates an **Azure API Management (APIM)** AI Gateway with **Entra ID app registrations** for client authentication. Client applications authenticate with **bearer tokens** (client credentials flow), are identified by the **`azp` claim**, and are subject to **per-caller token quotas** enforced via the `azure-openai-token-limit` policy with tiered limits (Gold / Silver / Bronze).
+This deployment creates an **Azure API Management (APIM)** AI Gateway with **Entra ID app registrations** for client authentication. Client applications authenticate with **bearer tokens** (client credentials flow), are identified by the **`azp` claim**, and are subject to **per-caller token quotas** enforced via the `llm-token-limit` policy with tiered TPM limits and monthly token budgets (Gold / Silver / Bronze).
 
 ## Features
 
 - **JWT Bearer Token Auth** — `validate-azure-ad-token` against Entra ID
 - **Caller Identification** — `azp` claim maps to caller name and tier
 - **Tiered TPM Quotas** — Gold (200K), Silver (50K), Bronze (10K) tokens per minute
-- **Monthly Token Budgets** — Async enforcement via KQL alerts + Logic App
+- **Monthly Token Budgets** — Native enforcement via `llm-token-limit` with `token-quota-period=Monthly`
 - **Response Headers** — `x-ratelimit-remaining-tokens`, `x-ratelimit-limit-tokens`, `x-caller-tier`, `x-caller-name`
 - **Azure Portal Dashboard** — Quota overview, usage charts, rate limit events, burn-down
 - **Entra ID via Bicep** — App registrations using Microsoft Graph Bicep extension
@@ -33,15 +33,13 @@ This deployment creates an **Azure API Management (APIM)** AI Gateway with **Ent
        │ Bearer     │    │  2. Extract azp claim          ──→  Identify caller application           │   │
        └──token────►│    │  3. Lookup caller tier          ──→  Named Value: azp → {tier, name}      │   │
                     │    │  4. Authorization check         ──→  Reject unknown callers (403)          │   │
-                    │    │  4b. Monthly budget check       ──→  Reject over-budget callers (429)      │   │
-                    │    │  5. azure-openai-token-limit    ──→  Apply TPM quota per tier              │   │
+                    │    │  5. llm-token-limit             ──→  TPM quota + monthly token budget       │   │
                     │    │  6. Forward to backend           ──→  Managed identity auth to Azure OpenAI │   │
                     │    └───────────────────────────────────────────────┬──────────────────────────┘   │
                     │                                                    │                              │
                     │    ┌──────────────────────────────────────────────┼────────────────────────────┐  │
                     │    │  Supporting Services                         │                            │  │
                     │    │  Log Analytics │ App Insights │ Dashboard    │                            │  │
-                    │    │  Logic App │ KQL Alerts │ CALLER_QUOTA_CL    │                            │  │
                     │    └──────────────────────────────────────────────┼────────────────────────────┘  │
                     └───────────────────────────────────────────────────┼────────────────────────────────┘
                                                                        │
@@ -61,8 +59,9 @@ This deployment creates an **Azure API Management (APIM)** AI Gateway with **Ent
 4. **`azp` claim** is extracted — this is the client application's App ID
 5. Gateway **checks authorization**: looks up the `azp` in the caller-tier-mapping Named Value
    - If the caller is not in the mapping → **403 Forbidden**
-6. Gateway **checks quota**: applies `azure-openai-token-limit` with tier-specific TPM limits
-   - If quota exceeded → **429 Too Many Requests**
+6. Gateway **checks quota**: applies `llm-token-limit` with tier-specific TPM limits and monthly token budget
+   - If TPM quota exceeded → **429 Too Many Requests**
+   - If monthly token quota exceeded → **403 Quota Exceeded**
 7. Request is **forwarded to Azure OpenAI** using APIM's managed identity
 
 ## Entra ID App Registrations
@@ -90,14 +89,15 @@ Quota is tracked per caller (using the `azp` claim as the counter key), so each 
 
 ### Customizing Tiers
 
-Edit the `<choose>` block in `policy_quota.xml`:
+Tier TPM limits and monthly quotas are defined in the `caller-tier-mapping` Named Value (sourced from `entra/entra-apps.bicep`). The policy reads TPM and monthly quota dynamically:
 
 ```xml
-<when condition="@(((string)context.Variables["caller-tier"]) == "gold")">
-    <azure-openai-token-limit
-        counter-key="@((string)context.Variables["azp"])"
-        tokens-per-minute="200000" ... />
-</when>
+<llm-token-limit
+    counter-key="@((string)context.Variables["azp"])"
+    tokens-per-minute="@(int.Parse((string)context.Variables["caller-tpm"]))"
+    token-quota="@(long.Parse((string)context.Variables["caller-monthly-quota"]))"
+    token-quota-period="Monthly"
+    estimate-prompt-tokens="true" ... />
 ```
 
 ## Prerequisites
@@ -208,32 +208,33 @@ ApiManagementGatewayLogs
 
 ## Monthly Token Budgets
 
-In addition to per-minute TPM quotas, the gateway supports **monthly token budgets** that automatically block callers who exceed their allocation.
+In addition to per-minute TPM quotas, the gateway enforces **monthly token budgets** natively using the `llm-token-limit` APIM policy.
 
 ### How It Works
 
-1. **CALLER_QUOTA_CL** custom Log Analytics table stores monthly budgets per caller
-2. **Scheduled KQL alert** (every 5 min) compares actual usage from `ApiManagementGatewayLlmLog` against budgets
-3. When a caller exceeds budget, the alert triggers a **Logic App**
-4. Logic App atomically updates the `blocked-callers` **Named Value** in APIM
-5. Policy checks `blocked-callers` before processing — returns **429** with `Retry-After` header
-6. At month start, the alert re-evaluates and clears the blocked list
+1. Monthly quota values (`monthlyQuota`) are defined per caller in the **`caller-tier-mapping`** Named Value alongside tier and TPM settings
+2. The `llm-token-limit` policy reads each caller's `monthlyQuota` at request time and applies it with `token-quota-period="Monthly"`
+3. APIM tracks token consumption natively — no external components (Logic App, KQL alerts, or custom tables) are required
+4. When a caller exceeds their monthly budget, the policy returns **403** automatically
+5. Counters reset at the start of each calendar month
 
-### Seeding Monthly Budgets
+### Configuring Monthly Budgets
 
-After deployment, seed the quota table:
+Monthly quotas are defined in `entra/entra-apps.bicep` as part of the `callerTierMapping` output:
 
-```bash
-cd scripts
-./seed_quota.sh
+```bicep
+// Example: Team Alpha gets 10M tokens/month, Gold tier at 200K TPM
+{"<azp>": {"tier": "gold", "name": "Team Alpha", "tpm": 200000, "monthlyQuota": 10000000}}
 ```
 
 Default budgets:
-| Team | Monthly Token Budget |
-|------|---------------------|
-| Team Alpha | 10,000,000 |
-| Team Beta | 5,000,000 |
-| Team Gamma | 1,000,000 |
+| Team | Tier | Monthly Token Budget |
+|------|------|---------------------|
+| Team Alpha | Gold | 10,000,000 |
+| Team Beta | Silver | 5,000,000 |
+| Team Gamma | Bronze | 100 (test value) |
+
+To change a budget, update the `monthlyQuota` value in `entra/entra-apps.bicep` and redeploy.
 
 ### Response Headers
 
@@ -243,14 +244,10 @@ Every successful response includes:
 |--------|-------------|
 | `x-ratelimit-remaining-tokens` | Remaining TPM quota for this minute |
 | `x-ratelimit-limit-tokens` | TPM limit for caller's tier |
+| `x-quota-remaining-tokens` | Remaining monthly token quota |
+| `x-quota-limit-tokens` | Monthly token quota limit |
 | `x-caller-tier` | Caller's tier (gold/silver/bronze) |
 | `x-caller-name` | Caller's display name |
-
-When monthly budget is exceeded:
-
-| Header | Description |
-|--------|-------------|
-| `Retry-After` | Seconds until the start of next month |
 
 ## Dashboard
 
