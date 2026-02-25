@@ -830,6 +830,7 @@ Thumbs.db
 *~
 
 # local params
+*.local
 *.local.bicepparam
 agents_v2/gateway_connection_test_results.csv
 agents_v2/gateway_random_traffic_results.csv

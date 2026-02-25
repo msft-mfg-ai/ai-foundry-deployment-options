@@ -7,13 +7,13 @@ Run with: uv run --directory ../../agents python ../../options-infra/option_foun
 """
 
 import asyncio
-from json import tool
 import os
 import sys
 from azure.identity import DefaultAzureCredential
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.agents.models import AzureAISearchTool, ToolDefinition, ToolResources
+from azure.ai.agents.models import AzureAISearchTool
+
 # Configuration - can be overridden by environment variables
 FOUNDRY_CONNECTION_STRING = os.environ.get("AI_PROJECT_CONNECTION_STRING")
 DEPLOYMENT_NAME = os.environ.get("FOUNDRY_DEPLOYMENT_NAME", "gpt-4.1")
@@ -52,22 +52,24 @@ async def create_agent_with_search(
     index_name: str = "good-books-azd",
 ):
     """Create or update an agent with Azure AI Search tool."""
-    
+
     # Check if agent exists
     existing_agent = None
     async for agent in client.list_agents():
         if agent.name == name:
             existing_agent = agent
             break
-    
+
     # Create Azure AI Search tool
     search_tool = AzureAISearchTool(
         index_connection_id=search_connection_id,
         index_name=index_name,
     )
-            
+
     if existing_agent:
-        print(f"  📝 Updating existing agent: {name} with search tool: {search_connection_id}")
+        print(
+            f"  📝 Updating existing agent: {name} with search tool: {search_connection_id}"
+        )
         agent = await client.update_agent(
             agent_id=existing_agent.id,
             name=name,
@@ -77,7 +79,9 @@ async def create_agent_with_search(
             tool_resources=search_tool.resources,
         )
     else:
-        print(f"  ➕ Creating new agent: {name} with search tool: {search_connection_id}")
+        print(
+            f"  ➕ Creating new agent: {name} with search tool: {search_connection_id}"
+        )
         agent = await client.create_agent(
             name=name,
             model=DEPLOYMENT_NAME,
@@ -85,7 +89,7 @@ async def create_agent_with_search(
             tools=search_tool.definitions,
             tool_resources=search_tool.resources,
         )
-    
+
     return agent
 
 
@@ -93,15 +97,15 @@ async def main():
     print("=" * 60)
     print("🤖 Creating V1 Agents with Azure AI Search")
     print("=" * 60)
-    
+
     if not FOUNDRY_CONNECTION_STRING:
         print("❌ Error: AI_PROJECT_CONNECTION_STRING environment variable not set")
         sys.exit(1)
-    
+
     print(f"\n📍 Foundry endpoint: {FOUNDRY_CONNECTION_STRING[:50]}...")
     print(f"🧠 Model: {DEPLOYMENT_NAME}")
     print(f"🔍 Search connections: {SEARCH_CONNECTIONS}")
-    
+
     credential = DefaultAzureCredential()
 
     search_connection_ids = []
@@ -113,8 +117,7 @@ async def main():
         for conn_name in SEARCH_CONNECTIONS:
             connection = await project_client.connections.get(conn_name)
             search_connection_ids.append(connection.id)
-        
-    
+
     async with AgentsClient(
         endpoint=FOUNDRY_CONNECTION_STRING,
         credential=credential,
@@ -122,26 +125,28 @@ async def main():
         print("\n" + "-" * 60)
         print("Creating agents...")
         print("-" * 60)
-        
+
         created_agents = []
         for config in AGENT_CONFIGS:
             search_connection = SEARCH_CONNECTIONS[config["search_connection_index"]]
             print(f"\n🔧 Agent: {config['name']}")
             print(f"   🔗 Search connection: {search_connection}")
-            search_connection_id = search_connection_ids[config["search_connection_index"]]
+            search_connection_id = search_connection_ids[
+                config["search_connection_index"]
+            ]
 
             try:
                 agent = await create_agent_with_search(
                     client=client,
                     name=config["name"],
                     instructions=config["instructions"],
-                    search_connection_id=search_connection_id
+                    search_connection_id=search_connection_id,
                 )
                 created_agents.append(agent)
                 print(f"   ✅ Success! Agent ID: {agent.id}")
             except Exception as e:
                 print(f"   ❌ Failed: {e}")
-        
+
         print("\n" + "=" * 60)
         print("📊 SUMMARY")
         print("=" * 60)

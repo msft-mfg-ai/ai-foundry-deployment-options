@@ -10,7 +10,6 @@ Usage:
 
 import argparse
 import json
-import sys
 import time
 
 import msal
@@ -28,11 +27,18 @@ def get_token(tenant_id: str, client_id: str, client_secret: str, audience: str)
     result = app.acquire_token_for_client(scopes=[f"{audience}/.default"])
     if "access_token" in result:
         return result["access_token"]
-    raise RuntimeError(f"Token error: {result.get('error_description', result.get('error'))}")
+    raise RuntimeError(
+        f"Token error: {result.get('error_description', result.get('error'))}"
+    )
 
 
 def send_chat_request(
-    gateway_url: str, token: str, model: str, prompt: str, team_name: str, api_version: str
+    gateway_url: str,
+    token: str,
+    model: str,
+    prompt: str,
+    team_name: str,
+    api_version: str,
 ) -> int:
     """Send a single chat completion request and return the HTTP status code."""
     headers = {
@@ -44,7 +50,9 @@ def send_chat_request(
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 50,
     }
-    url = f"{gateway_url}/deployments/{model}/chat/completions?api-version={api_version}"
+    url = (
+        f"{gateway_url}/deployments/{model}/chat/completions?api-version={api_version}"
+    )
 
     start = time.time()
     try:
@@ -55,13 +63,19 @@ def send_chat_request(
         tier = resp.headers.get("x-caller-tier", "N/A")
 
         if status == 200:
-            print(f"  ✅ [{team_name}] {status} ({elapsed:.1f}s) tier={tier} remaining={remaining}")
+            print(
+                f"  ✅ [{team_name}] {status} ({elapsed:.1f}s) tier={tier} remaining={remaining}"
+            )
         elif status == 429:
-            print(f"  ⚠️  [{team_name}] {status} RATE LIMITED ({elapsed:.1f}s) tier={tier}")
+            print(
+                f"  ⚠️  [{team_name}] {status} RATE LIMITED ({elapsed:.1f}s) tier={tier}"
+            )
         elif status == 401:
             print(f"  🔒 [{team_name}] {status} UNAUTHORIZED ({elapsed:.1f}s)")
         elif status == 403:
-            print(f"  🚫 [{team_name}] {status} FORBIDDEN ({elapsed:.1f}s): {resp.text[:200]}")
+            print(
+                f"  🚫 [{team_name}] {status} FORBIDDEN ({elapsed:.1f}s): {resp.text[:200]}"
+            )
         else:
             print(f"  ❌ [{team_name}] {status} ({elapsed:.1f}s): {resp.text[:200]}")
         return status
@@ -76,15 +90,23 @@ def main():
     )
     parser.add_argument("--config", required=True, help="Path to config JSON file")
     parser.add_argument(
-        "--requests-per-team", type=int, default=5, help="Number of requests per team (default: 5)"
+        "--requests-per-team",
+        type=int,
+        default=5,
+        help="Number of requests per team (default: 5)",
     )
     parser.add_argument("--model", default="gpt-4.1-mini", help="Model deployment name")
-    parser.add_argument("--prompt", default="Say hello in one word.", help="Prompt to send")
+    parser.add_argument(
+        "--prompt", default="Say hello in one word.", help="Prompt to send"
+    )
     parser.add_argument(
         "--api-version", default="2024-02-01", help="Azure OpenAI API version"
     )
     parser.add_argument(
-        "--delay", type=float, default=0.5, help="Delay in seconds between requests (default: 0.5)"
+        "--delay",
+        type=float,
+        default=0.5,
+        help="Delay in seconds between requests (default: 0.5)",
     )
     args = parser.parse_args()
 
@@ -113,9 +135,11 @@ def main():
         tier = team["tier"]
         print(f"🔑 Getting token for {name} ({tier} tier)...")
         try:
-            token = get_token(tenant_id, team["client_id"], team["client_secret"], audience)
+            token = get_token(
+                tenant_id, team["client_id"], team["client_secret"], audience
+            )
             team_tokens[name] = token
-            print(f"   ✅ Token acquired")
+            print("   ✅ Token acquired")
         except Exception as e:
             print(f"   ❌ Failed: {e}")
             team_tokens[name] = None
@@ -133,7 +157,9 @@ def main():
             print(f"⏭️  Skipping {name} (no token)")
             continue
 
-        print(f"📤 Sending {args.requests_per_team} requests as {name} ({tier} tier)...")
+        print(
+            f"📤 Sending {args.requests_per_team} requests as {name} ({tier} tier)..."
+        )
 
         for i in range(args.requests_per_team):
             status = send_chat_request(

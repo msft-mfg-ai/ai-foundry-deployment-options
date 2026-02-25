@@ -35,7 +35,9 @@ def get_azd_env_values() -> dict[str, str]:
     return values
 
 
-def get_token(tenant_id: str, client_id: str, client_secret: str, audience: str) -> dict:
+def get_token(
+    tenant_id: str, client_id: str, client_secret: str, audience: str
+) -> dict:
     """Acquire a token using MSAL client credentials flow."""
     authority = f"https://login.microsoftonline.com/{tenant_id}"
     app = msal.ConfidentialClientApplication(
@@ -90,7 +92,9 @@ def main():
             "or use --from-azd <team>"
         )
 
-    result = get_token(args.tenant_id, args.client_id, args.client_secret, args.audience)
+    result = get_token(
+        args.tenant_id, args.client_id, args.client_secret, args.audience
+    )
     token = result["access_token"]
 
     if args.decode:
@@ -98,7 +102,11 @@ def main():
         print("=== Token Claims ===", file=sys.stderr)
         print(
             json.dumps(
-                {k: claims[k] for k in ["azp", "appid", "aud", "iss", "tid"] if k in claims},
+                {
+                    k: claims[k]
+                    for k in ["azp", "appid", "aud", "iss", "tid"]
+                    if k in claims
+                },
                 indent=2,
             ),
             file=sys.stderr,
