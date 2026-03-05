@@ -6,7 +6,6 @@ requires-python = ">=3.13"
 members = [
     "agents",
     "ai-foundry-config-testing",
-    "scripts",
 ]
 
 [[package]]
@@ -2178,11 +2177,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/11/2f/b29eafe4a3fbc3d6de9662b36e028d5f039e72d345e05c250e121a230dd4/scipy-1.17.1-cp314-cp314t-win_amd64.whl", hash = "sha256:eb092099205ef62cd1782b006658db09e2fed75bffcae7cc0d44052d8aa0f484", size = 37345327, upload-time = "2026-02-23T00:22:24.442Z" },
     { url = "https://files.pythonhosted.org/packages/07/39/338d9219c4e87f3e708f18857ecd24d22a0c3094752393319553096b98af/scipy-1.17.1-cp314-cp314t-win_arm64.whl", hash = "sha256:200e1050faffacc162be6a486a984a0497866ec54149a01270adc8a59b7c7d21", size = 25489165, upload-time = "2026-02-23T00:22:29.563Z" },
 ]
-
-[[package]]
-name = "scripts"
-version = "0.1.0"
-source = { virtual = "options-infra/ai-gateway-quota/scripts" }
 
 [[package]]
 name = "semantic-kernel"

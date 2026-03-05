@@ -11,6 +11,8 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       UI_USERNAME: ${UI_USERNAME}
       UI_PASSWORD: ${UI_PASSWORD}
+      AZURE_API_BASE: ${AZURE_API_BASE}
+      AZURE_API_KEY: ${AZURE_API_KEY}
       STORE_MODEL_IN_DB: "True"
     labels:
       - traefik.enable=true
