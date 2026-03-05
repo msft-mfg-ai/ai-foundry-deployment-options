@@ -40,3 +40,35 @@ Route requests to different backend deployments based on the model requested. A 
 - [ ] Notify teams when their monthly token budget is approaching the limit (e.g., at 80% and 90% thresholds)
 - [ ] Evaluate notification channels: email, Teams webhook, or Azure Monitor action groups
 - [ ] Add threshold-based KQL alerts in addition to the existing over-budget alert
+
+## 5. Per consumer configuration
+
+**Status:** Not started
+**Priority:** High
+
+- [ ] Allow APIM Operations team to specify models, quotas (TMP/Monthly), email for notifications, traffic priority (PTU / PAYGO)
+
+## 6. Virtual Quotas for PTU
+
+**Status:** Not started
+**Priority:** High
+
+- [ ] Teams should be able to specify virtual Quota (TPM) for PTU deployment per team, when exceeded request should be routed to PAYGO deployment
+
+### References
+
+- [Token Limit Policy](https://learn.microsoft.com/en-us/azure/api-management/llm-token-limit-policy)
+
+## 7. Chargeback - FinOps
+
+Have reports that show how many tokens were used from a given deployment and their cost.
+For PTU, specify % of PTU quota used.
+
+- [ ] Dashboard to show Cost per team
+- [ ] PTU deployment should take note of free requests (cache used) an specify how much PTU deployment was consumed
+
+### Reference Implementation
+
+- [APIM OpenAI Chargeback](https://github.com/andyogah/apim-openai-chargeback-environment)
+- [AI Gateway FinOps](https://github.com/Azure-Samples/AI-Gateway/blob/main/labs/finops-framework/finops-framework.ipynb)
+- [Power BI Report](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/power-bi-dashboard.md)
