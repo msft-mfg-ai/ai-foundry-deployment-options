@@ -247,7 +247,7 @@ resource inferenceBackend 'Microsoft.ApiManagement/service/backends@2024-06-01-p
   parent: apimService
   properties: {
     description: 'Inference backend for ${config.name} API Type: ${inferenceAPIType}'
-    url: ''${config.endpoint}${endsWith(config.endpoint, '/') ? '' : '/'}${endpointPath}''
+    url: '${config.endpoint}${endsWith(config.endpoint, '/') ? '' : '/'}${endpointPath}'
     protocol: 'http'
     circuitBreaker: (configureCircuitBreaker) ? {
       rules: [
