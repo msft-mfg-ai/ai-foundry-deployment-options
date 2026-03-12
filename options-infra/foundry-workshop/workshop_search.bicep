@@ -131,7 +131,7 @@ module searchRoleAssignment '../modules/iam/ai-search-role-assignments.bicep' = 
   for i in range(0, length(aiFoundryProjectNames)): {
     name: take('search-role-${aiProjects[i].name}-assignment-deployment', 64)
     params: {
-      aiSearchName: storageAccount.outputs.name
+      aiSearchName: searchServicePublic.outputs.name
       principalId: aiProjects[i].identity.principalId
     }
   }
