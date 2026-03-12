@@ -7,6 +7,7 @@ param roleName types.StorageRoleAssignmentsType = 'Storage Blob Data Contributor
 @allowed([
   'ServicePrincipal'
   'User'
+  'Group'
 ])
 param servicePrincipalType string = 'ServicePrincipal'
 

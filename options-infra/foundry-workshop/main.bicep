@@ -7,26 +7,15 @@
 targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
-param openAiApiBase string
-param openAiResourceId string
-param openAiLocation string = location
-param projectsCount int = 3
+param projectsCount int = 1
 
 var tags = {
   'created-by': 'option-ai-gateway'
-  'hidden-title': 'Foundry Basic (no VNET) - APIM v2 Basic Public'
+  'hidden-title': 'Foundry Basic (no VNET) - APIM v2 Basic Public - Workshop'
   SecurityControl: 'Ignore'
 }
 
-var valid_config = empty(openAiApiBase) || empty(openAiResourceId)
-  ? fail('OPENAI_API_BASE and OPENAI_RESOURCE_ID environment variables must be set.')
-  : true
-
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
-var openAiParts = split(openAiResourceId, '/')
-var openAiName = last(openAiParts)
-var openAiSubscriptionId = openAiParts[2]
-var openAiResourceGroupName = openAiParts[4]
 
 module foundry_identity '../modules/iam/identity.bicep' = {
   name: 'foundry-identity-deployment'
@@ -59,22 +48,67 @@ module foundry '../modules/ai/ai-foundry.bicep' = {
     managedIdentityResourceId: foundry_identity.outputs.MANAGED_IDENTITY_RESOURCE_ID
     name: 'ai-foundry-${resourceToken}'
     publicNetworkAccess: 'Enabled'
-    disableLocalAuth: false // keep local auth enabled for AI Gateway integration
-    deployments: [] // no models
+    disableLocalAuth: false // keep local auth in case API KEY is needed
+    deployments: [
+      {
+        name: 'gpt-5.1'
+        properties: {
+          model: {
+            format: 'OpenAI'
+            name: 'gpt-5.1'
+            version: '2025-11-13'
+          }
+        }
+        sku: {
+          name: 'GlobalStandard'
+          capacity: 100
+        }
+      }
+      {
+        name: 'gpt-5'
+        properties: {
+          model: {
+            format: 'OpenAI'
+            name: 'gpt-5'
+            version: '2025-08-07'
+          }
+        }
+        sku: {
+          name: 'GlobalStandard'
+          capacity: 100
+        }
+      }
+      {
+        name: 'gpt-5-mini'
+        properties: {
+          model: {
+            format: 'OpenAI'
+            name: 'gpt-5-mini'
+            version: '2025-08-07'
+          }
+        }
+        sku: {
+          name: 'GlobalStandard'
+          capacity: 100
+        }
+      }
+      {
+        name: 'text-embedding-3-large'
+        properties: {
+          model: {
+            name: 'text-embedding-3-large'
+            version: '1'
+            format: 'OpenAI'
+          }
+        }
+        sku: {
+          name: 'GlobalStandard'
+          capacity: 100
+        }
+      }
+    ]
   }
 }
-
-
-module identities '../modules/iam/identity.bicep' = [
-  for i in range(1, projectsCount): {
-    name: 'ai-project-${i}-identity-${resourceToken}'
-    params: {
-      tags: tags
-      location: location
-      identityName: 'ai-project-${i}-identity-${resourceToken}'
-    }
-  }
-]
 
 var projectNames = [for i in range(1, projectsCount): 'ai-project-${resourceToken}-${i}']
 
@@ -88,8 +122,8 @@ module projects '../modules/ai/ai-project.bicep' = [
       foundry_name: foundry.outputs.FOUNDRY_NAME
       project_name: projectNames[i - 1]
       display_name: 'AI Project ${i}'
-      project_description: 'AI Project ${i} deployed via AI Gateway Basic option'
-      managedIdentityResourceId: identities[i - 1].outputs.MANAGED_IDENTITY_RESOURCE_ID
+      project_description: 'AI Project ${i} Workshop'
+      managedIdentityResourceId: null // use 
       appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
       createAccountCapabilityHost: true
     }
@@ -108,54 +142,13 @@ module ai_gateway '../modules/apim/ai-gateway.bicep' = {
     appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
     appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
     gatewayAuthenticationType: 'ProjectManagedIdentity'
-    staticModels: [
-      {
-        name: 'gpt-4.1-mini'
-        properties: {
-          model: {
-            name: 'gpt-4.1-mini'
-            version: '2025-01-01-preview'
-            format: 'OpenAI'
-          }
-        }
-      }
-      {
-        name: 'gpt-4o'
-        properties: {
-          model: {
-            name: 'gpt-4o'
-            version: '2025-01-01-preview'
-            format: 'OpenAI'
-          }
-        }
-      }
-      {
-        name: 'gpt-5-mini'
-        properties: {
-          model: {
-            name: 'gpt-5-mini'
-            version: '2025-04-01-preview'
-            format: 'OpenAI'
-          }
-        }
-      }
-      {
-        name: 'o3-mini'
-        properties: {
-          model: {
-            name: 'o3-mini'
-            version: '2025-01-01-preview'
-            format: 'OpenAI'
-          }
-        }
-      }
-    ]
+    staticModels: []
     aiServicesConfig: [
       {
-        name: openAiName
-        resourceId: openAiResourceId
-        endpoint: openAiApiBase
-        location: openAiLocation
+        name: foundry.outputs.FOUNDRY_NAME
+        resourceId: foundry.outputs.FOUNDRY_RESOURCE_ID
+        endpoint: 'https://${foundry.outputs.FOUNDRY_NAME}.openai.azure.com/'
+        location: location
       }
     ]
   }
@@ -163,9 +156,8 @@ module ai_gateway '../modules/apim/ai-gateway.bicep' = {
 
 module apim_role_assignment '../modules/iam/role-assignment-cognitiveServices.bicep' = {
   name: 'apim-role-assignment-deployment-${resourceToken}'
-  scope: resourceGroup(openAiSubscriptionId, openAiResourceGroupName)
   params: {
-    accountName: openAiName
+    accountName: foundry.outputs.FOUNDRY_NAME
     projectPrincipalId: ai_gateway.outputs.apimPrincipalId
     roleName: 'Cognitive Services User'
   }
@@ -181,19 +173,6 @@ module dashboard_setup '../modules/dashboard/dashboard-setup.bicep' = {
   }
 }
 
-module models_policy '../modules/policy/models-policy.bicep' = {
-  scope: subscription()
-  name: 'policy-definition-deployment-${resourceToken}'
-}
-
-module models_policy_assignment '../modules/policy/models-policy-assignment.bicep' = {
-  name: 'policy-assignment-deployment-${resourceToken}'
-  params: {
-    cognitiveServicesPolicyDefinitionId: models_policy.outputs.cognitiveServicesPolicyDefinitionId
-    allowedCognitiveServicesModels: []
-  }
-}
-
 module bing_connection '../modules/bing/connection-bing-grounding.bicep' = {
   name: 'bing-connection-deployment-${resourceToken}'
   params: {
@@ -202,9 +181,55 @@ module bing_connection '../modules/bing/connection-bing-grounding.bicep' = {
   }
 }
 
+module workshop_mcp 'workshop_mcp.bicep' = {
+  name: 'workshop-mcp-deployment-${resourceToken}'
+  params: {
+    location: location
+    tags: tags
+    resourceToken: resourceToken
+    logAnalyticsResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
+    applicationInsightsConnectionString: logAnalytics.outputs.APPLICATION_INSIGHTS_CONNECTION_STRING
+    foundryName: foundry.outputs.FOUNDRY_NAME
+    apimName: ai_gateway.outputs.apimName
+    apimAppInsightsLoggerId: ai_gateway.outputs.apimAppInsightsLoggerId
+    apimGatewayUrl: ai_gateway.outputs.apimGatewayUrl
+  }
+}
+
+module workshop_search 'workshop_search.bicep' = {
+  name: 'workshop-search-deployment-${resourceToken}'
+  params: {
+    location: location
+    tags: tags
+    resourceToken: resourceToken
+    foundryName: foundry.outputs.FOUNDRY_NAME
+    aiFoundryProjectNames: projectNames
+  }
+}
+
 output FOUNDRY_PROJECTS_CONNECTION_STRINGS string[] = [
   for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_CONNECTION_STRING
 ]
 output FOUNDRY_PROJECT_NAMES string[] = projectNames
-output CONFIG_VALIDATION_RESULT bool = valid_config
+
 output FOUNDRY_NAME string = foundry.outputs.FOUNDRY_NAME
+output FOUNDRY_RESOURCE_ID string = foundry.outputs.FOUNDRY_RESOURCE_ID
+output FOUNDRY_LLM_DEPLOYMENT_NAME string = foundry.outputs.FOUNDRY_DEPLOYMENT_NAMES[0]
+output FOUNDRY_CHAT_DEPLOYMENT_NAME string = foundry.outputs.FOUNDRY_DEPLOYMENT_NAMES[1]
+output FOUNDRY_EMBEDDING_DEPLOYMENT string = foundry.outputs.FOUNDRY_DEPLOYMENT_NAMES[2]
+output FOUNDRY_OPENAI_ENDPOINT string = 'https://${foundry.outputs.FOUNDRY_NAME}.openai.azure.com/'
+output FOUNDRY_COGNITIVE_SERVICE_ENDPOINT string = foundry.outputs.FOUNDRY_ENDPOINT
+
+output STORAGE_ACCOUNT_NAME string = workshop_search.outputs.STORAGE_ACCOUNT_NAME
+output STORAGE_ACCOUNT_RESOURCE_ID string = workshop_search.outputs.STORAGE_ACCOUNT_RESOURCE_ID
+
+output AI_PROJECT_CONNECTION_STRING string = projects[0].outputs.FOUNDRY_PROJECT_CONNECTION_STRING
+
+output AI_SEARCH_SERVICE_PUBLIC string = workshop_search.outputs.AI_SEARCH_SERVICE_PUBLIC_ENDPOINT
+output AI_SEARCH string = workshop_search.outputs.AI_SEARCH_SERVICE_PUBLIC_ENDPOINT
+output AI_SEARCH_NAME string = workshop_search.outputs.AI_SEARCH_NAME
+
+output AI_SEARCH_SERVICE_PUBLIC_NO_PE_CONNECTION_NAME string = workshop_search.outputs.AI_SEARCH_CONNECTION_NAME
+
+output AZURE_TENANT_ID string = tenant().tenantId
+output FOUNDRY_PROJECT_NAME string = projects[0].outputs.FOUNDRY_PROJECT_NAME

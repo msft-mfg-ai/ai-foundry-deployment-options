@@ -1,0 +1,28 @@
+[project]
+name = "pdf-indexer"
+version = "0.3.0"
+description = "Process PDFs with Document Intelligence, extract images with LLM descriptions, and index in Azure AI Search"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "azure-identity>=1.25.1",
+    "azure-search-documents>=11.6.0",
+    "azure-storage-blob>=12.20.0",
+    "azure-ai-documentintelligence>=1.0.0",
+    "openai>=1.30.0",
+    "pymupdf>=1.24.0",
+    "httpx>=0.27.0",
+]
+
+[project.scripts]
+create-index = "create_index:main"
+setup-pipeline = "setup_indexer_pipeline:main"
+
+[tool.uv.workspace]
+members = [
+    ".",
+]
+exclude = [
+    "agents_v2",
+    "agents_v1"
+]

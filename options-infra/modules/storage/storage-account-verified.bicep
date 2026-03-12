@@ -11,7 +11,7 @@ param containerAppsVirtualNetworkId string
 
 var accessKey1Name = 'storageAccountKey1'
 
-module storageAccount 'br/public:avm/res/storage/storage-account:0.18.2' = {
+module storageAccount 'br/public:avm/res/storage/storage-account:0.32.0' = {
   name: 'storageAccount'
   params: {
     name: '${abbrs.storageStorageAccounts}${resourceToken}'
@@ -23,6 +23,7 @@ module storageAccount 'br/public:avm/res/storage/storage-account:0.18.2' = {
       keyVaultResourceId: keyVaultResourceId
       accessKey1Name: accessKey1Name
     }
+    requireInfrastructureEncryption: false
     publicNetworkAccess: 'Enabled'
     networkAcls: {
       bypass: 'AzureServices'

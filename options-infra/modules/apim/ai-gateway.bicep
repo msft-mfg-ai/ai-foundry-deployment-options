@@ -159,3 +159,5 @@ module public_mcps './public-mcps.bicep' = {
 output apimResourceId string = apim.outputs.apimResourceId
 output apimName string = apim.outputs.apimName
 output apimPrincipalId string = apim.outputs.apimPrincipalId
+output apimAppInsightsLoggerId string = apim.outputs.apimAppInsightsLoggerId
+output apimGatewayUrl string = apim.outputs.apimGatewayUrl
