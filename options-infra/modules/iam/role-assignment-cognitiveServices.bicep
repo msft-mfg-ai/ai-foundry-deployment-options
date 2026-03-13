@@ -6,6 +6,7 @@ param roleName types.CognitiveServicesRoleAssignmentsType = 'Azure AI User'
 @allowed([
   'ServicePrincipal'
   'User'
+  'Group'
 ])
 param servicePrincipalType string = 'ServicePrincipal'
 
@@ -36,6 +37,10 @@ var roleDefinitionIds = {
   'Azure AI Account Owner': subscriptionResourceId(
     'Microsoft.Authorization/roleDefinitions',
     'e47c6f54-e4a2-4754-9501-8e0985b135e1'
+  )
+    'Azure AI Owner': subscriptionResourceId(
+    'Microsoft.Authorization/roleDefinitions',
+    'c883944f-8b7b-4483-af10-35834be79c4a'
   )
 }
 

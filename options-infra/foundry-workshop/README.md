@@ -1,106 +1,122 @@
-# Option: AI Gateway (External APIM) with Foundry Basic
+# Foundry Workshop
 
-This deployment creates a Foundry Basic environment with an **external Azure API Management (APIM) Basic v2** instance acting as an AI Gateway. The goal is to allow **Foundry Agent Service** to use models from APIM, which proxies requests to an external Azure OpenAI resource.
+A fully automated Azure AI Foundry workshop environment for **N participants**. Deploys a shared Foundry account with per-participant projects, an APIM AI Gateway, AI Search with pre-populated indexes, an MCP server, and pre-configured agents — all in a single `azd up`.
 
 ## Architecture Overview
 
 ```
-┌───────────────────────────────────────────────────────────────────────────────────────────┐
-│                                    This Deployment                                        │
-│                                                                                           │
-│  ┌──────────────────────────────────────────────────────────────────┐                     │
-│  │                      AI Foundry                                  │                     │
-│  │  ┌─────────────────────────────────────────────────────────────┐ │                     │
-│  │  │  Project(s) with Capability Hosts                           │ │                     │
-│  │  │  NO Capability Hosts / NO Agent Subnet                      │ │                     │
-│  │  │                                                             │ │                     │
-│  │  │  Agent Service (Public traffic, No VNET)   ─────────────────┼─┼──┐                  │
-│  │  └─────────────────────────────────────────────────────────────┘ │  │                  │
-│  └──────────────────────────────────────────────────────────────────┘  │                  │
-│                                                                        │                  │
-│                                                                        ▼                  │
-│                                              ┌─────────────────────────────────────────┐  │
-│                                              │   Azure API Management (External)       │  │
-│                                              │   - AI Gateway                          │  │
-│                                              │   - Public IP                           │  │
-│                                              │   - Static Model Definitions            │  │
-│                                              │   - Rate Limiting / Policies            │  │
-│                                              └──────────────────┬──────────────────────┘  │
-│                                                                 │                         │
-│  ┌──────────────────────────────────────────────────────────────┼───────────────────────┐ │
-│  │                    Supporting Services                       │                       │ │
-│  │  VNet │ Key Vault │ Log Analytics │ App Insights │ Private DNS                       │ │
-│  └──────────────────────────────────────────────────────────────┼───────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┼─────────────────────────┘
-                                                                  │
-                                          (Public Internet)       │
-                                                                  ▼
-                                ┌──────────────────────────────────────────────┐
-                                │    External: Azure OpenAI (Landing Zone)     │
-                                │                                              │
-                                │    Models:                                   │
-                                │    - gpt-4.1-mini                            │
-                                │    - gpt-5-mini                              │
-                                │    - o3-mini                                 │
-                                └──────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────────┐
+│                               Resource Group (this deployment)                             │
+│                                                                                            │
+│  ┌──────────────────────────────────────────────────────────────────────┐                  │
+│  │                        AI Foundry Account                            │                  │
+│  │                                                                      │                  │
+│  │  ┌────────────────────────────────────────────────────────────────┐  │                  │
+│  │  │  Project(s) with Capability Hosts (1 per participant + trainer)│  │                  │
+│  │  │  - Pre-created Agents (v1 + v2 SDKs)                          │  │                  │
+│  │  │  - AI Search connection                                        │  │                  │
+│  │  │  - Bing Grounding connection                                   │  │                  │
+│  │  │  - MCP server connection                                       │  │                  │
+│  │  └────────────────────────────────────────────────────────────────┘  │                  │
+│  │                                                                      │                  │
+│  │  Models: gpt-4o, gpt-5.1, gpt-5, gpt-5-mini, text-embedding-3-large│                  │
+│  └──────────────────────────────────────────────────────────┬───────────┘                  │
+│                                                             │                              │
+│       ┌─────────────────────────────────────────────────────▼───────────────────────┐      │
+│       │   Azure API Management (AI Gateway)                                         │      │
+│       │   - Per-project managed identity auth                                       │      │
+│       │   - Rate limiting / Token metrics                                           │      │
+│       │   - Application Insights logging                                            │      │
+│       └─────────────────────────────────────────────────────────────────────────────┘      │
+│                                                                                            │
+│  ┌───────────────────────┐  ┌───────────────────────┐  ┌────────────────────────────────┐ │
+│  │  AI Search (Standard) │  │  Storage Account       │  │  Container Apps (MCP Server)   │ │
+│  │  - documents index    │  │  - PDFs (data blob)    │  │  - sample-mcp-fastmcp-python   │ │
+│  │  - good-books-azd     │  │  - Managed Identity    │  │  - Exposed via APIM            │ │
+│  │  - indexer pipeline   │  │                        │  │  - Connected to all projects   │ │
+│  └───────────────────────┘  └────────────────────────┘  └────────────────────────────────┘ │
+│                                                                                            │
+│  ┌──────────────────────────────────────────────────────────────────────────────────────┐  │
+│  │  Monitoring: Log Analytics │ Application Insights │ Token Usage Dashboard             │  │
+│  └──────────────────────────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Flow:**
-1. Foundry Agent Service calls the external APIM AI Gateway
-2. APIM proxies requests over public internet to Azure OpenAI
-3. APIM uses managed identity for authentication to Azure OpenAI
+## What Gets Deployed
 
-## Deployed Resources
-
-### Foundry
-- **Foundry account** with managed identity (or use existing)
-- **Foundry project(s)** with Capability Hosts (configurable count)
-
-### AI Gateway (APIM)
-- **Azure API Management** in external mode (public IP)
-- Pre-configured static model definitions:
-  - `gpt-4.1-mini`
-  - `gpt-5-mini`
-  - `o3-mini`
-- Managed identity with Cognitive Services User role on external OpenAI
-
-### Monitoring
-- **Log Analytics Workspace**
-- **Application Insights** for APIM and Foundry telemetry
+| Category | Resources |
+|----------|-----------|
+| **AI Foundry** | Account with managed identity, N+1 projects (participants + trainer), Capability Hosts |
+| **Models** | `gpt-4o`, `gpt-5.1`, `gpt-5`, `gpt-5-mini`, `text-embedding-3-large` |
+| **AI Gateway** | APIM with per-project auth, rate limiting, and token usage metrics |
+| **AI Search** | Standard tier with semantic search, vector indexes, document indexer pipeline |
+| **Storage** | Blob storage with PDF documents for indexing |
+| **MCP Server** | Container App running a sample MCP server, exposed through APIM |
+| **Connections** | AI Search, Bing Grounding, and MCP connections shared to all projects |
+| **Monitoring** | Log Analytics, Application Insights, APIM Token Usage Dashboard |
+| **Agents** | Pre-created agents using both v1 and v2 Azure AI SDKs |
 
 ## Prerequisites
 
-Set the following environment variables before deployment:
+- [Azure Developer CLI (`azd`)](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd)
+- [Azure CLI (`az`)](https://learn.microsoft.com/cli/azure/install-azure-cli)
+- [uv](https://docs.astral.sh/uv/) — Python package manager (required for post-deployment hooks that create search indexes and agents)
+- An Azure subscription with permissions to create resources
 
-```bash
-export OPENAI_API_BASE="https://your-landing-zone-openai.openai.azure.com"
-export OPENAI_RESOURCE_ID="/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<openai-name>"
-```
+## Parameters
 
-### Optional Parameters
-- `OPENAI_LOCATION` - Location of the OpenAI resource (defaults to deployment location)
-- `PROJECTS_COUNT` - Number of Foundry projects to create (default: 1)
+Parameters are passed via environment variables, which `main.bicepparam` reads at deployment time.
+
+| Environment Variable | Bicep Parameter | Required | Description |
+|---------------------|----------------|----------|-------------|
+| `PROJECTS_COUNT` | `projectsCount` | No (default: `1`) | Number of participant projects to create. An extra "trainer" project is always added. |
+| `AZURE_PRINCIPAL_ID` | `deployerPrincipalId` | No | Object ID of the deployer's Azure AD principal. Used for RBAC assignments (e.g., Search Index Data Contributor). |
+| `AZURE_GROUP_PRINCIPAL_ID` | `groupPrincipalId` | No | Object ID of an Entra ID security group containing all participants. Grants Reader on the resource group and Azure AI Owner on the Foundry account. |
+| `STUDENTS_INITIALS` | `studentsInitials` | No | Comma-separated list of participant initials (e.g., `"jsa,adb,mba"`). When provided, project names include the initials for easy identification. **Must match `PROJECTS_COUNT` exactly.** |
 
 ## Deployment
 
 ```bash
-cd options-infra/option_ai-gateway
+cd options-infra/foundry-workshop
+
+# Set parameters (adjust as needed)
+export PROJECTS_COUNT=5
+export AZURE_PRINCIPAL_ID="<your-object-id>"
+export AZURE_GROUP_PRINCIPAL_ID="<entra-group-object-id>"
+export STUDENTS_INITIALS="jsa,adb,mba,kkp,rts"
+
+# Deploy everything
 azd up
 ```
+
+The deployment runs in two phases:
+
+1. **Provision** (`azd provision`) — deploys all Azure infrastructure via Bicep, then runs `postprovision` hooks:
+   - Approves pending private endpoint connections for Storage and Foundry
+   - Creates AI Search indexes: `documents` (vector + semantic), `good-books-azd` (simple)
+   - Sets up the document indexer pipeline with Document Intelligence
+
+2. **Post-up** (`postup` hooks) — after full deployment:
+   - Creates agents using the `azure-ai-agents` SDK (v1)
+   - Creates agents using the `azure-ai-projects` SDK (v2)
+   - Prints the Foundry Portal URL to access the projects
 
 ## Outputs
 
 | Output | Description |
 |--------|-------------|
-| `project_connection_strings` | Connection strings for Foundry projects |
-| `project_names` | Names of the deployed Foundry projects |
 | `FOUNDRY_NAME` | Name of the Foundry account |
-| `config_validation_result` | Validation status of the configuration |
-
+| `FOUNDRY_PROJECTS_CONNECTION_STRINGS` | Connection strings for all projects |
+| `FOUNDRY_PROJECT_NAMES` | Names of all deployed projects |
+| `AI_SEARCH_SERVICE_PUBLIC` | Public endpoint of the AI Search service |
+| `AI_SEARCH_NAME` | Name of the AI Search service |
+| `AI_PROJECT_CONNECTION_STRING` | Connection string for the first project |
+| `FOUNDRY_OPENAI_ENDPOINT` | Azure OpenAI endpoint for the Foundry account |
+| `INITIALS_USED` | Whether student initials were used for project naming |
 
 ## Use Cases
 
-- **Development/Testing**: Quick setup without private networking complexity
-- **Centralized AI Gateway**: Single point of control for AI model access
-- **Landing Zone integration**: Connect to shared Azure OpenAI in a hub subscription
-- **Policy enforcement**: Rate limiting, logging, and access control via APIM policies
+- **Hands-on workshops**: Spin up isolated Foundry projects for each participant with shared infrastructure
+- **AI Agents training**: Pre-configured agents and MCP server ready for experimentation
+- **RAG/Search labs**: Pre-populated AI Search indexes with vector and semantic search
+- **AI Gateway demos**: Centralized model access with per-project rate limiting and monitoring

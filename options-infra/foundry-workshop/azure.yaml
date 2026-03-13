@@ -157,7 +157,7 @@ hooks:
         Write-Host ""
         Write-Host "Creating custom index (documents container)..."
         uv run python create_index.py `
-          --recreate `
+        #  --recreate `
           --search-endpoint "$env:AI_SEARCH_SERVICE_PUBLIC" `
           --storage-account "$env:STORAGE_ACCOUNT_NAME" `
           --doc-intelligence-endpoint "$env:FOUNDRY_COGNITIVE_SERVICE_ENDPOINT" `

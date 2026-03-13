@@ -30,6 +30,17 @@ module projectRoleAssignment '../modules/iam/role-assignment-foundryProject.bice
   }
 ]
 
+// assign roles to every project principal to allow Foundry to access the search service
+module ownerRoleAssignment '../modules/iam/role-assignment-cognitiveServices.bicep' = if (!empty(groupPrincipalId)) {
+  name: take('account-owner-role-assignment-deployment', 64)
+  params: {
+    accountName: foundryName
+    principalId: groupPrincipalId!
+    servicePrincipalType: 'Group'
+    roleName: 'Azure AI Owner'
+  }
+}
+
 module storageAccount 'br/public:avm/res/storage/storage-account:0.32.0' = {
   name: 'storage-account-deployment'
   params: {
