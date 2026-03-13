@@ -11,13 +11,14 @@ param containerAppsVirtualNetworkId string
 
 var accessKey1Name = 'storageAccountKey1'
 
-module storageAccount 'br/public:avm/res/storage/storage-account:0.18.2' = {
+module storageAccount 'br/public:avm/res/storage/storage-account:0.32.0' = {
   name: 'storageAccount'
   params: {
     name: '${abbrs.storageStorageAccounts}${resourceToken}'
     location: location
     skuName: 'Premium_LRS'
     kind: 'FileStorage'
+    requireInfrastructureEncryption: false
     tags: tags
     secretsExportConfiguration: {
       keyVaultResourceId: keyVaultResourceId

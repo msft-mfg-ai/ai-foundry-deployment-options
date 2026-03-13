@@ -90,7 +90,7 @@ var logSettings = {
   body: { bytes: 8192 }
 }
 
-var updatedPolicyXml = replace(policyXml, '{backend-id}', (length(aiServicesConfig) > 1) ? inferenceBackendPoolName : '${aiServicesConfig[0].name}-${inferenceAPIType}-backend')
+var updatedPolicyXml = replace(policyXml, '{backend-id}', (length(aiServicesConfig) > 1) ? inferenceBackendPoolName : length(aiServicesConfig) == 1 ? '${aiServicesConfig[0].name}-${inferenceAPIType}-backend' : 'no-backend')
 
 // ------------------
 //    RESOURCES
@@ -164,8 +164,8 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-06-01-pre
 // ------------------
 
 
-var listDeploymentsPolicyXml = replace(loadTextContent('deploymentsPolicy.xml'), 'FOUNDRY_ID', first(aiServicesConfig).resourceId)
-var getDeploymentPolicyXml = replace(loadTextContent('deploymentPolicy.xml'), 'FOUNDRY_ID', first(aiServicesConfig).resourceId)
+var listDeploymentsPolicyXml = replace(loadTextContent('deploymentsPolicy.xml'), 'FOUNDRY_ID', !empty(aiServicesConfig) ? first(aiServicesConfig).resourceId : 'no-resource')
+var getDeploymentPolicyXml = replace(loadTextContent('deploymentPolicy.xml'), 'FOUNDRY_ID', !empty(aiServicesConfig) ? first(aiServicesConfig).resourceId : 'no-resource')
 
 // List Deployments Operation - Returns all available models/deployments
 resource listDeploymentsOperation 'Microsoft.ApiManagement/service/apis/operations@2024-06-01-preview' = if (enableModelDiscovery) {

@@ -1,0 +1,80 @@
+<!-- ================================================================ -->
+<!-- Token Estimation — Outbound Adjustment Fragment                  -->
+<!-- ================================================================ -->
+<!-- After the backend responds, reads actual token usage from the   -->
+<!-- response body and adjusts the per-team PTU counter.             -->
+<!--                                                                  -->
+<!-- adjustment = estimated_tokens - actual_tokens                    -->
+<!-- new_counter = current_counter - adjustment                       -->
+<!--                                                                  -->
+<!-- This releases the over-estimate from the inbound pre-decrement. -->
+<!-- ================================================================ -->
+
+<!-- Read actual token usage from response body -->
+<set-variable name="actual-tokens" value="@{
+    try {
+        var body = context.Response.Body.As&lt;Newtonsoft.Json.Linq.JObject&gt;(preserveContent: true);
+        var usage = body[&quot;usage&quot;] as Newtonsoft.Json.Linq.JObject;
+        if (usage == null) { return 0; }
+        var total = usage[&quot;total_tokens&quot;];
+        if (total == null) { return 0; }
+        return total.Value&lt;int&gt;();
+    } catch {
+        return 0;
+    }
+}" />
+
+<!-- Only adjust if we routed to PTU (pre-decremented on inbound) -->
+<choose>
+    <when condition="@((string)context.Variables[&quot;route-target&quot;] == &quot;ptu-pool&quot;)">
+        <!-- Re-read the current counter (may have been updated by other requests) -->
+        <cache-lookup-value key="@(&quot;ptu-consumed:&quot; + (string)context.Variables[&quot;caller-name&quot;] + &quot;:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
+                            variable-name="ptu-consumed-current-raw" />
+
+        <set-variable name="ptu-consumed-adjusted" value="@{
+            var currentRaw = (string)context.Variables.GetValueOrDefault(&quot;ptu-consumed-current-raw&quot;, &quot;0&quot;);
+            int current = 0;
+            int.TryParse(currentRaw, out current);
+
+            var estimated = (int)context.Variables[&quot;estimated-tokens&quot;];
+            var actual = (int)context.Variables[&quot;actual-tokens&quot;];
+
+            // Release the over-estimate: subtract (estimated - actual)
+            // But also account for actual consumption (the estimate was pre-added)
+            // Net effect: counter should reflect actual consumption, not estimate
+            var adjustment = estimated - actual;
+            var adjusted = current - adjustment;
+
+            // Don't go negative
+            return adjusted > 0 ? adjusted : 0;
+        }" />
+
+        <cache-store-value key="@(&quot;ptu-consumed:&quot; + (string)context.Variables[&quot;caller-name&quot;] + &quot;:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
+                           value="@(((int)context.Variables[&quot;ptu-consumed-adjusted&quot;]).ToString())"
+                           duration="60" />
+    </when>
+    <otherwise>
+        <!-- Routed to standard — just track actual consumption for observability -->
+        <cache-lookup-value key="@(&quot;std-consumed:&quot; + (string)context.Variables[&quot;caller-name&quot;] + &quot;:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
+                            variable-name="std-consumed-raw" />
+
+        <set-variable name="std-consumed-updated" value="@{
+            var raw = (string)context.Variables.GetValueOrDefault(&quot;std-consumed-raw&quot;, &quot;0&quot;);
+            int current = 0;
+            int.TryParse(raw, out current);
+            return current + (int)context.Variables[&quot;actual-tokens&quot;];
+        }" />
+
+        <cache-store-value key="@(&quot;std-consumed:&quot; + (string)context.Variables[&quot;caller-name&quot;] + &quot;:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
+                           value="@(((int)context.Variables[&quot;std-consumed-updated&quot;]).ToString())"
+                           duration="60" />
+    </otherwise>
+</choose>
+
+<!-- Response headers for observability -->
+<set-header name="x-estimated-tokens" exists-action="override">
+    <value>@(((int)context.Variables["estimated-tokens"]).ToString())</value>
+</set-header>
+<set-header name="x-actual-tokens" exists-action="override">
+    <value>@(((int)context.Variables["actual-tokens"]).ToString())</value>
+</set-header>

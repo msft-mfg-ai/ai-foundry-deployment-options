@@ -1,0 +1,68 @@
+<!-- ================================================================ -->
+<!-- Token Estimation — Inbound Pre-Decrement Fragment                -->
+<!-- ================================================================ -->
+<!-- Estimates total token consumption from request body size and     -->
+<!-- max_tokens parameter. Used to pre-decrement the per-team PTU    -->
+<!-- quota counter BEFORE sending to the backend, reducing the race  -->
+<!-- window from "entire request duration" to "inbound parse time".  -->
+<!--                                                                  -->
+<!-- Formula: estimated_tokens = body_bytes / 4 + max_tokens * 0.5   -->
+<!--   - body_bytes / 4 ≈ prompt tokens (1 token ≈ 4 bytes)         -->
+<!--   - max_tokens * 0.5 ≈ expected completion (half of allowed)    -->
+<!--   - If max_tokens absent, defaults to 2048                      -->
+<!--                                                                  -->
+<!-- The outbound fragment reads actual usage and adjusts the counter -->
+<!-- releasing the over-estimate.                                     -->
+<!-- ================================================================ -->
+
+<!-- Estimate tokens from request body -->
+<set-variable name="estimated-tokens" value="@{
+    var bodyBytes = context.Request.Body.As&lt;string&gt;(preserveContent: true).Length;
+    var promptEst = bodyBytes / 4;
+
+    // Parse max_tokens from request JSON
+    var maxTokens = 2048;
+    try {
+        var body = context.Request.Body.As&lt;Newtonsoft.Json.Linq.JObject&gt;(preserveContent: true);
+        var mt = body[&quot;max_tokens&quot;];
+        if (mt != null) {
+            maxTokens = mt.Value&lt;int&gt;();
+        } else {
+            // Also check max_completion_tokens (newer API versions)
+            var mct = body[&quot;max_completion_tokens&quot;];
+            if (mct != null) {
+                maxTokens = mct.Value&lt;int&gt;();
+            }
+        }
+    } catch {
+        // If parsing fails, use default
+    }
+
+    var completionEst = (int)(maxTokens * 0.5);
+    return promptEst + completionEst;
+}" />
+
+<!-- Pre-decrement: read current PTU consumed, add estimate, store back -->
+<cache-lookup-value key="@(&quot;ptu-consumed:&quot; + (string)context.Variables[&quot;caller-name&quot;] + &quot;:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
+                    variable-name="ptu-consumed-raw" />
+
+<set-variable name="ptu-consumed-before" value="@{
+    var raw = (string)context.Variables.GetValueOrDefault(&quot;ptu-consumed-raw&quot;, &quot;0&quot;);
+    int val = 0;
+    int.TryParse(raw, out val);
+    return val;
+}" />
+
+<set-variable name="ptu-consumed-estimated" value="@{
+    return (int)context.Variables[&quot;ptu-consumed-before&quot;] + (int)context.Variables[&quot;estimated-tokens&quot;];
+}" />
+
+<!-- Check if estimated consumption would exceed PTU quota -->
+<set-variable name="ptu-quota-available" value="@{
+    var ptuLimit = (int)context.Variables[&quot;model-ptu-tpm&quot;];
+    if (ptuLimit &lt;= 0) { return false; }
+    return (int)context.Variables[&quot;ptu-consumed-estimated&quot;] &lt;= ptuLimit;
+}" />
+
+<!-- If routing to PTU, pre-decrement the counter -->
+<!-- (This is called AFTER the routing decision, only if route-target is ptu-pool) -->

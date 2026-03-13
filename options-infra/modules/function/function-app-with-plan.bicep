@@ -46,7 +46,7 @@ module virtualNetworkDeployment 'br/public:avm/res/network/virtual-network:0.7.2
 }
 
 // Storage Account for the Function App
-module storageAccount 'br/public:avm/res/storage/storage-account:0.31.0' = {
+module storageAccount 'br/public:avm/res/storage/storage-account:0.32.0' = {
   name: 'storageAccount'
   params: {
     tags: tags
@@ -54,6 +54,7 @@ module storageAccount 'br/public:avm/res/storage/storage-account:0.31.0' = {
     location: location
     skuName: 'Standard_LRS'
     kind: 'StorageV2'
+    requireInfrastructureEncryption: false
     publicNetworkAccess: 'Disabled'
     networkAcls: {
       bypass: 'AzureServices, Logging, Metrics'
@@ -190,7 +191,7 @@ var storageZones = [
   }
 ]
 
-module storagePrivateDns 'br/public:avm/res/network/private-dns-zone:0.8.0' = [
+module storagePrivateDns 'br/public:avm/res/network/private-dns-zone:0.8.1' = [
   for zone in storageZones: {
     name: 'privateDnsZoneDeployment-${zone.name}'
     params: {
@@ -241,7 +242,7 @@ resource serverfarmForFunctions 'Microsoft.Web/serverfarms@2023-12-01' = {
   }
 }
 
-module func 'br/public:avm/res/web/site:0.21.0' = {
+module func 'br/public:avm/res/web/site:0.22.0' = {
   name: 'function-deployment'
   params: {
     location: location
@@ -297,7 +298,7 @@ module func 'br/public:avm/res/web/site:0.21.0' = {
   }
 }
 
-module logicApp 'br/public:avm/res/web/site:0.21.0' = {
+module logicApp 'br/public:avm/res/web/site:0.22.0' = {
   name: 'logicAppDeployment'
   params: {
     // Required parameters

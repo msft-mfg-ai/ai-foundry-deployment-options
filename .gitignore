@@ -837,3 +837,6 @@ agents_v2/gateway_random_traffic_results.csv
 agents_v2/mcp_agent_test_results.csv
 agents_v2/mcp_no_agent_test_results.csv
 agents_v2/bing_grounding_evaluation_results.csv
+
+# lite llm data
+options-infra/ai-gateway-litellm/gateway/data
