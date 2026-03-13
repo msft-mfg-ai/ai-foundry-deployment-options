@@ -143,21 +143,22 @@ hooks:
         # Run setup_indexer_pipeline.py - creates container, uploads PDFs, sets up indexer pipeline
         Write-Host ""
         Write-Host "Setting up indexer pipeline (documents-for-indexer container)..."
-        uv run python setup_indexer_pipeline.py \
-            --search-endpoint "$env:AI_SEARCH_SERVICE_PUBLIC_PE" \
-            --storage-account "$env:STORAGE_ACCOUNT_NAME" \
-            --pdf-folder "./pdfs" \
-            --doc-intelligence-endpoint "$env:FOUNDRY_COGNITIVE_SERVICE_ENDPOINT" \
-            --embedding-endpoint "$env:FOUNDRY_COGNITIVE_SERVICE_ENDPOINT" \
-            --embedding-deployment "$env:FOUNDRY_EMBEDDING_DEPLOYMENT" \
-            --embedding-dimensions 1536 \
+        uv run python setup_indexer_pipeline.py `
+            --search-endpoint "$env:AI_SEARCH_SERVICE_PUBLIC" `
+            --storage-account "$env:STORAGE_ACCOUNT_NAME" `
+            --pdf-folder "./pdfs" `
+            --doc-intelligence-endpoint "$env:FOUNDRY_COGNITIVE_SERVICE_ENDPOINT" `
+            --embedding-endpoint "$env:FOUNDRY_COGNITIVE_SERVICE_ENDPOINT" `
+            --embedding-deployment "$env:FOUNDRY_EMBEDDING_DEPLOYMENT" `
+            --embedding-dimensions 1536 `
             --run-indexer
 
         # Run create_index.py - custom code processing to 'documents' index
         Write-Host ""
         Write-Host "Creating custom index (documents container)..."
         uv run python create_index.py `
-          --search-endpoint "$env:AI_SEARCH_SERVICE_PUBLIC_PE" `
+          --recreate `
+          --search-endpoint "$env:AI_SEARCH_SERVICE_PUBLIC" `
           --storage-account "$env:STORAGE_ACCOUNT_NAME" `
           --doc-intelligence-endpoint "$env:FOUNDRY_COGNITIVE_SERVICE_ENDPOINT" `
           --openai-endpoint "$env:FOUNDRY_OPENAI_ENDPOINT" `
@@ -167,8 +168,10 @@ hooks:
           --use-vectors `
           --embedding-endpoint "$env:FOUNDRY_OPENAI_ENDPOINT" `
           --embedding-deployment "$env:FOUNDRY_EMBEDDING_DEPLOYMENT" `
-          --embedding-dimensions 1536
+          --embedding-dimensions 3072
         
+        uv run python create_simple_index.py "$env:AI_SEARCH_SERVICE_PUBLIC" --index "good-books-azd"
+
         Pop-Location
         
         Write-Host ""
@@ -229,7 +232,7 @@ hooks:
 
         # Use create_index.py for custom code processing instead.
         uv run python setup_indexer_pipeline.py \
-            --search-endpoint "${AI_SEARCH_SERVICE_PUBLIC_PE}" \
+            --search-endpoint "${AI_SEARCH_SERVICE_PUBLIC}" \
             --storage-account "${STORAGE_ACCOUNT_NAME}" \
             --doc-intelligence-endpoint "${FOUNDRY_COGNITIVE_SERVICE_ENDPOINT}" \
             --embedding-endpoint "${FOUNDRY_COGNITIVE_SERVICE_ENDPOINT}" \
@@ -243,9 +246,10 @@ hooks:
         echo "=========================================="
         
         echo ""
-        echo "Creating index on AI_SEARCH_SERVICE_PUBLIC_PE..."
+        echo "Creating index on AI_SEARCH_SERVICE_PUBLIC..."
         uv run python create_index.py \
-          --search-endpoint "${AI_SEARCH_SERVICE_PUBLIC_PE}" \
+          --recreate \
+          --search-endpoint "${AI_SEARCH_SERVICE_PUBLIC}" \
           --storage-account "${STORAGE_ACCOUNT_NAME}" \
           --doc-intelligence-endpoint "${FOUNDRY_COGNITIVE_SERVICE_ENDPOINT}" \
           --openai-endpoint "${FOUNDRY_OPENAI_ENDPOINT}" \
@@ -254,8 +258,10 @@ hooks:
           --use-vectors \
           --embedding-endpoint "${FOUNDRY_OPENAI_ENDPOINT}" \
           --embedding-deployment "${FOUNDRY_EMBEDDING_DEPLOYMENT}" \
-          --embedding-dimensions 1536
+          --embedding-dimensions 3072
         
+        uv run python create_simple_index.py "${AI_SEARCH_SERVICE_PUBLIC}" --index "good-books-azd"
+
         cd ..
         
         echo ""

@@ -874,6 +874,11 @@ def main():
         action="store_true",
         help="Only create the index, don't process files",
     )
+    parser.add_argument(
+        "--recreate",
+        action="store_true",
+        help="Delete and recreate the index if it already exists (use when schema changes like vector dimensions)",
+    )
 
     args = parser.parse_args()
 
@@ -881,6 +886,17 @@ def main():
 
     # Determine embedding endpoint for vectorizer configuration
     embedding_endpoint_for_vectorizer = args.embedding_endpoint or args.openai_endpoint
+
+    # Delete existing index if --recreate is specified
+    if args.recreate:
+        index_client = SearchIndexClient(
+            endpoint=args.search_endpoint, credential=credential
+        )
+        try:
+            index_client.delete_index(args.index_name)
+            logger.info(f"Deleted existing index '{args.index_name}'")
+        except Exception:
+            logger.info(f"Index '{args.index_name}' does not exist, nothing to delete")
 
     # Create the search index
     logger.info("Creating search index...")

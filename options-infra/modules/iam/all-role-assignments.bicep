@@ -20,7 +20,7 @@ module storageRoleAssignments 'role-assignment-storage.bicep' = [
     scope: resourceGroup(aiDependencies.azureStorage.subscriptionId, aiDependencies.azureStorage.resourceGroupName)
     params: {
       azureStorageName: aiDependencies.azureStorage.name
-      projectPrincipalId: userPrincipalId
+      principalId: userPrincipalId
       servicePrincipalType: 'User'
       roleName: role
     }
@@ -33,7 +33,7 @@ module aiSearchRoleAssignments 'role-assignment-search.bicep' = [
     scope: resourceGroup(aiDependencies.aiSearch.subscriptionId, aiDependencies.aiSearch.resourceGroupName)
     params: {
       aiSearchName: aiDependencies.aiSearch.name
-      projectPrincipalId: userPrincipalId
+      principalId: userPrincipalId
       servicePrincipalType: 'User'
       roleName: role
     }
@@ -47,7 +47,7 @@ module foundryProjectRoleAssignments 'role-assignment-foundryProject.bicep' = [
     params: {
       accountName: foundryName
       projectName: projectName
-      projectPrincipalId: userPrincipalId
+      principalId: userPrincipalId
       servicePrincipalType: 'User'
       roleName: role
     }
@@ -60,7 +60,7 @@ module foundryRoleAssignments 'role-assignment-cognitiveServices.bicep' = [
     scope: resourceGroup(foundrySubscriptionId, foundryResourceGroupName)
     params: {
       accountName: foundryName
-      projectPrincipalId: userPrincipalId
+      principalId: userPrincipalId
       servicePrincipalType: 'User'
       roleName: role
     }
@@ -73,7 +73,7 @@ module aiServicesRoleAssignments 'role-assignment-cognitiveServices.bicep' = [
     scope: resourceGroup(aiServicesSubscriptionId, aiServicesResourceGroupName)
     params: {
       accountName: aiServicesName!
-      projectPrincipalId: userPrincipalId
+      principalId: userPrincipalId
       servicePrincipalType: 'User'
       roleName: role
     }

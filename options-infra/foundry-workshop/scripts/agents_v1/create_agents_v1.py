@@ -14,6 +14,7 @@ from azure.ai.agents.aio import AgentsClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.agents.models import AzureAISearchTool, AzureAISearchQueryType
 from azure.ai.projects.models import AzureAISearchIndex, FieldMapping
+from azure.core.exceptions import ResourceNotFoundError
 
 # Configuration - can be overridden by environment variables
 FOUNDRY_CONNECTION_STRING = os.environ.get("AI_PROJECT_CONNECTION_STRING")
@@ -22,7 +23,7 @@ FOUNDRY_CONNECTION_STRING = os.environ.get("AI_PROJECT_CONNECTION_STRING")
 DEPLOYMENT_NAME = os.environ.get("FOUNDRY_CHAT_DEPLOYMENT_NAME", "gpt-5-mini")
 
 # AI Search connection name (created by Bicep)
-SEARCH_CONNECTION = os.environ.get("AI_SEARCH_SERVICE_PUBLIC_PE_CONNECTION_NAME")
+SEARCH_CONNECTION = os.environ.get("AI_SEARCH_CONNECTION_NAME")
 
 HR_AGENT_INSTRUCTIONS = """You are an HR Assistant. Answer HR questions using ONLY information from search results.
 
@@ -178,7 +179,19 @@ async def main():
         endpoint=FOUNDRY_CONNECTION_STRING,
         credential=credential,
     ) as project_client:
-        search_connection = await project_client.connections.get(SEARCH_CONNECTION)
+        # Retry: newly created projects may take a few minutes to propagate to the services API
+        max_retries = 12
+        for attempt in range(1, max_retries + 1):
+            try:
+                search_connection = await project_client.connections.get(SEARCH_CONNECTION)
+                break
+            except ResourceNotFoundError:
+                if attempt == max_retries:
+                    print(f"❌ Project not found after {max_retries} attempts. Is the project fully provisioned?")
+                    raise
+                wait = min(30, 10 * attempt)
+                print(f"⏳ Project not yet available (attempt {attempt}/{max_retries}), retrying in {wait}s...")
+                await asyncio.sleep(wait)
         search_connection_id = search_connection.id
 
         async with AgentsClient(

@@ -70,7 +70,7 @@ module mcp_apis '../modules/apim/apim-streamable-mcp/api.bicep' = {
   params: {
     apimServiceName: apimName
     MCPServiceURL: appMcp.outputs.CONTAINER_APP_FQDN
-    MCPPath: 'sample-mcp'
+    MCPPath: 'sample'
     apimAppInsightsLoggerId: apimAppInsightsLoggerId
   }
 }
@@ -87,7 +87,7 @@ resource mcpTools 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-p
     properties: {
       category: 'RemoteTool'
       group: 'GenericProtocol'
-      target: '${apimGatewayUrl}/sample-mcp'
+      target: '${apimGatewayUrl}/sample/mcp'
       authType: 'None'
       isSharedToAll: true
       metadata: {

@@ -167,7 +167,7 @@ module foundryProjectRoleAssignments '../modules/iam/role-assignment-foundryProj
   params: {
     accountName: foundry.outputs.FOUNDRY_NAME
     projectName: projects[0].outputs.FOUNDRY_PROJECT_NAME
-    projectPrincipalId: app_identity.outputs.MANAGED_IDENTITY_PRINCIPAL_ID
+    principalId: app_identity.outputs.MANAGED_IDENTITY_PRINCIPAL_ID
     roleName: 'Azure AI User'
   }
 }

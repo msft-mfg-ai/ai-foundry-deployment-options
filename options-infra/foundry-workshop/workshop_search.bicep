@@ -2,6 +2,7 @@ param location string
 param resourceToken string
 param tags object
 param foundryName string
+param deployerPrincipalId string?
 param groupPrincipalId string?
 param aiFoundryProjectNames string[] = []
 
@@ -13,6 +14,19 @@ resource aiProjects 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-pr
   for projectName in aiFoundryProjectNames: {
     name: projectName
     parent: foundryExisting
+  }
+]
+
+// assign roles to every project principal to allow Foundry to access the search service
+module projectRoleAssignment '../modules/iam/role-assignment-foundryProject.bicep' = [
+  for i in range(0, length(aiFoundryProjectNames)): if (!empty(groupPrincipalId)) {
+    name: take('project-role-${aiProjects[i].name}-assignment-deployment', 64)
+    params: {
+      accountName: foundryName
+      projectName: aiProjects[i].name
+      principalId: groupPrincipalId!
+      servicePrincipalType: 'Group'
+    }
   }
 ]
 
@@ -34,15 +48,26 @@ module storageAccount 'br/public:avm/res/storage/storage-account:0.32.0' = {
     }
     supportsHttpsTrafficOnly: true
     allowSharedKeyAccess: false
-    roleAssignments: empty(groupPrincipalId)
-      ? []
-      : [
-          {
-            principalId: groupPrincipalId
-            principalType: 'Group'
-            roleDefinitionIdOrName: 'Storage Blob Data Contributor'
-          }
-        ]
+    roleAssignments: union(
+      empty(groupPrincipalId)
+        ? []
+        : [
+            {
+              principalId: groupPrincipalId!
+              principalType: 'Group'
+              roleDefinitionIdOrName: 'Storage Blob Data Contributor'
+            }
+          ],
+      empty(deployerPrincipalId)
+        ? []
+        : [
+            {
+              principalId: deployerPrincipalId!
+              principalType: 'User'
+              roleDefinitionIdOrName: 'Storage Blob Data Contributor'
+            }
+          ]
+    )
     blobServices: {
       containers: [
         {
@@ -84,20 +109,36 @@ module searchServicePublic 'br/public:avm/res/search/search-service:0.12.0' = {
     privateEndpoints: []
     partitionCount: 1
     // replicaCount: 3
-    roleAssignments: empty(groupPrincipalId)
-      ? []
-      : [
-          {
-            principalId: groupPrincipalId
-            principalType: 'Group'
-            roleDefinitionIdOrName: 'Search Service Contributor'
-          }
-          {
-            principalId: groupPrincipalId
-            principalType: 'Group'
-            roleDefinitionIdOrName: 'Search Index Data Contributor'
-          }
-        ]
+    roleAssignments: union(
+      empty(groupPrincipalId)
+        ? []
+        : [
+            {
+              principalId: groupPrincipalId
+              principalType: 'Group'
+              roleDefinitionIdOrName: 'Search Service Contributor'
+            }
+            {
+              principalId: groupPrincipalId
+              principalType: 'Group'
+              roleDefinitionIdOrName: 'Search Index Data Contributor'
+            }
+          ],
+      empty(deployerPrincipalId)
+        ? []
+        : [
+            {
+              principalId: deployerPrincipalId
+              principalType: 'User'
+              roleDefinitionIdOrName: 'Search Service Contributor'
+            }
+            {
+              principalId: deployerPrincipalId
+              principalType: 'User'
+              roleDefinitionIdOrName: 'Search Index Data Contributor'
+            }
+          ]
+    )
     sharedPrivateLinkResources: [
       {
         name: 'ai-foundry-connection-${resourceToken}'
@@ -122,7 +163,7 @@ module storageAccountRoleAssignment '../modules/iam/role-assignment-storage.bice
   name: take('storage-role-${searchServicePublic.name}-assignment-deployment', 64)
   params: {
     azureStorageName: storageAccount.outputs.name
-    projectPrincipalId: searchServicePublic.outputs.systemAssignedMIPrincipalId
+    principalId: searchServicePublic.outputs.systemAssignedMIPrincipalId
   }
 }
 
@@ -137,20 +178,11 @@ module searchRoleAssignment '../modules/iam/ai-search-role-assignments.bicep' = 
   }
 ]
 
-module storageAccountRoleForUserAssignment '../modules/iam/role-assignment-storage.bicep' = if (!empty(groupPrincipalId)) {
-  name: 'storage-role-user-assignment-deployment'
-  params: {
-    azureStorageName: storageAccount.outputs.name
-    projectPrincipalId: groupPrincipalId
-    servicePrincipalType: 'Group'
-  }
-}
-
 module foundryCognitiveUserRoleAssignment '../modules/iam/role-assignment-cognitiveServices.bicep' = {
   name: take('foundry-cog-user-role-${searchServicePublic.name}-assignment-deployment', 64)
   params: {
     accountName: foundryExisting.name
-    projectPrincipalId: searchServicePublic.outputs.systemAssignedMIPrincipalId
+    principalId: searchServicePublic.outputs.systemAssignedMIPrincipalId!
     roleName: 'Cognitive Services User'
   }
 }
@@ -159,11 +191,10 @@ module foundryOpenAIUserRoleAssignment '../modules/iam/role-assignment-cognitive
   name: take('foundry-openai-user-role-${searchServicePublic.name}-assignment-deployment', 64)
   params: {
     accountName: foundryExisting.name
-    projectPrincipalId: searchServicePublic.outputs.systemAssignedMIPrincipalId
+    principalId: searchServicePublic.outputs.systemAssignedMIPrincipalId
     roleName: 'Cognitive Services OpenAI User'
   }
 }
-
 
 resource acount_connection_azureai_search_public 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-preview' = {
   name: 'ai-search-public-pe-${resourceToken}-connection'

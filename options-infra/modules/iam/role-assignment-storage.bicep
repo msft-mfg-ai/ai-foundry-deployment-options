@@ -1,7 +1,7 @@
 import * as types from '../types/types.bicep'
 
 param azureStorageName string
-param projectPrincipalId string
+param principalId string
 
 param roleName types.StorageRoleAssignmentsType = 'Storage Blob Data Contributor'
 @allowed([
@@ -34,9 +34,9 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing 
 
 resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: storageAccount
-  name: guid(projectPrincipalId, roleDefinitionIds[roleName], storageAccount.id)
+  name: guid(principalId, roleDefinitionIds[roleName], storageAccount.id)
   properties: {
-    principalId: projectPrincipalId
+    principalId: principalId
     roleDefinitionId: roleDefinitionIds[roleName]
     principalType: servicePrincipalType
   }

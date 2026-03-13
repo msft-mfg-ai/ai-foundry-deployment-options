@@ -1,5 +1,5 @@
 param azureStorageName string
-param projectPrincipalId string
+param principalId string
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
   name: azureStorageName
@@ -15,9 +15,9 @@ resource storageBlobDataContributor 'Microsoft.Authorization/roleDefinitions@202
 
 resource storageBlobDataContributorRoleAssignmentProject 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: storageAccount
-  name: guid(projectPrincipalId, storageBlobDataContributor.id, storageAccount.id)
+  name: guid(principalId, storageBlobDataContributor.id, storageAccount.id)
   properties: {
-    principalId: projectPrincipalId
+    principalId: principalId
     roleDefinitionId: storageBlobDataContributor.id
     principalType: 'ServicePrincipal'
   }
