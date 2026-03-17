@@ -426,12 +426,6 @@
         <base />
 
         <!-- ================================================================ -->
-        <!-- PTU Simulator: inject fake headers for testing (if enabled)       -->
-        <!-- Must run BEFORE the cache-tracking logic below.                  -->
-        <!-- ================================================================ -->
-        {ptu-simulator-fragment}
-
-        <!-- ================================================================ -->
         <!-- Cache PTU remaining tokens + per-team PTU consumption            -->
         <!-- Only when response came from PTU pool                            -->
         <!-- ================================================================ -->

@@ -99,17 +99,3 @@ type accessContractType = {
   @description('Environment tag for observability (e.g., PROD, DEV, TEST)')
   environment: string?
 }
-
-// -- PTU Simulator Config -----------------------------------------------------
-@export()
-@description('Configuration for the PTU simulator that injects rate-limit headers on non-PTU backends for testing.')
-type ptuSimulatorConfigType = {
-  @description('Enable the PTU simulator (adds fake x-ratelimit-remaining-tokens to responses)')
-  enabled: bool
-
-  @description('Simulated total PTU capacity in tokens per minute')
-  simulatedCapacityTpm: int?
-
-  @description('Simulated utilization percentage (0.0-1.0). Remaining = capacity * (1 - utilization).')
-  simulatedUtilization: string?
-}

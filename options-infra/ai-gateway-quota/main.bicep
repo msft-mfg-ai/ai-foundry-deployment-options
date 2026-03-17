@@ -10,7 +10,7 @@
 // ============================================================================
 targetScope = 'resourceGroup'
 
-import { foundryInstanceType, accessContractType, ptuSimulatorConfigType } from '../modules/apim/advanced/types.bicep'
+import { foundryInstanceType, accessContractType } from '../modules/apim/advanced/types.bicep'
 
 // -- Parameters ---------------------------------------------------------------
 
@@ -21,11 +21,6 @@ param foundryInstances foundryInstanceType[]
 
 @description('Access contracts defining team identities, priorities, and quotas')
 param accessContracts accessContractType[]
-
-@description('PTU simulator configuration for testing without real PTU')
-param ptuSimulator ptuSimulatorConfigType = {
-  enabled: false
-}
 
 @description('P2 routing threshold — route to PTU when utilization < this value (0.0–1.0)')
 param ptuUtilizationThreshold string = '0.7'
@@ -85,7 +80,6 @@ module aiGateway '../modules/apim/ai-gateway-advanced.bicep' = {
     appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
     foundryInstances: foundryInstances
     accessContracts: entraApps.outputs.contractsWithIdentities
-    ptuSimulator: ptuSimulator
     ptuUtilizationThreshold: ptuUtilizationThreshold
   }
 }

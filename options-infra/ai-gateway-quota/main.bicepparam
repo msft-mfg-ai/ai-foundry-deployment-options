@@ -107,26 +107,6 @@ param accessContracts = [
 ]
 
 // ============================================================================
-// PTU Simulator — test priority routing without real PTU
-// ============================================================================
-// When enabled, PAYG responses get injected with fake x-ratelimit-remaining-tokens
-// headers, making APIM think they came from a PTU deployment.
-//
-// This lets you test:
-//   - P2 routing decisions (PTU when utilization < 70%)
-//   - PTU quota tracking (per-team consumption counter)
-//   - PTU quota overflow to PAYG
-//
-// Set enabled: false for production deployments with real PTU.
-// ============================================================================
-
-param ptuSimulator = {
-  enabled: true
-  simulatedCapacityTpm: 2000     // Low capacity so tests hit PTU exhaustion quickly
-  simulatedUtilization: '0.3'    // 30% base utilization — P2 allowed initially
-}
-
-// ============================================================================
 // Routing Configuration
 // ============================================================================
 

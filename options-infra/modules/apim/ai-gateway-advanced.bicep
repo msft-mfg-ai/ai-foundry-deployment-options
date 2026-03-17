@@ -8,7 +8,6 @@
 //   - Per-model and per-team TPM quotas + monthly cost caps
 //   - PTU utilization-aware routing for P2 traffic
 //   - Per-project Foundry connections (identity-based, optional)
-//   - PTU simulator for testing without real PTU deployments
 //
 // Uses: v2/apim.bicep (APIM service), v2/inference-api.bicep (inference API)
 // Adds: advanced/contract-storage, advanced/multi-foundry-backends, priority policy
@@ -18,7 +17,6 @@ import { ModelType } from '../ai/connection-apim-gateway.bicep'
 import {
   foundryInstanceType
   accessContractType
-  ptuSimulatorConfigType
 } from 'advanced/types.bicep'
 
 // -- Parameters ---------------------------------------------------------------
@@ -41,11 +39,6 @@ param foundryInstances foundryInstanceType[]
 
 @description('Access contracts defining team identities, priorities, and quotas')
 param accessContracts accessContractType[]
-
-@description('PTU simulator configuration for testing without real PTU')
-param ptuSimulator ptuSimulatorConfigType = {
-  enabled: false
-}
 
 @description('P2 routing threshold — route to PTU when utilization < this value (0.0–1.0)')
 param ptuUtilizationThreshold string = '0.7'
@@ -149,61 +142,17 @@ resource ptuThresholdNamedValue 'Microsoft.ApiManagement/service/namedValues@202
   }
 }
 
-resource ptuSimulatorEnabledNv 'Microsoft.ApiManagement/service/namedValues@2024-06-01-preview' = {
-  parent: apimRef
-  name: 'ptu-simulator-enabled'
-  dependsOn: [apimService]
-  properties: {
-    displayName: 'ptu-simulator-enabled'
-    value: ptuSimulator.enabled ? 'true' : 'false'
-    secret: false
-    tags: ['simulator', 'ptu']
-  }
-}
-
-resource ptuSimulatorCapacityNv 'Microsoft.ApiManagement/service/namedValues@2024-06-01-preview' = {
-  parent: apimRef
-  name: 'ptu-simulator-capacity'
-  dependsOn: [apimService]
-  properties: {
-    displayName: 'ptu-simulator-capacity'
-    value: string(ptuSimulator.?simulatedCapacityTpm ?? 100000)
-    secret: false
-    tags: ['simulator', 'ptu']
-  }
-}
-
-resource ptuSimulatorUtilizationNv 'Microsoft.ApiManagement/service/namedValues@2024-06-01-preview' = {
-  parent: apimRef
-  name: 'ptu-simulator-base-utilization'
-  dependsOn: [apimService]
-  properties: {
-    displayName: 'ptu-simulator-base-utilization'
-    value: ptuSimulator.?simulatedUtilization ?? '0.3'
-    secret: false
-    tags: ['simulator', 'ptu']
-  }
-}
-
 // ============================================================================
 // -- Priority Routing Policy
 // ============================================================================
-var ptuSimulatorFragment = ptuSimulator.enabled
-  ? loadTextContent('advanced/ptu-simulator-fragment.xml')
-  : '<!-- PTU simulator disabled -->'
-
 var policyXml = replace(
   replace(
-    replace(
-      loadTextContent('advanced/policy-priority.xml'),
-      '{tenant-id}',
-      subscription().tenantId
-    ),
-    '{contracts-blob-url}',
-    contractStorage.outputs.blobUrl
+    loadTextContent('advanced/policy-priority.xml'),
+    '{tenant-id}',
+    subscription().tenantId
   ),
-  '{ptu-simulator-fragment}',
-  ptuSimulatorFragment
+  '{contracts-blob-url}',
+  contractStorage.outputs.blobUrl
 )
 
 var finalPolicyXml = replace(
@@ -224,9 +173,6 @@ module inferenceApi 'v2/inference-api.bicep' = {
   dependsOn: [
     foundryBackends
     ptuThresholdNamedValue
-    ptuSimulatorEnabledNv
-    ptuSimulatorCapacityNv
-    ptuSimulatorUtilizationNv
     contractStorage
   ]
   params: {
