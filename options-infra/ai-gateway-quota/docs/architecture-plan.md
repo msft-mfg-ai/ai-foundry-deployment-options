@@ -1,8 +1,31 @@
 # Priority Queue for PTU OpenAI with APIM + Foundry
 
+## Table of Contents
+
+- [Problem Statement](#problem-statement)
+- [Research Sources](#research-sources)
+- [Analysis: ai-gw-v2](#analysis-ai-gw-v2-usecaseonboard-branch)
+- [Analysis: SimpleL7Proxy](#analysis-simplel7proxy-microsoft---open-source)
+- [PTU, TPM, and "Utilization"](#ptu-tpm-and-utilization--how-they-relate)
+- [How Citadel Does It](#how-citadel-does-it)
+- [Options Analysis](#options-analysis)
+  - [Option 1: Citadel (Static Limits)](#option-1-citadel-access-contracts-apim-products--static-token-limits)
+  - [Option 2: Citadel + Oversubscription](#option-2-enhanced-citadel-with-oversubscription)
+  - [Option 3: Custom APIM Policy](#option-3-custom-apim-policy-dynamic-priority-aware-routing)
+  - [Option 4: Event Hub Queue](#option-4-genai-gateway-playbook-event-hub-priority-queue)
+  - [Option 5: SimpleL7Proxy](#option-5-simplel7proxy-microsoft-l7-priority-proxy)
+- [Comparison Table](#comparison-table)
+- [Deployment Topologies](#deployment-topologies)
+  - [Topology A: Single-Region](#topology-a-single-region)
+  - [Topology B: Multi-Region HA](#topology-b-multi-region-ha)
+- [Recommendation](#recommendation)
+- [Implementation Plan (Phase 1 — Citadel)](#implementation-plan-phase-1--citadel)
+
+---
+
 ## Problem Statement
 
-A customer deploys a **PTU (Provisioned Throughput Units)** Azure OpenAI deployment (e.g., `gpt-5.2-chat`). Multiple internal teams subscribe to this model with different priorities:
+A customer deploys a **PTU (Provisioned Throughput Units)** Azure OpenAI deployment (e.g., `gpt-4o`). Multiple internal teams subscribe to this model with different priorities:
 
 - **Priority 1** — Production use cases (Dev Team A prod, Dev Team B prod)
 - **Priority 2** — Dev/Test use cases (Dev Team A dev, Dev Team B test)
@@ -384,7 +407,7 @@ This is a critical concept that the GenAI Playbook doc doesn't explain clearly.
 
 | Concept | What It Is | Example |
 |---------|-----------|---------|
-| **PTU** (Provisioned Throughput Units) | Generic units of reserved model processing capacity. **What you buy.** | 100 PTU for gpt-5.2-chat |
+| **PTU** (Provisioned Throughput Units) | Generic units of reserved model processing capacity. **What you buy.** | 100 PTU for gpt-4o |
 | **TPM** (Tokens Per Minute) | The actual throughput your PTU reservation provides. **What you measure.** Each PTU translates to a model-specific number of TPM. | 100 PTU → ~600,000 TPM (varies by model) |
 | **Provisioned-Managed Utilization V2** | Azure Monitor metric: `(tokens processed in 1 min ÷ max TPM of your PTUs) × 100%`. **What you monitor.** Sampled at 1-minute intervals. | Used 300k tokens in 1 min with 600k TPM capacity → 50% utilization |
 
@@ -515,7 +538,7 @@ Access Contract JSON → Bicep Deployment → APIM Product + Product Policy + Su
 {
   "contractInfo": { "businessUnit": "Sales", "useCaseName": "Assistant", "environment": "PROD" },
   "policies": {
-    "modelAccess": { "enabled": true, "allowedModels": ["gpt-5.2-chat"] },
+    "modelAccess": { "enabled": true, "allowedModels": ["gpt-4o"] },
     "capacityManagement": {
       "enabled": true,
       "mode": "subscription-level",
@@ -742,10 +765,10 @@ The priority routing options above (Options 1–5) are **logical patterns** — 
 │  │                                      │  └──────────────────────┘  │
 │  └─────────────────────────────────────┘                             │
 │                                                                      │
-│  Optional: ACA with YARP (for Option 5)                              │
+│  Optional: ACA with SimpleL7Proxy (for Option 5)                     │
 │  ┌─────────────────────┐                                             │
 │  │  Container Apps Env  │  Sits between App GW and APIM or           │
-│  │  - YARP proxy        │  replaces APIM entirely for routing        │
+│  │  - SimpleL7Proxy     │  replaces APIM entirely for routing        │
 │  │  - Priority queue    │                                             │
 │  └─────────────────────┘                                             │
 └──────────────────────────────────────────────────────────────────────┘
@@ -757,7 +780,7 @@ Even with a single-region APIM, you can route to **OpenAI deployments in multipl
 ```bicep
 // Example: Backend pool with multi-region priority
 resource backendPool 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' = {
-  name: 'pool-gpt-5-2-chat'
+  name: 'pool-gpt-4o'
   properties: {
     type: 'Pool'
     pool: {
