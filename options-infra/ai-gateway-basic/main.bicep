@@ -88,7 +88,7 @@ module projects '../modules/ai/ai-project.bicep' = [
       foundry_name: foundry.outputs.FOUNDRY_NAME
       project_name: projectNames[i - 1]
       display_name: 'AI Project ${i}'
-      project_description: 'AI Project ${i} deployed via AI Gateway OpenRouter option'
+      project_description: 'AI Project ${i} deployed via AI Gateway Basic option'
       managedIdentityResourceId: identities[i - 1].outputs.MANAGED_IDENTITY_RESOURCE_ID
       appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
       createAccountCapabilityHost: true
@@ -166,7 +166,7 @@ module apim_role_assignment '../modules/iam/role-assignment-cognitiveServices.bi
   scope: resourceGroup(openAiSubscriptionId, openAiResourceGroupName)
   params: {
     accountName: openAiName
-    projectPrincipalId: ai_gateway.outputs.apimPrincipalId
+    principalId: ai_gateway.outputs.apimPrincipalId
     roleName: 'Cognitive Services User'
   }
 }

@@ -4,7 +4,7 @@
 param cosmosAccountName string
 
 @description('Project name')
-param projectPrincipalId string
+param principalId string
 
 param projectWorkspaceId string
 
@@ -36,9 +36,9 @@ var accountScope = '/subscriptions/${subscription().subscriptionId}/resourceGrou
 
 resource containerRoleAssignmentUserContainer 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2022-05-15' = {
   parent: cosmosAccount
-  name: guid(projectWorkspaceId, cosmosAccountName, roleDefinitionId, projectPrincipalId, accountScope)
+  name: guid(projectWorkspaceId, cosmosAccountName, roleDefinitionId, principalId, accountScope)
   properties: {
-    principalId: projectPrincipalId
+    principalId: principalId
     roleDefinitionId: roleDefinitionId
     scope: accountScope
   }

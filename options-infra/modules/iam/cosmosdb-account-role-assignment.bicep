@@ -3,7 +3,7 @@
 param cosmosDBName string
 
 @description('Principal ID of the AI project')
-param projectPrincipalId string
+param principalId string
 
 
 resource cosmosDBAccount 'Microsoft.DocumentDB/databaseAccounts@2024-12-01-preview' existing = {
@@ -18,9 +18,9 @@ resource cosmosDBOperatorRole 'Microsoft.Authorization/roleDefinitions@2022-04-0
 
 resource cosmosDBOperatorRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: cosmosDBAccount
-  name: guid(projectPrincipalId, cosmosDBOperatorRole.id, cosmosDBAccount.id)
+  name: guid(principalId, cosmosDBOperatorRole.id, cosmosDBAccount.id)
   properties: {
-    principalId: projectPrincipalId
+    principalId: principalId
     roleDefinitionId: cosmosDBOperatorRole.id
     principalType: 'ServicePrincipal'
   }
