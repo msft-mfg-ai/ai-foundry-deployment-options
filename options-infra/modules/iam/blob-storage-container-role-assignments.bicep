@@ -2,7 +2,7 @@
 param storageName string
 
 @description('Principal ID of the AI Project')
-param aiProjectPrincipalId string
+param principalId string
 
 @description('Workspace Id of the AI Project')
 param workspaceId string
@@ -25,9 +25,9 @@ var conditionStr= '((!(ActionMatches{\'Microsoft.Storage/storageAccounts/blobSer
 // Assign Storage Blob Data Owner role
 resource storageBlobDataOwnerAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: storage
-  name: guid(aiProjectPrincipalId, storageBlobDataOwner.id, storage.id)
+  name: guid(principalId, storageBlobDataOwner.id, storage.id)
   properties: {
-    principalId: aiProjectPrincipalId
+    principalId: principalId
     roleDefinitionId: storageBlobDataOwner.id
     principalType: 'ServicePrincipal'
     conditionVersion: '2.0'

@@ -2,11 +2,12 @@ import * as types from '../types/types.bicep'
 
 param accountName string
 param projectName string
-param projectPrincipalId string
+param principalId string
 param roleName types.CognitiveServicesRoleAssignmentsType = 'Azure AI User'
 @allowed([
   'ServicePrincipal'
   'User'
+  'Group'
 ])
 param servicePrincipalType string = 'ServicePrincipal'
 
@@ -52,9 +53,9 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-07-01-previ
 
 resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: project
-  name: guid(projectPrincipalId, roleDefinitionIds[roleName], project.id)
+  name: guid(principalId, roleDefinitionIds[roleName], project.id)
   properties: {
-    principalId: projectPrincipalId
+    principalId: principalId
     roleDefinitionId: roleDefinitionIds[roleName]
     principalType: servicePrincipalType
   }

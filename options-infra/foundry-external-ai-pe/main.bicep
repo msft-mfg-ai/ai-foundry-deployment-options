@@ -130,7 +130,7 @@ module ai_role_assignment '../modules/iam/role-assignment-cognitiveServices.bice
   name: take('ai-user-role-assignments-foundry-${resourceToken}', 64)
   params: {
     accountName: foundryWithModels.outputs.FOUNDRY_NAME
-    projectPrincipalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
+    principalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
     roleName: 'Azure AI User'
   }
 }
@@ -139,7 +139,7 @@ module cognitive_services_role_assignment '../modules/iam/role-assignment-cognit
   name: take('cog-user-role-assignments-foundry-${resourceToken}', 64)
   params: {
     accountName: foundryWithModels.outputs.FOUNDRY_NAME
-    projectPrincipalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
+    principalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
     roleName: 'Cognitive Services User'
   }
 }
@@ -148,7 +148,7 @@ module cognitive_contributor_services_role_assignment '../modules/iam/role-assig
   name: take('cog-contributor-role-assignments-foundry-${resourceToken}', 64)
   params: {
     accountName: foundryWithModels.outputs.FOUNDRY_NAME
-    projectPrincipalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
+    principalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
     roleName: 'Cognitive Services Contributor'
   }
 }
@@ -157,7 +157,7 @@ module cognitive_services_role_assignment_account '../modules/iam/role-assignmen
   name: take('cog-user-role-assignments-account-${resourceToken}', 64)
   params: {
     accountName: foundryWithModels.outputs.FOUNDRY_NAME
-    projectPrincipalId: foundry.outputs.FOUNDRY_PRINCIPAL_ID
+    principalId: foundry.outputs.FOUNDRY_PRINCIPAL_ID
     roleName: 'Cognitive Services User'
   }
 }
@@ -166,7 +166,7 @@ module cognitive_contributor_services_role_assignment_account '../modules/iam/ro
   name: take('cog-contributor-role-assignments-account-${resourceToken}', 64)
   params: {
     accountName: foundryWithModels.outputs.FOUNDRY_NAME
-    projectPrincipalId: foundry.outputs.FOUNDRY_PRINCIPAL_ID
+    principalId: foundry.outputs.FOUNDRY_PRINCIPAL_ID
     roleName: 'Cognitive Services Contributor'
   }
 }

@@ -21,7 +21,7 @@ type apiType = {
 
 param externalApis apiType[] = [] // Array of external API definitions
 
-module dnsSites 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
+module dnsSites 'br/public:avm/res/network/private-dns-zone:0.8.1' = {
   name: 'dns-sites'
   params: {
     tags: tags
@@ -46,7 +46,7 @@ var acaZoneIds = union(
 )
 var acaZoneDict = reduce(acaZoneIds, {}, (cur, next) => union(cur, next))
 
-module dnsAca 'br/public:avm/res/network/private-dns-zone:0.8.0' = [
+module dnsAca 'br/public:avm/res/network/private-dns-zone:0.8.1' = [
   for (zoneName, index) in objectKeys(acaZoneDict): {
     name: 'dns-aca-${index}'
     params: {

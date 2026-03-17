@@ -106,3 +106,4 @@ type CognitiveServicesRoleAssignmentsType =
   | 'Azure AI User'
   | 'Azure AI Project Manager'
   | 'Azure AI Account Owner'
+  | 'Azure AI Owner'

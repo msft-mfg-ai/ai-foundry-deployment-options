@@ -144,7 +144,7 @@ module storageAccountRoleAssignment '../modules/iam/role-assignment-storage.bice
   name: take('storage-role-${searchServicePublicPe.name}-assignment-deployment', 64)
   params: {
     azureStorageName: ai_dependencies.outputs.AI_DEPENDECIES.azureStorage.name
-    projectPrincipalId: searchServicePublicPe.outputs.systemAssignedMIPrincipalId
+    principalId: searchServicePublicPe.outputs.systemAssignedMIPrincipalId
   }
 }
 
@@ -152,7 +152,7 @@ module storageAccountRoleForUserAssignment '../modules/iam/role-assignment-stora
   name: 'storage-role-user-assignment-deployment'
   params: {
     azureStorageName: ai_dependencies.outputs.AI_DEPENDECIES.azureStorage.name
-    projectPrincipalId: principalId!
+    principalId: principalId!
     servicePrincipalType: 'User'
   }
 }
@@ -161,7 +161,7 @@ module foundryCognitiveUserRoleAssignment '../modules/iam/role-assignment-cognit
   name: take('foundry-cog-user-role-${searchServicePublicPe.name}-assignment-deployment', 64)
   params: {
     accountName: foundry.outputs.FOUNDRY_NAME
-    projectPrincipalId: searchServicePublicPe.outputs.systemAssignedMIPrincipalId
+    principalId: searchServicePublicPe.outputs.systemAssignedMIPrincipalId
     roleName: 'Cognitive Services User'
   }
 }
@@ -170,7 +170,7 @@ module foundryOpenAIUserRoleAssignment '../modules/iam/role-assignment-cognitive
   name: take('foundry-openai-user-role-${searchServicePublicPe.name}-assignment-deployment', 64)
   params: {
     accountName: foundry.outputs.FOUNDRY_NAME
-    projectPrincipalId: searchServicePublicPe.outputs.systemAssignedMIPrincipalId
+    principalId: searchServicePublicPe.outputs.systemAssignedMIPrincipalId
     roleName: 'Cognitive Services OpenAI User'
   }
 }

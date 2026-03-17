@@ -230,7 +230,7 @@ module apim_role_assignment '../modules/iam/role-assignment-cognitiveServices.bi
   scope: resourceGroup(openAiSubscriptionId, openAiResourceGroupName)
   params: {
     accountName: openAiName
-    projectPrincipalId: ai_gateway.outputs.apimPrincipalId
+    principalId: ai_gateway.outputs.apimPrincipalId
     roleName: 'Cognitive Services User'
   }
 }

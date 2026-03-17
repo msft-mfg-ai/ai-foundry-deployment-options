@@ -1,7 +1,7 @@
 import * as types from '../types/types.bicep'
 
 param aiSearchName string
-param projectPrincipalId string
+param principalId string
 param roleName types.SearchRoleAssignmentsType = 'Search Index Data Reader'
 @allowed([
   'ServicePrincipal'
@@ -27,9 +27,9 @@ resource aiSearch 'Microsoft.Search/searchServices@2025-10-01-preview' existing 
 
 resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: aiSearch
-  name: guid(projectPrincipalId, roleDefinitionIds[roleName], aiSearch.id)
+  name: guid(principalId, roleDefinitionIds[roleName], aiSearch.id)
   properties: {
-    principalId: projectPrincipalId
+    principalId: principalId
     roleDefinitionId: roleDefinitionIds[roleName]
     principalType: servicePrincipalType
   }

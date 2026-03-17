@@ -24,6 +24,7 @@ module storageAccount 'br/public:avm/res/storage/storage-account:0.32.0' = {
       keyVaultResourceId: keyVaultResourceId
       accessKey1Name: accessKey1Name
     }
+    requireInfrastructureEncryption: false
     publicNetworkAccess: 'Enabled'
     networkAcls: {
       bypass: 'AzureServices'

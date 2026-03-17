@@ -61,7 +61,7 @@ module storageAccountRoleAssignment '../iam/azure-storage-account-role-assignmen
   scope: resourceGroup(aiDependencies.azureStorage.subscriptionId, aiDependencies.azureStorage.resourceGroupName)
   params: {
     azureStorageName: aiDependencies.azureStorage.name
-    projectPrincipalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
+    principalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
   }
 }
 
@@ -71,7 +71,7 @@ module cosmosAccountRoleAssignments '../iam/cosmosdb-account-role-assignment.bic
   scope: resourceGroup(aiDependencies.cosmosDB.subscriptionId, aiDependencies.cosmosDB.resourceGroupName)
   params: {
     cosmosDBName: aiDependencies.cosmosDB.name
-    projectPrincipalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
+    principalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
   }
 }
 
@@ -108,7 +108,7 @@ module storageContainersRoleAssignment '../iam/blob-storage-container-role-assig
   name: 'storage-containers-deployment-${project_name}'
   scope: resourceGroup(aiDependencies.azureStorage.subscriptionId, aiDependencies.azureStorage.resourceGroupName)
   params: {
-    aiProjectPrincipalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
+    principalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
     storageName: aiDependencies.azureStorage.name
     workspaceId: formatProjectWorkspaceId.outputs.FOUNDRY_PROJECT_WORKSPACE_ID
   }
@@ -123,7 +123,7 @@ module cosmosContainerRoleAssignments '../iam/cosmos-container-role-assignments.
   scope: resourceGroup(aiDependencies.cosmosDB.subscriptionId, aiDependencies.cosmosDB.resourceGroupName)
   params: {
     cosmosAccountName: aiDependencies.cosmosDB.name
-    projectPrincipalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
+    principalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
   }
   dependsOn: [
     addProjectCapabilityHost
