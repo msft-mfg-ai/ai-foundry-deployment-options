@@ -6,7 +6,8 @@ param cosmosAccountName string
 @description('Project name')
 param principalId string
 
-param projectWorkspaceId string
+@description('Not needed anymore, Foundry needs access to entire db')
+param projectWorkspaceId string?
 
 // var userThreadName = '${projectWorkspaceId}-thread-message-store'
 
@@ -25,7 +26,7 @@ var accountScope = '/subscriptions/${subscription().subscriptionId}/resourceGrou
 
 resource containerRoleAssignmentUserContainer 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2022-05-15' = {
   parent: cosmosAccount
-  name: guid(projectWorkspaceId, cosmosAccountName, roleDefinitionId, principalId, accountScope)
+  name: guid(projectWorkspaceId ?? '', cosmosAccountName, roleDefinitionId, principalId, accountScope)
   properties: {
     principalId: principalId
     roleDefinitionId: roleDefinitionId

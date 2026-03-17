@@ -100,7 +100,7 @@ module apimRoleAssignments '../modules/iam/role-assignment-cognitiveServices.bic
     scope: resourceGroup(split(instance.resourceId, '/')[2], split(instance.resourceId, '/')[4])
     params: {
       accountName: last(split(instance.resourceId, '/'))
-      projectPrincipalId: aiGateway.outputs.apimPrincipalId
+      principalId: aiGateway.outputs.apimPrincipalId
       roleName: 'Cognitive Services User'
     }
   }
