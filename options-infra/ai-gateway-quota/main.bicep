@@ -67,6 +67,24 @@ module logAnalytics '../modules/monitor/loganalytics.bicep' = {
 }
 
 // ============================================================================
+// -- Event Hub (quota-exceeded notifications)
+// ============================================================================
+var eventHubNamespaceName = 'quota-events-ns-${resourceToken}'
+var hubName = 'quota-events'
+
+module eventHub '../modules/eventhub/eventhub.bicep' = {
+  name: 'eventhub-deployment'
+  params: {
+    location: location
+    tags: tags
+    resourceSuffix: resourceToken
+    hubName: hubName
+    namespaceName: eventHubNamespaceName
+    apimPrincipalId: aiGateway.outputs.apimPrincipalId
+  }
+}
+
+// ============================================================================
 // -- AI Gateway (APIM + priority routing + contract storage + inference API)
 // ============================================================================
 module aiGateway '../modules/apim/ai-gateway-advanced.bicep' = {
@@ -81,8 +99,11 @@ module aiGateway '../modules/apim/ai-gateway-advanced.bicep' = {
     foundryInstances: foundryInstances
     accessContracts: entraApps.outputs.contractsWithIdentities
     ptuUtilizationThreshold: ptuUtilizationThreshold
+    eventHubNamespaceName: eventHubNamespaceName
+    eventHubName: hubName
   }
 }
+
 
 // ============================================================================
 // -- Role Assignments: APIM → each Foundry instance (cross-RG)
@@ -127,3 +148,5 @@ output POOL_NAMES array = aiGateway.outputs.poolNames
 output HAS_PTU_DEPLOYMENTS bool = aiGateway.outputs.hasPtuDeployments
 output CONFIG_VALIDATION_RESULT bool = validConfig
 output CREATED_APP_IDS array = entraApps.outputs.createdAppIds
+output EVENTHUB_NAMESPACE string = eventHub.outputs.namespaceName
+output EVENTHUB_NAME string = eventHub.outputs.eventHubName

@@ -19,7 +19,10 @@ param foundryInstances = [
   // -- PTU instance (eastus2) — priority 1 (local PTU) ------------------------
   {
     name: 'foundry-eastus2-ptu'
-    resourceId: readEnvironmentVariable('FOUNDRY_PTU_RESOURCE_ID', '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-ai/providers/Microsoft.CognitiveServices/accounts/foundry-eastus-ptu')
+    resourceId: readEnvironmentVariable(
+      'FOUNDRY_PTU_RESOURCE_ID',
+      '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-ai/providers/Microsoft.CognitiveServices/accounts/foundry-eastus-ptu'
+    )
     endpoint: readEnvironmentVariable('FOUNDRY_PTU_ENDPOINT', 'https://foundry-eastus-ptu.openai.azure.com/')
     location: 'eastus2'
     isPtu: true
@@ -31,7 +34,10 @@ param foundryInstances = [
   // -- Paygo instance (eastus2) — priority 3 (cost fallback, co-located) ------
   {
     name: 'foundry-eastus2-paygo'
-    resourceId: readEnvironmentVariable('FOUNDRY_ONE_RESOURCE_ID', '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-ai/providers/Microsoft.CognitiveServices/accounts/foundry-eastus')
+    resourceId: readEnvironmentVariable(
+      'FOUNDRY_ONE_RESOURCE_ID',
+      '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-ai/providers/Microsoft.CognitiveServices/accounts/foundry-eastus'
+    )
     endpoint: readEnvironmentVariable('FOUNDRY_ONE_ENDPOINT', 'https://foundry-eastus.openai.azure.com/')
     location: 'eastus2'
     isPtu: false
@@ -46,7 +52,10 @@ param foundryInstances = [
   // -- Paygo instance (westus) — priority 3 (second paygo region) -------------
   {
     name: 'foundry-westus-paygo'
-    resourceId: readEnvironmentVariable('FOUNDRY_TWO_RESOURCE_ID', '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-ai/providers/Microsoft.CognitiveServices/accounts/foundry-westus')
+    resourceId: readEnvironmentVariable(
+      'FOUNDRY_TWO_RESOURCE_ID',
+      '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-ai/providers/Microsoft.CognitiveServices/accounts/foundry-westus'
+    )
     endpoint: readEnvironmentVariable('FOUNDRY_TWO_ENDPOINT', 'https://foundry-westus.openai.azure.com/')
     location: 'westus'
     isPtu: false
@@ -63,6 +72,17 @@ param foundryInstances = [
 // ============================================================================
 // Each contract defines a team's access rights.
 // Leave identities empty to auto-create an Entra ID app registration.
+// To specify identities manually, provide an array of { value, displayName, claimName }:
+//   identities: [
+//     { value: '<client-id>', displayName: 'My App', claimName: 'azp' }            // app registration (v2 token)
+//     { value: '<client-id>', displayName: 'My App', claimName: 'appid' }           // app registration (v1 token)
+//     { value: '/subscriptions/.../providers/Microsoft.ManagedIdentity/...', displayName: 'My MI', claimName: 'xms_mirid' }  // managed identity (prefix match)
+//     { value: '<object-id>', displayName: 'Fallback', claimName: 'oid' }           // any Entra identity by object ID
+//     { value: '<user-object-id>', displayName: 'Jane Doe', claimName: 'oid' }      // specific user (delegated/interactive token)
+//     { value: '<user-subject>', displayName: 'Jane Doe', claimName: 'sub' }        // user scoped to a specific app (sub is per-app)
+//   ]
+// Note: azp/appid are treated as equivalent during matching (v1 ↔ v2 token fallback).
+// Matching is prefix-based, so xms_mirid can match all MIs in a subscription/resource group.
 //
 // Priority: 1=Production (PTU first), 2=Standard (PTU when idle), 3=Batch (PAYG only)
 // models[].tpm: per-model TPM (hard 429 limit, counter-key = azp:model)
@@ -70,10 +90,18 @@ param foundryInstances = [
 // monthlyQuota: general cost cap across all models
 // ============================================================================
 
+var teamAlpha = readEnvironmentVariable('TEAM_ALPHA_APP_ID', '') != ''
+  ? [{ value: readEnvironmentVariable('TEAM_ALPHA_APP_ID', ''), displayName: 'Team Alpha App', claimName: 'azp' }]
+  : []
+
+var currentUser = readEnvironmentVariable('CURRENT_USER_OBJECT_ID', '') != ''
+  ? [{ value: readEnvironmentVariable('CURRENT_USER_OBJECT_ID', ''), displayName: 'Current User', claimName: 'oid' }]
+  : []
+
 param accessContracts = [
   {
     name: 'Team Alpha'
-    identities: []  // auto-create Entra app
+    identities: union(teamAlpha, currentUser)
     priority: 1
     models: [
       { name: 'gpt-4.1-mini', tpm: 500, ptuTpm: 300 }
@@ -84,7 +112,7 @@ param accessContracts = [
   }
   {
     name: 'Team Beta'
-    identities: []  // auto-create Entra app
+    identities: [] // auto-create Entra app
     priority: 2
     models: [
       { name: 'gpt-4.1-mini', tpm: 400, ptuTpm: 200 }
@@ -95,7 +123,7 @@ param accessContracts = [
   }
   {
     name: 'Team Gamma'
-    identities: []  // auto-create Entra app
+    identities: [] // auto-create Entra app
     priority: 3
     models: [
       { name: 'gpt-4.1-mini', tpm: 300 }
@@ -110,4 +138,4 @@ param accessContracts = [
 // Routing Configuration
 // ============================================================================
 
-param ptuUtilizationThreshold = '0.7'  // P2 → PTU when utilization < 70%
+param ptuUtilizationThreshold = '0.7' // P2 → PTU when utilization < 70%

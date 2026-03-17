@@ -101,7 +101,13 @@
                     if (string.IsNullOrEmpty(claimName) || string.IsNullOrEmpty(prefix) || string.IsNullOrEmpty(contractName)) { continue; }
 
                     string claimValue;
-                    if (!claims.TryGetValue(claimName, out claimValue) || string.IsNullOrEmpty(claimValue)) { continue; }
+                    if (!claims.TryGetValue(claimName, out claimValue) || string.IsNullOrEmpty(claimValue))
+                    {
+                        // azp (v2) and appid (v1) are equivalent — fall back across token versions
+                        if (claimName == &quot;azp&quot;) { claims.TryGetValue(&quot;appid&quot;, out claimValue); }
+                        else if (claimName == &quot;appid&quot;) { claims.TryGetValue(&quot;azp&quot;, out claimValue); }
+                        if (string.IsNullOrEmpty(claimValue)) { continue; }
+                    }
 
                     if (claimValue.StartsWith(prefix))
                     {
@@ -177,16 +183,24 @@
         }" />
 
         <!-- ================================================================ -->
-        <!-- STEP 5: Extract requested model from URL path                    -->
+        <!-- STEP 5: Extract requested model from URL path or request body   -->
         <!-- ================================================================ -->
         <set-variable name="requestedModel" value="@{
-            // URL pattern: /openai/deployments/{model}/chat/completions
+            // Try URL pattern first: /openai/deployments/{model}/chat/completions
             var segments = context.Request.Url.Path.Split('/');
-            for (int i = 0; i &lt; segments.Length - 1; i++) {
-                if (segments[i] == &quot;deployments&quot; &amp;&amp; i + 1 &lt; segments.Length) {
+            for (int i = 0; i < segments.Length - 1; i++) {
+                if (segments[i] == &quot;deployments&quot; &amp;&amp; i + 1 < segments.Length) {
                     return segments[i + 1];
                 }
             }
+            // Fall back to request body 'model' field
+            try {
+                var body = context.Request.Body.As&lt;Newtonsoft.Json.Linq.JObject&gt;(preserveContent: true);
+                var model = body?[&quot;model&quot;];
+                if (model != null &amp;&amp; !string.IsNullOrEmpty(model.ToString())) {
+                    return model.ToString();
+                }
+            } catch { }
             return &quot;unknown&quot;;
         }" />
 
@@ -286,11 +300,11 @@
         <!--   P3 (batch) → routed to pool (paygo backends only via policy)   -->
         <!-- ================================================================ -->
 
-        <!-- Read cached PTU remaining capacity (global, set by outbound) -->
+        <!-- Read cached global PTU consumption (total tokens routed to PTU, set by outbound) -->
         <cache-lookup-value
-            key="@(&quot;ptu-remaining:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
-            variable-name="ptu-remaining-cached"
-            default-value="-1" />
+            key="@(&quot;ptu-consumed-global:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
+            variable-name="ptu-consumed-global-cached"
+            default-value="0" />
 
         <!-- Read this team's PTU consumption in current window -->
         <cache-lookup-value
@@ -298,7 +312,6 @@
             variable-name="ptu-consumed-cached"
             default-value="0" />
 
-        <!-- Calculate PTU utilization (for P2 threshold check) -->
         <!-- PTU capacity is per-model, stored in the contracts blob -->
         <set-variable name="ptu-capacity" value="@{
             var root = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;contracts-parsed&quot;];
@@ -310,13 +323,15 @@
             return val.Value&lt;int&gt;();
         }" />
 
+        <!-- Calculate PTU utilization from tracked consumption vs capacity -->
         <set-variable name="ptu-utilization" value="@{
-            var remaining = (string)context.Variables[&quot;ptu-remaining-cached&quot;];
-            if (remaining == &quot;-1&quot;) { return 0.0; } // No data → assume idle, allow P2
-            double remainingTokens;
-            if (!double.TryParse(remaining, out remainingTokens)) { return 0.0; }
+            var consumedStr = (string)context.Variables[&quot;ptu-consumed-global-cached&quot;];
+            double consumed;
+            if (!double.TryParse(consumedStr, out consumed)) { return 0.0; }
             var capacity = (int)context.Variables[&quot;ptu-capacity&quot;];
-            return capacity > 0 ? 1.0 - (remainingTokens / capacity) : 1.0;
+            if (capacity &lt;= 0) { return 1.0; }
+            var util = consumed / capacity;
+            return util &lt; 0.0 ? 0.0 : util > 1.0 ? 1.0 : util;
         }" />
 
         <!-- Check if team has PTU quota remaining for THIS MODEL (soft limit) -->
@@ -426,18 +441,56 @@
         <base />
 
         <!-- ================================================================ -->
-        <!-- Cache PTU remaining tokens + per-team PTU consumption            -->
-        <!-- Only when response came from PTU pool                            -->
+        <!-- Detect backend type: PTU or PAYG                                -->
+        <!-- After forward-request through a pool, context.Request.Url.Host  -->
+        <!-- reflects the actual backend that served the request.            -->
+        <!-- {ptu-backend-hosts} is replaced at deploy time with a comma-    -->
+        <!-- separated list of PTU endpoint hostnames.                       -->
         <!-- ================================================================ -->
+        <set-variable name="backend-type" value="@{
+            var ptuHosts = &quot;{ptu-backend-hosts}&quot;;
+            if (string.IsNullOrEmpty(ptuHosts)) { return &quot;payg&quot;; }
+            var host = context.Request.Url.Host.ToLower();
+            foreach (var h in ptuHosts.Split(',')) {
+                if (host == h.Trim().ToLower()) { return &quot;ptu&quot;; }
+            }
+            return &quot;payg&quot;;
+        }" />
+
+        <!-- ================================================================ -->
+        <!-- Track PTU consumption from response body usage.total_tokens     -->
+        <!-- Only tracked when the backend was actually PTU (not PAYG).      -->
+        <!-- PTU deployments don't return rate-limit headers, so we read     -->
+        <!-- actual token counts from the response body instead.             -->
+        <!-- ================================================================ -->
+        <set-variable name="actual-tokens" value="@{
+            try {
+                var body = context.Response.Body.As&lt;Newtonsoft.Json.Linq.JObject&gt;(preserveContent: true);
+                var usage = body[&quot;usage&quot;] as Newtonsoft.Json.Linq.JObject;
+                if (usage == null) { return 0; }
+                var total = usage[&quot;total_tokens&quot;];
+                return total != null ? total.Value&lt;int&gt;() : 0;
+            } catch { return 0; }
+        }" />
+
         <choose>
-            <when condition="@(context.Response.Headers.ContainsKey(&quot;x-ratelimit-remaining-tokens&quot;))">
-                <!-- Cache global PTU remaining capacity (for P2 utilization decisions) -->
+            <!-- Only track PTU consumption when backend was actually PTU AND priority <= 2 -->
+            <when condition="@((string)context.Variables[&quot;backend-type&quot;] == &quot;ptu&quot; &amp;&amp; (int)context.Variables[&quot;priority&quot;] <= 2 &amp;&amp; (int)context.Variables[&quot;actual-tokens&quot;] > 0)">
+                <!-- Accumulate global PTU consumption (for P2 utilization decisions) -->
+                <cache-lookup-value
+                    key="@(&quot;ptu-consumed-global:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
+                    variable-name="prev-ptu-global"
+                    default-value="0" />
                 <cache-store-value
-                    key="@(&quot;ptu-remaining:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
-                    value="@(context.Response.Headers.GetValueOrDefault(&quot;x-ratelimit-remaining-tokens&quot;, &quot;0&quot;))"
+                    key="@(&quot;ptu-consumed-global:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
+                    value="@{
+                        var prev = 0;
+                        int.TryParse((string)context.Variables[&quot;prev-ptu-global&quot;], out prev);
+                        return (prev + (int)context.Variables[&quot;actual-tokens&quot;]).ToString();
+                    }"
                     duration="60" />
 
-                <!-- Track this team's PTU consumption (for per-team PTU quota) -->
+                <!-- Accumulate per-team PTU consumption (for per-team PTU quota) -->
                 <cache-lookup-value
                     key="@(&quot;ptu-consumed:&quot; + (string)context.Variables[&quot;caller-name&quot;] + &quot;:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
                     variable-name="prev-ptu-consumed"
@@ -447,9 +500,7 @@
                     value="@{
                         var prev = 0;
                         int.TryParse((string)context.Variables[&quot;prev-ptu-consumed&quot;], out prev);
-                        var consumed = 0;
-                        int.TryParse(context.Response.Headers.GetValueOrDefault(&quot;x-tokens-consumed&quot;, &quot;0&quot;), out consumed);
-                        return (prev + consumed).ToString();
+                        return (prev + (int)context.Variables[&quot;actual-tokens&quot;]).ToString();
                     }"
                     duration="60" />
             </when>
@@ -462,10 +513,13 @@
             <value>@(((int)context.Variables["model-tpm"]).ToString())</value>
         </set-header>
         <set-header name="x-quota-limit-tokens" exists-action="override">
-            <value>@(((int)context.Variables["caller-monthly-quota"]).ToString())</value>
+            <value>@(((long)context.Variables["caller-monthly-quota"]).ToString())</value>
         </set-header>
         <set-header name="x-caller-name" exists-action="override">
             <value>@((string)context.Variables["caller-name"])</value>
+        </set-header>
+        <set-header name="x-caller-identity" exists-action="override">
+            <value>@((string)context.Variables.GetValueOrDefault("matched-identity", "unknown"))</value>
         </set-header>
         <set-header name="x-caller-priority" exists-action="override">
             <value>@((string)context.Variables["priority-label"])</value>
@@ -482,27 +536,71 @@
         <set-header name="x-ptu-limit" exists-action="override">
             <value>@(((int)context.Variables["model-ptu-tpm"]).ToString())</value>
         </set-header>
+        <set-header name="x-actual-tokens" exists-action="override">
+            <value>@(((int)context.Variables["actual-tokens"]).ToString())</value>
+        </set-header>
+        <set-header name="x-backend-type" exists-action="override">
+            <value>@((string)context.Variables["backend-type"])</value>
+        </set-header>
     </outbound>
 
     <on-error>
         <base />
-        <set-header name="x-error-reason" exists-action="override">
-            <value>@(context.LastError?.Reason ?? "unknown")</value>
-        </set-header>
-        <set-header name="x-error-message" exists-action="override">
-            <value>@(context.LastError?.Message ?? "unknown")</value>
-        </set-header>
-        <set-header name="x-error-section" exists-action="override">
-            <value>@(context.LastError?.Section ?? "unknown")</value>
-        </set-header>
-        <set-header name="x-error-source" exists-action="override">
-            <value>@(context.LastError?.Source ?? "unknown")</value>
-        </set-header>
-        <set-header name="x-caller-id" exists-action="override">
-            <value>@((string)context.Variables.GetValueOrDefault("caller-id", "unknown"))</value>
-        </set-header>
-        <set-header name="x-route-target" exists-action="override">
-            <value>@((string)context.Variables.GetValueOrDefault("route-target", "unknown"))</value>
-        </set-header>
+        <!-- ================================================================ -->
+        <!-- EVENT HUB: Emit quota-exceeded event when monthly quota is hit   -->
+        <!-- The logger-id placeholder is replaced at deploy time.            -->
+        <!-- If empty (no Event Hub configured), this block is skipped.       -->
+        <!-- ================================================================ -->
+        <choose>
+            <when condition="@(&quot;{eventhub-logger-id}&quot; != &quot;&quot; &amp;&amp; (context.LastError?.Message ?? &quot;&quot;).Contains(&quot;quota&quot;))">
+                <log-to-eventhub logger-id="{eventhub-logger-id}">@{
+                    var team   = (string)context.Variables.GetValueOrDefault("caller-name", "unknown");
+                    var model  = (string)context.Variables.GetValueOrDefault("requestedModel", "unknown");
+                    var msg    = context.LastError?.Message ?? "quota exceeded";
+                    return new Newtonsoft.Json.Linq.JObject(
+                        new Newtonsoft.Json.Linq.JProperty("event",     "quota_exceeded"),
+                        new Newtonsoft.Json.Linq.JProperty("team",      team),
+                        new Newtonsoft.Json.Linq.JProperty("model",     model),
+                        new Newtonsoft.Json.Linq.JProperty("message",   msg),
+                        new Newtonsoft.Json.Linq.JProperty("timestamp", DateTime.UtcNow.ToString("o")),
+                        new Newtonsoft.Json.Linq.JProperty("requestId", context.RequestId.ToString())
+                    ).ToString();
+                }</log-to-eventhub>
+            </when>
+        </choose>
+        <return-response>
+            <set-status code="@(context.Response.StatusCode)" reason="@(context.Response.StatusReason)" />
+            <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+            </set-header>
+            <set-header name="x-error-reason" exists-action="override">
+                <value>@(context.LastError?.Reason ?? "unknown")</value>
+            </set-header>
+            <set-header name="x-error-message" exists-action="override">
+                <value>@(context.LastError?.Message ?? "unknown")</value>
+            </set-header>
+            <set-header name="x-error-section" exists-action="override">
+                <value>@(context.LastError?.Section ?? "unknown")</value>
+            </set-header>
+            <set-header name="x-error-source" exists-action="override">
+                <value>@(context.LastError?.Source ?? "unknown")</value>
+            </set-header>
+            <set-header name="x-caller-id" exists-action="override">
+                <value>@((string)context.Variables.GetValueOrDefault("caller-id", "unknown"))</value>
+            </set-header>
+            <set-header name="x-route-target" exists-action="override">
+                <value>@((string)context.Variables.GetValueOrDefault("route-target", "unknown"))</value>
+            </set-header>
+            <set-body>@{
+                var reason = context.LastError?.Reason ?? "unknown";
+                var message = context.LastError?.Message ?? "An error occurred processing the request.";
+                return new Newtonsoft.Json.Linq.JObject(
+                    new Newtonsoft.Json.Linq.JProperty("error", new Newtonsoft.Json.Linq.JObject(
+                        new Newtonsoft.Json.Linq.JProperty("code", reason),
+                        new Newtonsoft.Json.Linq.JProperty("message", message)
+                    ))
+                ).ToString();
+            }</set-body>
+        </return-response>
     </on-error>
 </policies>

@@ -6,6 +6,18 @@ infra:
   module: main
 
 hooks:
+  preprovision:
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host "Pre-provisioning steps..."
+        azd env set CURRENT_USER_OBJECT_ID (az ad signed-in-user show --query id -o tsv)
+    posix:
+      shell: sh
+      run: |
+        echo "Pre-provisioning steps..."
+        azd env set CURRENT_USER_OBJECT_ID $(az ad signed-in-user show --query id -o tsv)
+
   postprovision:
     windows:
       shell: pwsh

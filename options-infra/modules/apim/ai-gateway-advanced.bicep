@@ -47,6 +47,12 @@ param ptuUtilizationThreshold string = '0.7'
 @allowed(['Basicv2', 'Standardv2', 'Premiumv2'])
 param apimSku string = 'Basicv2'
 
+@description('Event Hub namespace name for quota event logging (managed identity). Leave empty to disable.')
+param eventHubNamespaceName string = ''
+
+@description('Event Hub name for quota events')
+param eventHubName string = ''
+
 // -- Foundry Connection Parameters (optional) ---------------------------------
 
 @description('Foundry account name (for creating per-project connections). Leave empty to skip connections.')
@@ -63,6 +69,12 @@ param staticModels ModelType[] = []
 var createFoundryConnections = !empty(aiFoundryName)
 var connectionPerProject = createFoundryConnections && !empty(aiFoundryProjectNames)
 
+// PTU endpoint hostnames (for backend-type detection in policy)
+var ptuEndpointHosts = join(
+  map(filter(foundryInstances, i => i.isPtu), i => split(replace(i.endpoint, 'https://', ''), '/')[0]),
+  ','
+)
+
 // Subscriptions are only needed for Foundry connections
 var subscriptions = connectionPerProject
   ? map(aiFoundryProjectNames, (projectName) => {
@@ -70,10 +82,12 @@ var subscriptions = connectionPerProject
       displayName: 'Subscription for ${projectName} in ${aiFoundryName}'
     })
   : createFoundryConnections
-      ? [{
-          name: 'sub-foundry-${aiFoundryName}'
-          displayName: 'Default Subscription for ${aiFoundryName}'
-        }]
+      ? [
+          {
+            name: 'sub-foundry-${aiFoundryName}'
+            displayName: 'Default Subscription for ${aiFoundryName}'
+          }
+        ]
       : []
 
 // ============================================================================
@@ -122,9 +136,30 @@ module contractStorage 'advanced/contract-storage.bicep' = {
 }
 
 // ============================================================================
-// -- APIM Named Values (PTU config)
+// -- Event Hub Logger (optional — for quota-exceeded notifications)
 // ============================================================================
 var apimName = 'apim-${resourceToken}'
+var enableEventHub = !empty(eventHubNamespaceName) && !empty(eventHubName)
+
+resource eventHubLogger 'Microsoft.ApiManagement/service/loggers@2024-06-01-preview' = if (enableEventHub) {
+  parent: apimRef
+  name: 'quota-eventhub-logger'
+  dependsOn: [apimService]
+  properties: {
+    loggerType: 'azureEventHub'
+    description: 'Event Hub logger for quota-exceeded events (managed identity)'
+    credentials: {
+      endpointAddress: 'sb://${eventHubNamespaceName}.servicebus.windows.net'
+      identityClientId: 'SystemAssigned'
+      name: eventHubName
+    }
+    isBuffered: false
+  }
+}
+
+// ============================================================================
+// -- APIM Named Values (PTU config)
+// ============================================================================
 
 resource apimRef 'Microsoft.ApiManagement/service@2024-06-01-preview' existing = {
   name: apimName
@@ -146,20 +181,16 @@ resource ptuThresholdNamedValue 'Microsoft.ApiManagement/service/namedValues@202
 // -- Priority Routing Policy
 // ============================================================================
 var policyXml = replace(
-  replace(
-    loadTextContent('advanced/policy-priority.xml'),
-    '{tenant-id}',
-    subscription().tenantId
-  ),
+  replace(loadTextContent('advanced/policy-priority.xml'), '{tenant-id}', subscription().tenantId),
   '{contracts-blob-url}',
   contractStorage.outputs.blobUrl
 )
 
-var finalPolicyXml = replace(
-  policyXml,
-  '{ptu-utilization-threshold}',
-  '{{ptu-utilization-threshold}}'
-)
+var policyWithThreshold = replace(policyXml, '{ptu-utilization-threshold}', '{{ptu-utilization-threshold}}')
+
+var finalPolicyXml = replace(policyWithThreshold, '{eventhub-logger-id}', enableEventHub ? 'quota-eventhub-logger' : '')
+
+var policyWithBackendHosts = replace(finalPolicyXml, '{ptu-backend-hosts}', ptuEndpointHosts)
 
 // ============================================================================
 // -- Inference API (with priority routing policy)
@@ -176,12 +207,12 @@ module inferenceApi 'v2/inference-api.bicep' = {
     contractStorage
   ]
   params: {
-    policyXml: finalPolicyXml
+    policyXml: policyWithBackendHosts
     apiManagementName: apimService.outputs.name
     apimLoggerId: apimService.outputs.loggerId
     aiServicesConfig: []
     inferenceAPIType: 'AzureOpenAI'
-    inferenceAPIPath: 'inference/openai'
+    inferenceAPIPath: 'inference'
     configureCircuitBreaker: false
     resourceSuffix: resourceToken
     enableModelDiscovery: true
@@ -235,6 +266,26 @@ resource configViewerPolicy 'Microsoft.ApiManagement/service/apis/operations/pol
   }
 }
 
+resource configRefreshOperation 'Microsoft.ApiManagement/service/apis/operations@2024-06-01-preview' = {
+  parent: configViewerApi
+  name: 'refresh-config'
+  properties: {
+    displayName: 'Refresh Contract Cache'
+    method: 'POST'
+    urlTemplate: '/config/refresh'
+    description: 'Clears the cached contracts blob so the next request reloads from storage'
+  }
+}
+
+resource configRefreshPolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2024-06-01-preview' = {
+  parent: configRefreshOperation
+  name: 'policy'
+  properties: {
+    format: 'rawxml'
+    value: '<policies><inbound><base /><cache-remove-value key="contracts-blob-cache" /><return-response><set-status code="200" reason="OK" /><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>{"status": "ok", "message": "Contract cache cleared. Next request will reload from blob storage."}</set-body></return-response></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
+  }
+}
+
 // ============================================================================
 // -- Foundry Connections (per-project, identity-based) — optional
 // ============================================================================
@@ -247,7 +298,10 @@ module aiGatewayProjectConnectionDynamic '../ai/connection-apim-gateway.bicep' =
       connectionName: 'apim-${resourceToken}-dynamic-for-${projectName}'
       apimResourceId: apimService.outputs.id
       apiName: inferenceApi.outputs.apiName
-      apimSubscriptionName: first(filter(apimService.outputs.apimSubscriptions, (sub) => contains(sub.name, projectName))).name
+      apimSubscriptionName: first(filter(
+        apimService.outputs.apimSubscriptions,
+        (sub) => contains(sub.name, projectName)
+      )).name
       isSharedToAll: false
       listModelsEndpoint: '/deployments'
       getModelEndpoint: '/deployments/{deploymentName}'
@@ -267,7 +321,10 @@ module aiGatewayProjectConnectionStatic '../ai/connection-apim-gateway.bicep' = 
       connectionName: 'apim-${resourceToken}-static-for-${projectName}'
       apimResourceId: apimService.outputs.id
       apiName: inferenceApi.outputs.apiName
-      apimSubscriptionName: first(filter(apimService.outputs.apimSubscriptions, (sub) => contains(sub.name, projectName))).name
+      apimSubscriptionName: first(filter(
+        apimService.outputs.apimSubscriptions,
+        (sub) => contains(sub.name, projectName)
+      )).name
       isSharedToAll: false
       staticModels: staticModels
       inferenceAPIVersion: '2025-03-01-preview'

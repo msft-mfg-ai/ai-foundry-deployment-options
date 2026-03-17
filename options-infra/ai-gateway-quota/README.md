@@ -264,16 +264,69 @@ To change a budget, update the `monthlyQuota` value in `entra/entra-apps.bicep` 
 
 ### Response Headers
 
-Every successful response includes:
+#### Successful Responses (200)
+
+Every successful response includes these headers for observability:
+
+| Header | Description | Example Values |
+|--------|-------------|----------------|
+| `x-caller-name` | Contract name the caller was matched to | `Team Alpha`, `Team Beta`, `Team Gamma` |
+| `x-caller-identity` | The JWT claim value that matched the caller's contract identity | `bb90b0d2-...` (app ID), `unknown` if unmatched |
+| `x-caller-priority` | Caller's priority label from the contract | `production`, `standard`, `batch` |
+| `x-route-target` | Backend pool the request was routed to | `pool` |
+| `x-ratelimit-limit-tokens` | Per-model TPM limit from the contract | `500`, `400`, `300` |
+| `x-ratelimit-remaining-tokens` | Remaining tokens in the current per-minute window (set by `llm-token-limit`) | `484`, `0` |
+| `x-tokens-consumed` | Tokens consumed by this request (prompt estimate + completion) | `16`, `42` |
+| `x-quota-limit-tokens` | Monthly token quota from the contract | `5000`, `3000`, `1000` |
+| `x-quota-remaining-tokens` | Remaining tokens in the current monthly quota period (set by `llm-token-limit`) | `4984`, `0` |
+| `x-ptu-utilization` | Global PTU utilization for the requested model (consumed / capacity, 60s window) | `0.0%`, `25.6%`, `100.0%` |
+| `x-ptu-consumed` | Per-team PTU tokens consumed in the current 60s window | `0`, `176`, `300` |
+| `x-ptu-limit` | Per-team PTU TPM allocation from the contract (`0` = no PTU access) | `300`, `200`, `0` |
+| `x-actual-tokens` | Actual `usage.total_tokens` from the backend response body | `16`, `42` |
+
+#### Rate Limit / Quota Responses (429)
+
+When per-minute TPM or monthly quota is exceeded:
+
+| Header | Description | Example Values |
+|--------|-------------|----------------|
+| `x-ratelimit-remaining-tokens` | `0` when TPM exhausted | `0` |
+| `x-quota-remaining-tokens` | `0` when monthly quota exhausted | `0` |
+
+The response body follows the standard Azure OpenAI error format from the `llm-token-limit` policy.
+
+#### Authorization Errors (401 / 403)
+
+| Status | Cause | Body |
+|--------|-------|------|
+| **401** | Invalid or missing JWT token (`validate-azure-ad-token` failure) | `{"error": {"code": "...", "message": "..."}}` |
+| **403** | Caller not found in any contract (`caller_not_authorized`) | `{"error": {"code": "caller_not_authorized", "message": "..."}}` |
+| **403** | Model not in caller's contract (`model_not_authorized`) | `{"error": {"code": "model_not_authorized", "message": "... Allowed: gpt-4.1-mini, gpt-oss-120b"}}` |
+
+#### Error Responses (on-error handler)
+
+When the policy encounters an unhandled error, additional debug headers are included:
+
+| Header | Description | Example Values |
+|--------|-------------|----------------|
+| `x-error-reason` | APIM error reason code | `TokenValidationFailed`, `OperationNotFound` |
+| `x-error-message` | Detailed error message | `Unauthorized. A valid Entra ID bearer token is required.` |
+| `x-error-section` | Policy section where the error occurred | `inbound`, `backend`, `outbound` |
+| `x-error-source` | Policy element that caused the error | `validate-azure-ad-token`, `forward-request` |
+| `x-caller-id` | Best-effort caller identifier (may be `unknown` if JWT parsing failed) | `bb90b0d2-...`, `unknown` |
+| `x-route-target` | Route target at time of error (may be `unknown` if not yet determined) | `pool`, `unknown` |
+
+#### Request Headers (forwarded to backend)
+
+These headers are set on the request before forwarding to the backend, useful for backend-side logging:
 
 | Header | Description |
 |--------|-------------|
-| `x-ratelimit-remaining-tokens` | Remaining TPM quota for this minute |
-| `x-ratelimit-limit-tokens` | TPM limit for caller's tier |
-| `x-quota-remaining-tokens` | Remaining monthly token quota |
-| `x-quota-limit-tokens` | Monthly token quota limit |
-| `x-caller-tier` | Caller's tier (gold/silver/bronze) |
-| `x-caller-name` | Caller's display name |
+| `x-caller-id` | Best available caller identifier from JWT (`azp` > `appid` > `xms_mirid` > `oid`) |
+| `x-caller-identity` | Matched identity claim value |
+| `x-caller-name` | Contract name |
+| `x-caller-priority` | Priority label (`production` / `standard` / `batch`) |
+| `x-route-target` | Backend pool name |
 
 ## Dashboard
 

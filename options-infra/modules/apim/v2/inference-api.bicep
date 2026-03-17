@@ -143,7 +143,7 @@ resource api 'Microsoft.ApiManagement/service/apis@2024-06-01-preview' = {
       header: 'api-key'
       query: 'api-key'
     }
-    subscriptionRequired: true
+    subscriptionRequired: false
     type: 'http'
     value: apiDefinition
   }
