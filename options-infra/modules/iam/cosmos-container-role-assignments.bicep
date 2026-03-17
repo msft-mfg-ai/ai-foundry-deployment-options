@@ -6,6 +6,10 @@ param cosmosAccountName string
 @description('Project name')
 param principalId string
 
+param projectWorkspaceId string
+
+// var userThreadName = '${projectWorkspaceId}-thread-message-store'
+
 resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-12-01-preview' existing = {
   name: cosmosAccountName
   scope: resourceGroup()
@@ -21,7 +25,7 @@ var accountScope = '/subscriptions/${subscription().subscriptionId}/resourceGrou
 
 resource containerRoleAssignmentUserContainer 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2022-05-15' = {
   parent: cosmosAccount
-  name: guid(cosmosAccountName, roleDefinitionId, principalId, accountScope)
+  name: guid(projectWorkspaceId, cosmosAccountName, roleDefinitionId, principalId, accountScope)
   properties: {
     principalId: principalId
     roleDefinitionId: roleDefinitionId

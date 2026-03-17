@@ -156,6 +156,7 @@ module cosmosContainerRoleAssignments '../iam/cosmos-container-role-assignments.
   scope: resourceGroup(aiDependencies.cosmosDB.resourceGroupName)
   params: {
     cosmosAccountName: aiDependencies.cosmosDB.name
+    projectWorkspaceId: formatProjectWorkspaceId.outputs.FOUNDRY_PROJECT_WORKSPACE_ID
     principalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
   }
   dependsOn: [
