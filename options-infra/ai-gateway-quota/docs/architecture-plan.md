@@ -4,8 +4,9 @@
 
 A customer deploys a **PTU (Provisioned Throughput Units)** Azure OpenAI deployment (e.g., `gpt-5.2-chat`). Multiple internal teams subscribe to this model with different priorities:
 
-- **Priority 1** — Production use cases (Dev Team A prod, Dev Team B prod)
-- **Priority 2** — Dev/Test use cases (Dev Team A dev, Dev Team B test)
+- **Priority 1** — Production use cases (Dev Team A production, Dev Team B production)
+- **Priority 2** — Standard use cases (Dev Team A standard, Dev Team B standard)
+- **Priority 3** — Economy use cases (batch processing, experiments)
 
 **Goals:**
 1. **Maximize PTU utilization** — PTU is pre-paid; unused capacity is wasted money
@@ -546,8 +547,9 @@ Access Contract JSON → Bicep Deployment → APIM Product + Product Policy + Su
 **How it works:** Each priority tier gets an APIM Product with a fixed `llm-token-limit`. Both share the same backend pool (PTU priority=1, PAYG priority=2). Dev/test gets a lower TPM allocation, effectively reserving more PTU headroom for prod.
 
 ```
-Prod (P1):     TPM = 80% of PTU capacity → PTU → PAYG spillover
-Dev/Test (P2): TPM = 30% of PTU capacity → PTU → PAYG spillover
+Production (P1):  TPM = 80% of PTU capacity → PTU → PAYG spillover
+Standard (P2):    TPM = 30% of PTU capacity → PTU → PAYG spillover
+Economy (P3):     → PAYG only (never touches PTU)
 ```
 
 **PTU utilization scenario (the problem):**
@@ -562,8 +564,8 @@ Dev/Test (P2): TPM = 30% of PTU capacity → PTU → PAYG spillover
 **How it works:** Same as Option 1, but with aggressive oversubscription. Give both tiers high limits (totaling >>100% of PTU), relying on the backend pool circuit breaker + PAYG spillover to handle contention.
 
 ```
-Prod (P1):     TPM = 100% of PTU capacity → PTU → PAYG spillover
-Dev/Test (P2): TPM = 100% of PTU capacity → PTU → PAYG spillover
+Production (P1):  TPM = 100% of PTU capacity → PTU → PAYG spillover
+Standard (P2):    TPM = 100% of PTU capacity → PTU → PAYG spillover
 ```
 
 **Why this is better for utilization but NOT for priority:**
@@ -579,7 +581,7 @@ Dev/Test (P2): TPM = 100% of PTU capacity → PTU → PAYG spillover
 1. Identifies subscriber priority from Product/Subscription context
 2. Tracks PTU utilization state in APIM cache (via `x-ratelimit-remaining-tokens` response headers)
 3. Routes Priority 1 → always PTU first, PAYG on 429
-4. Routes Priority 2 → PTU only when cached utilization < threshold (e.g., 70%), else direct to PAYG
+4. Routes Priority 2 → PTU only when cached utilization < threshold (e.g., 50%), else direct to PAYG
 
 ```
                     ┌─────────────────────────────────────────┐
@@ -587,9 +589,9 @@ Dev/Test (P2): TPM = 100% of PTU capacity → PTU → PAYG spillover
                     │                                          │
   P1 (Prod) ───────►  Always → PTU ──429──► PAYG              │
                     │                                          │
-  P2 (Dev/Test) ──►  Check cached utilization:                │
-                    │  < 70% → PTU ──429──► PAYG               │
-                    │  ≥ 70% → Direct to PAYG                  │
+  P2 (Standard) ──►  Check cached utilization:                │
+                    │  < 50% → PTU ──429──► PAYG               │
+                    │  ≥ 50% → Direct to PAYG                  │
                     └─────────────────────────────────────────┘
 ```
 
@@ -1117,15 +1119,15 @@ This pattern depends on **split-horizon DNS** (also called split DNS or split-br
 **Phase 1 — Citadel Access Contracts (Option 1)**
 - Deploy immediately using proven Citadel IaC pattern
 - Set initial TPM allocations with moderate oversubscription:
-  - Prod: 90% of PTU TPM
-  - Dev/Test: 50% of PTU TPM (total: 140% — safe oversubscription)
+  - Production: 90% of PTU TPM
+  - Standard: 50% of PTU TPM (total: 140% — safe oversubscription)
 - Monitor actual usage via App Insights token metrics for 2-4 weeks
 - Track PTU utilization % and PAYG spillover rate per product
 
 **Phase 2 — Evaluate and tune (week 2-4)**
 - If PTU utilization > 70% and prod PAYG spillover < 5% → **stay on Option 1** (it's working)
-- If PTU utilization < 60% → increase dev/test TPM allocation
-- If prod frequently spills to PAYG while dev/test doesn't → decrease dev/test, increase prod
+- If PTU utilization < 60% → increase standard TPM allocation
+- If prod frequently spills to PAYG while standard doesn't → decrease standard, increase prod
 
 **Phase 3 — Upgrade to Option 3 if needed**
 - If monitoring shows PTU utilization is consistently low AND you can't solve it with allocation tuning
@@ -1155,7 +1157,8 @@ Create an ADR covering the chosen phased approach, comparison table, and rationa
 ### Todo 2: Create Citadel access contracts
 Define access contract JSONs for each subscriber tier:
 - `prod-priority-contract.json` — P1, higher TPM (90% of PTU)
-- `devtest-priority-contract.json` — P2, moderate TPM (50% of PTU)
+- `standard-priority-contract.json` — P2, moderate TPM (50% of PTU)
+- `economy-priority-contract.json` — P3, PAYG only
 - Include model access, capacity management, and usage tracking
 - Reference: `ai-hub-gateway-solution-accelerator/bicep/infra/citadel-access-contracts/`
 
@@ -1183,7 +1186,7 @@ Bicep backend pool config:
 
 ## Key Configuration Parameters
 
-| Parameter | Description | Prod (P1) | Dev/Test (P2) |
+| Parameter | Description | Production (P1) | Standard (P2) |
 |-----------|-------------|-----------|----------------|
 | `tokensPerMinute` | TPM limit per subscription | 90% of PTU TPM | 50% of PTU TPM |
 | `tokenQuota` | Monthly token budget | Higher/unlimited | Lower |

@@ -6,17 +6,14 @@ using 'main.bicep'
 // Each instance is PTU-only or paygo-only (do NOT mix).
 // Deployment names MUST match modelName (enforced — no deploymentName override).
 //
-// Priority controls failover order within each model's pool:
-//   1 = Local-region PTU (first choice)
-//   2 = Remote-region PTU (cross-region failover)
-//   3 = Paygo (cost fallback, co-located with APIM)
+// `isPtu` determines pool ordering automatically (PTU=1, PAYG=2).
 //
 // Circuit breaker trips on 429 → future requests go to next priority tier.
 // APIM policy handles instant retry for the current request.
 // ============================================================================
 
 param foundryInstances = [
-  // -- PTU instance (eastus2) — priority 1 (local PTU) ------------------------
+  // -- PTU instance (eastus2) ------------------------------------------------
   {
     name: 'foundry-eastus2-ptu'
     resourceId: readEnvironmentVariable(
@@ -26,12 +23,11 @@ param foundryInstances = [
     endpoint: readEnvironmentVariable('FOUNDRY_PTU_ENDPOINT', 'https://foundry-eastus-ptu.openai.azure.com/')
     location: 'eastus2'
     isPtu: true
-    priority: 1
     deployments: [
       { modelName: 'gpt-4.1-mini', ptuCapacityTpm: 2000 }
     ]
   }
-  // -- Paygo instance (eastus2) — priority 3 (cost fallback, co-located) ------
+  // -- Paygo instance (eastus2) ----------------------------------------------
   {
     name: 'foundry-eastus2-paygo'
     resourceId: readEnvironmentVariable(
@@ -41,7 +37,6 @@ param foundryInstances = [
     endpoint: readEnvironmentVariable('FOUNDRY_ONE_ENDPOINT', 'https://foundry-eastus.openai.azure.com/')
     location: 'eastus2'
     isPtu: false
-    priority: 3
     deployments: [
       { modelName: 'gpt-4.1-mini' }
       { modelName: 'gpt-4.1' }
@@ -49,7 +44,7 @@ param foundryInstances = [
       { modelName: 'gpt-oss-120b' }
     ]
   }
-  // -- Paygo instance (westus) — priority 3 (second paygo region) -------------
+  // -- Paygo instance (westus) -----------------------------------------------
   {
     name: 'foundry-westus-paygo'
     resourceId: readEnvironmentVariable(
@@ -59,7 +54,6 @@ param foundryInstances = [
     endpoint: readEnvironmentVariable('FOUNDRY_TWO_ENDPOINT', 'https://foundry-westus.openai.azure.com/')
     location: 'westus'
     isPtu: false
-    priority: 3
     deployments: [
       { modelName: 'gpt-4.1-mini' }
       { modelName: 'gpt-oss-120b' }
@@ -84,7 +78,7 @@ param foundryInstances = [
 // Note: azp/appid are treated as equivalent during matching (v1 ↔ v2 token fallback).
 // Matching is prefix-based, so xms_mirid can match all MIs in a subscription/resource group.
 //
-// Priority: 1=Production (PTU first), 2=Standard (PTU when idle), 3=Batch (PAYG only)
+// Priority: 1=Production (always PTU, 429→PAYG failover), 2=Standard (PTU when <50%), 3=Economy (always PAYG)
 // models[].tpm: per-model TPM (hard 429 limit, counter-key = azp:model)
 // models[].ptuTpm: per-model PTU allocation (soft limit, overflow → PAYG)
 // monthlyQuota: general cost cap across all models
@@ -100,18 +94,18 @@ var currentUser = readEnvironmentVariable('CURRENT_USER_OBJECT_ID', '') != ''
 
 param accessContracts = [
   {
-    name: 'Team Alpha'
+    name: 'Team Alpha2'
     identities: union(teamAlpha, currentUser)
     priority: 1
     models: [
-      { name: 'gpt-4.1-mini', tpm: 500, ptuTpm: 300 }
+      { name: 'gpt-4.1-mini', tpm: 1000, ptuTpm: 100 }
       { name: 'gpt-oss-120b', tpm: 100 }
     ]
-    monthlyQuota: 5000
+    monthlyQuota: 7000
     environment: 'PROD'
   }
   {
-    name: 'Team Beta'
+    name: 'Team Beta2'
     identities: [] // auto-create Entra app
     priority: 2
     models: [
@@ -122,7 +116,7 @@ param accessContracts = [
     environment: 'DEV'
   }
   {
-    name: 'Team Gamma'
+    name: 'Team Gamma2'
     identities: [] // auto-create Entra app
     priority: 3
     models: [
@@ -138,4 +132,4 @@ param accessContracts = [
 // Routing Configuration
 // ============================================================================
 
-param ptuUtilizationThreshold = '0.7' // P2 → PTU when utilization < 70%
+param ptuUtilizationThreshold = '0.5' // P2 → PTU when utilization < 50%

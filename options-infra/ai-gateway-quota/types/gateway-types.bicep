@@ -40,7 +40,7 @@ type foundryInstanceType = {
   @description('Model deployments on this instance. Deployment name = modelName (convention enforced).')
   deployments: foundryDeploymentType[]
 
-  @description('Priority in backend pool (1=local PTU, 2=remote PTU, 3=paygo). Lower = preferred. Within a pool, APIM tries all backends at priority N before moving to priority N+1.')
+  @description('Priority in backend pool (1=PTU, 2=PAYG). Lower = preferred. Within a pool, APIM tries all backends at priority N before moving to priority N+1.')
   priority: int?
 
   @description('Weight for load balancing within the same priority tier')
@@ -85,7 +85,7 @@ type accessContractType = {
   @description('Identity matchers — each entry specifies a JWT claim name and a value to prefix-match against it. Multiple identities can share a single contract (e.g., an app registration + a managed identity for the same team).')
   identities: identityType[]
 
-  @description('Routing priority: 1=Production (PTU first), 2=Standard (PTU when idle), 3=Batch (PAYG only)')
+  @description('Routing priority: 1=Production (always PTU, 429→PAYG failover), 2=Standard (PTU when idle <50%), 3=Economy (always PAYG)')
   @minValue(1)
   @maxValue(3)
   priority: int

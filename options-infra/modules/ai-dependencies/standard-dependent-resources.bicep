@@ -134,7 +134,7 @@ resource existingAzureStorageAccount 'Microsoft.Storage/storageAccounts@2023-05-
 }
 
 // Some regions doesn't support Standard Zone-Redundant storage, need to use Geo-redundant storage
-param noZRSRegions array = ['southindia', 'westus']
+param noZRSRegions array = ['southindia', 'westus', 'northcentralus']
 param sku object = contains(noZRSRegions, location) ? { name: 'Standard_GRS' } : { name: 'Standard_ZRS' }
 
 // Storage creation

@@ -19,14 +19,14 @@ var dashboardName = 'apim-quota-dashboard-${toLower(uniqueString(resourceGroup()
 
 // Helper: join LLM logs with gateway logs to get caller identity
 // ApiManagementGatewayLlmLog has: PromptTokens, CompletionTokens, TotalTokens, DeploymentName, ModelName
-// ApiManagementGatewayLogs has: BackendRequestHeaders containing x-caller-name, x-caller-tier, x-caller-azp
+// ApiManagementGatewayLogs has: BackendRequestHeaders containing x-caller-name, x-caller-priority, x-caller-id
 
 var kqlQuotaOverview = '''
 let callerLogs = ApiManagementGatewayLogs
-| where BackendRequestHeaders has "x-caller-tier"
+| where BackendRequestHeaders has "x-caller-priority"
 | extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(BackendRequestHeaders))
-| extend CallerTier = extract(@'"x-caller-tier":"([^"]+)"', 1, tostring(BackendRequestHeaders))
-| project CorrelationId, CallerName, CallerTier;
+| extend CallerPriority = extract(@'"x-caller-priority":"([^"]+)"', 1, tostring(BackendRequestHeaders))
+| summarize CallerName = take_any(CallerName), CallerPriority = take_any(CallerPriority) by CorrelationId;
 ApiManagementGatewayLlmLog
 | where TimeGenerated >= startofmonth(now())
 | join kind=leftouter callerLogs on CorrelationId
@@ -34,15 +34,9 @@ ApiManagementGatewayLlmLog
     MonthlyTokens = sum(TotalTokens),
     PromptTokens = sum(PromptTokens),
     CompletionTokens = sum(CompletionTokens),
-    Requests = dcount(CorrelationId),
-    TierLimit = max(case(
-        CallerTier == "gold", 200000,
-        CallerTier == "silver", 50000,
-        CallerTier == "bronze", 10000,
-        0))
-    by CallerName, CallerTier
-| extend TPM_Limit = TierLimit
-| project CallerName, CallerTier, MonthlyTokens, PromptTokens, CompletionTokens, Requests, TPM_Limit
+    Requests = dcount(CorrelationId)
+    by CallerName, CallerPriority
+| project CallerName, CallerPriority, MonthlyTokens, PromptTokens, CompletionTokens, Requests
 | order by MonthlyTokens desc
 '''
 
@@ -50,7 +44,7 @@ var kqlTokenUsageOverTime = '''
 let callerLogs = ApiManagementGatewayLogs
 | where BackendRequestHeaders has "x-caller-name"
 | extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(BackendRequestHeaders))
-| project CorrelationId, CallerName;
+| summarize CallerName = take_any(CallerName) by CorrelationId;
 ApiManagementGatewayLlmLog
 | where DeploymentName != ""
 | join kind=leftouter callerLogs on CorrelationId
@@ -61,13 +55,19 @@ ApiManagementGatewayLlmLog
 var kqlRateLimitEvents = '''
 ApiManagementGatewayLogs
 | where ResponseCode == 429
-| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(BackendRequestHeaders))
-| extend CallerTier = extract(@'"x-caller-tier":"([^"]+)"', 1, tostring(BackendRequestHeaders))
+| extend CallerName = coalesce(
+    extract(@'"x-caller-name":"([^"]+)"', 1, tostring(BackendRequestHeaders)),
+    extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
+  )
+| extend CallerPriority = coalesce(
+    extract(@'"x-caller-priority":"([^"]+)"', 1, tostring(BackendRequestHeaders)),
+    extract(@'"x-caller-priority":"([^"]+)"', 1, tostring(ResponseHeaders))
+  )
 | summarize
     ThrottledRequests = count(),
     FirstThrottle = min(TimeGenerated),
     LastThrottle = max(TimeGenerated)
-    by CallerName, CallerTier
+    by CallerName, CallerPriority
 | order by ThrottledRequests desc
 '''
 
@@ -75,7 +75,7 @@ var kqlModelUsageByCaller = '''
 let callerLogs = ApiManagementGatewayLogs
 | where BackendRequestHeaders has "x-caller-name"
 | extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(BackendRequestHeaders))
-| project CorrelationId, CallerName;
+| summarize CallerName = take_any(CallerName) by CorrelationId;
 ApiManagementGatewayLlmLog
 | where DeploymentName != ""
 | join kind=leftouter callerLogs on CorrelationId
@@ -92,8 +92,8 @@ var kqlDailyUsageByCaller = '''
 let callerLogs = ApiManagementGatewayLogs
 | where BackendRequestHeaders has "x-caller-name"
 | extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(BackendRequestHeaders))
-| extend CallerTier = extract(@'"x-caller-tier":"([^"]+)"', 1, tostring(BackendRequestHeaders))
-| project CorrelationId, CallerName, CallerTier;
+| extend CallerPriority = extract(@'"x-caller-priority":"([^"]+)"', 1, tostring(BackendRequestHeaders))
+| summarize CallerName = take_any(CallerName), CallerPriority = take_any(CallerPriority) by CorrelationId;
 ApiManagementGatewayLlmLog
 | join kind=leftouter callerLogs on CorrelationId
 | summarize
@@ -101,14 +101,17 @@ ApiManagementGatewayLlmLog
     PromptTokens = sum(PromptTokens),
     CompletionTokens = sum(CompletionTokens),
     Requests = dcount(CorrelationId)
-by bin(TimeGenerated, 1d), CallerName, CallerTier
+by bin(TimeGenerated, 1d), CallerName, CallerPriority
 | order by TimeGenerated desc, TotalTokens desc
 '''
 
 var kqlErrorBreakdown = '''
 ApiManagementGatewayLogs
 | where ResponseCode >= 400
-| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(BackendRequestHeaders))
+| extend CallerName = coalesce(
+    extract(@'"x-caller-name":"([^"]+)"', 1, tostring(BackendRequestHeaders)),
+    extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
+  )
 | summarize Count = count() by ResponseCode, CallerName, bin(TimeGenerated, 1h)
 | order by TimeGenerated desc
 '''
@@ -117,7 +120,7 @@ var kqlMonthlyBudgetBurnDown = '''
 let callerLogs = ApiManagementGatewayLogs
 | where BackendRequestHeaders has "x-caller-name"
 | extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(BackendRequestHeaders))
-| project CorrelationId, CallerName;
+| summarize CallerName = take_any(CallerName) by CorrelationId;
 ApiManagementGatewayLlmLog
 | where TimeGenerated >= startofmonth(now())
 | join kind=leftouter callerLogs on CorrelationId
@@ -153,7 +156,7 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
               inputs: []
               settings: {
                 content: {
-                  content: '# 🔒 AI Gateway - Quota Tiers Dashboard\n\nMonitor per-caller token usage, TPM quota consumption, and rate limit events.\nTiers: **Gold** (200K TPM) · **Silver** (50K TPM) · **Bronze** (10K TPM)\n\nData sourced from `ApiManagementGatewayLlmLog` joined with `ApiManagementGatewayLogs` for caller identification.'
+                  content: '# 🔒 AI Gateway - Quota Tiers Dashboard\n\nMonitor per-caller token usage, quota consumption, and rate limit events.\nPriority Levels: **Production** (P1) · **Standard** (P2) · **Economy** (P3)\n\nData sourced from `ApiManagementGatewayLlmLog` joined with `ApiManagementGatewayLogs` for caller identification.'
                   title: ''
                   subtitle: ''
                   markdownSource: 1
@@ -172,7 +175,7 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
                 { name: 'TimeRange', value: 'P30D', isOptional: true }
                 { name: 'PartId', value: 'quota-overview', isOptional: true }
                 { name: 'PartTitle', value: '📊 Caller Quota Overview (This Month)', isOptional: true }
-                { name: 'PartSubTitle', value: 'Monthly token usage per caller with tier and TPM limit', isOptional: true }
+                { name: 'PartSubTitle', value: 'Monthly token usage per caller with priority level', isOptional: true }
                 { name: 'Query', value: kqlQuotaOverview, isOptional: true }
                 { name: 'ControlType', value: 'AnalyticsGrid', isOptional: true }
                 { name: 'resourceTypeMode', isOptional: true }
@@ -315,7 +318,7 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
                 { name: 'TimeRange', value: 'P30D', isOptional: true }
                 { name: 'PartId', value: 'daily-usage', isOptional: true }
                 { name: 'PartTitle', value: '📊 Daily Usage by Caller', isOptional: true }
-                { name: 'PartSubTitle', value: 'Daily token breakdown with tier info', isOptional: true }
+                { name: 'PartSubTitle', value: 'Daily token breakdown with priority info', isOptional: true }
                 { name: 'Query', value: kqlDailyUsageByCaller, isOptional: true }
                 { name: 'ControlType', value: 'AnalyticsGrid', isOptional: true }
                 { name: 'resourceTypeMode', isOptional: true }
@@ -377,7 +380,7 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
               inputs: []
               settings: {
                 content: {
-                  content: '## ⚙️ Caller Tier Configuration\n\nCurrent mapping (from APIM Named Value `caller-tier-mapping`):\n```json\n${callerTierMapping}\n```'
+                  content: '## ⚙️ Caller Priority Configuration\n\nCurrent mapping (from APIM Named Value `caller-tier-mapping`):\n```json\n${callerTierMapping}\n```'
                   title: ''
                   subtitle: ''
                   markdownSource: 1

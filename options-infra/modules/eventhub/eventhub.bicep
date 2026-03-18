@@ -20,8 +20,6 @@ param partitionCount int = 1
 param hubName string = 'quota-events'
 param namespaceName string = 'quota-events-ns-${resourceSuffix}'
 
-param apimPrincipalId string
-
 // -- Namespace ----------------------------------------------------------------
 module namespace 'br/public:avm/res/event-hub/namespace:0.14.1' = {
   params: {
@@ -65,11 +63,11 @@ module namespace 'br/public:avm/res/event-hub/namespace:0.14.1' = {
         partitionCount: partitionCount
         name: hubName
         roleAssignments: [
-          {
-            principalId: apimPrincipalId
-            principalType: 'ServicePrincipal'
-            roleDefinitionIdOrName: 'Azure Event Hubs Data Sender'
-          }
+          // {
+          //   principalId: apimPrincipalId
+          //   principalType: 'ServicePrincipal'
+          //   roleDefinitionIdOrName: 'Azure Event Hubs Data Sender'
+          // }
         ]
       }
       // {
@@ -142,7 +140,7 @@ module namespace 'br/public:avm/res/event-hub/namespace:0.14.1' = {
     // maximumThroughputUnits: 4
     minimumTlsVersion: '1.2'
     networkRuleSets: {
-      defaultAction: 'Deny'
+      defaultAction: 'Allow'
       // ipRules: [
       //   {
       //     action: 'Allow'

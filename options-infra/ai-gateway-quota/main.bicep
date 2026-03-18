@@ -69,18 +69,14 @@ module logAnalytics '../modules/monitor/loganalytics.bicep' = {
 // ============================================================================
 // -- Event Hub (quota-exceeded notifications)
 // ============================================================================
-var eventHubNamespaceName = 'quota-events-ns-${resourceToken}'
-var hubName = 'quota-events'
-
 module eventHub '../modules/eventhub/eventhub.bicep' = {
   name: 'eventhub-deployment'
   params: {
     location: location
     tags: tags
     resourceSuffix: resourceToken
-    hubName: hubName
-    namespaceName: eventHubNamespaceName
-    apimPrincipalId: aiGateway.outputs.apimPrincipalId
+    hubName: 'quota-events'
+    namespaceName: 'quota-events-ns-${resourceToken}'
   }
 }
 
@@ -99,11 +95,10 @@ module aiGateway '../modules/apim/ai-gateway-advanced.bicep' = {
     foundryInstances: foundryInstances
     accessContracts: entraApps.outputs.contractsWithIdentities
     ptuUtilizationThreshold: ptuUtilizationThreshold
-    eventHubNamespaceName: eventHubNamespaceName
-    eventHubName: hubName
+    eventHubNamespaceName: eventHub.outputs.namespaceName
+    eventHubName: eventHub.outputs.eventHubName
   }
 }
-
 
 // ============================================================================
 // -- Role Assignments: APIM → each Foundry instance (cross-RG)

@@ -272,8 +272,8 @@ Every successful response includes these headers for observability:
 |--------|-------------|----------------|
 | `x-caller-name` | Contract name the caller was matched to | `Team Alpha`, `Team Beta`, `Team Gamma` |
 | `x-caller-identity` | The JWT claim value that matched the caller's contract identity | `bb90b0d2-...` (app ID), `unknown` if unmatched |
-| `x-caller-priority` | Caller's priority label from the contract | `production`, `standard`, `batch` |
-| `x-route-target` | Backend pool the request was routed to | `pool` |
+| `x-caller-priority` | Caller's priority label from the contract | `production`, `standard`, `economy` |
+| `x-route-target` | Backend pool the request was routed to | `pool`, `payg-overflow`, `payg` |
 | `x-ratelimit-limit-tokens` | Per-model TPM limit from the contract | `500`, `400`, `300` |
 | `x-ratelimit-remaining-tokens` | Remaining tokens in the current per-minute window (set by `llm-token-limit`) | `484`, `0` |
 | `x-tokens-consumed` | Tokens consumed by this request (prompt estimate + completion) | `16`, `42` |
@@ -283,6 +283,9 @@ Every successful response includes these headers for observability:
 | `x-ptu-consumed` | Per-team PTU tokens consumed in the current 60s window | `0`, `176`, `300` |
 | `x-ptu-limit` | Per-team PTU TPM allocation from the contract (`0` = no PTU access) | `300`, `200`, `0` |
 | `x-actual-tokens` | Actual `usage.total_tokens` from the backend response body | `16`, `42` |
+| `x-estimated-tokens` | Inbound token estimate used for pre-debit routing | `25`, `60` |
+| `x-is-streaming` | Whether the request was a streaming (`stream: true`) request | `true`, `false` |
+| `x-backend-type` | Which backend type actually served the request | `ptu`, `payg` |
 
 #### Rate Limit / Quota Responses (429)
 
@@ -325,7 +328,7 @@ These headers are set on the request before forwarding to the backend, useful fo
 | `x-caller-id` | Best available caller identifier from JWT (`azp` > `appid` > `xms_mirid` > `oid`) |
 | `x-caller-identity` | Matched identity claim value |
 | `x-caller-name` | Contract name |
-| `x-caller-priority` | Priority label (`production` / `standard` / `batch`) |
+| `x-caller-priority` | Priority label (`production` / `standard` / `economy`) |
 | `x-route-target` | Backend pool name |
 
 ## Dashboard

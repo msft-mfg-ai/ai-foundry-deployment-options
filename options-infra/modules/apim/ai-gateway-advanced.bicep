@@ -47,7 +47,7 @@ param ptuUtilizationThreshold string = '0.7'
 @allowed(['Basicv2', 'Standardv2', 'Premiumv2'])
 param apimSku string = 'Basicv2'
 
-@description('Event Hub namespace name for quota event logging (managed identity). Leave empty to disable.')
+@description('Event Hub Namespace name')
 param eventHubNamespaceName string = ''
 
 @description('Event Hub name for quota events')
@@ -136,22 +136,33 @@ module contractStorage 'advanced/contract-storage.bicep' = {
 }
 
 // ============================================================================
-// -- Event Hub Logger (optional — for quota-exceeded notifications)
+// -- Event Hub Logger (for quota-exceeded notifications)
 // ============================================================================
 var apimName = 'apim-${resourceToken}'
-var enableEventHub = !empty(eventHubNamespaceName) && !empty(eventHubName)
+var eventHubEnabled = !empty(eventHubNamespaceName) && !empty(eventHubName)
 
-resource eventHubLogger 'Microsoft.ApiManagement/service/loggers@2024-06-01-preview' = if (enableEventHub) {
+module eventHubRoleAssignment '../../modules/eventhub/eventhub-role-assignment.bicep' = if (eventHubEnabled) {
+  name: 'eventhub-role-assignment'
+  params: {
+    eventHubNamespaceName: eventHubNamespaceName
+    hubName: eventHubName
+    principalId: apimService.outputs.principalId
+    roleName: 'Azure Event Hubs Data Sender'
+  }
+}
+
+// https://learn.microsoft.com/en-us/azure/api-management/api-management-howto-log-event-hubs?tabs=bicep
+resource eventHubLogger 'Microsoft.ApiManagement/service/loggers@2024-06-01-preview' = if (eventHubEnabled) {
   parent: apimRef
   name: 'quota-eventhub-logger'
-  dependsOn: [apimService]
+  dependsOn: [apimService, eventHubRoleAssignment]
   properties: {
     loggerType: 'azureEventHub'
     description: 'Event Hub logger for quota-exceeded events (managed identity)'
     credentials: {
-      endpointAddress: 'sb://${eventHubNamespaceName}.servicebus.windows.net'
-      identityClientId: 'SystemAssigned'
       name: eventHubName
+      endpointAddress: '${eventHubNamespaceName}.servicebus.windows.net'
+      identityClientId: 'systemAssigned'
     }
     isBuffered: false
   }
@@ -163,6 +174,7 @@ resource eventHubLogger 'Microsoft.ApiManagement/service/loggers@2024-06-01-prev
 
 resource apimRef 'Microsoft.ApiManagement/service@2024-06-01-preview' existing = {
   name: apimName
+  dependsOn: [apimService]
 }
 
 resource ptuThresholdNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-06-01-preview' = {
@@ -188,7 +200,11 @@ var policyXml = replace(
 
 var policyWithThreshold = replace(policyXml, '{ptu-utilization-threshold}', '{{ptu-utilization-threshold}}')
 
-var finalPolicyXml = replace(policyWithThreshold, '{eventhub-logger-id}', enableEventHub ? 'quota-eventhub-logger' : '')
+var finalPolicyXml = replace(
+  policyWithThreshold,
+  '{eventhub-logger-id}',
+  eventHubEnabled ? 'quota-eventhub-logger' : ''
+)
 
 var policyWithBackendHosts = replace(finalPolicyXml, '{ptu-backend-hosts}', ptuEndpointHosts)
 
@@ -205,6 +221,7 @@ module inferenceApi 'v2/inference-api.bicep' = {
     foundryBackends
     ptuThresholdNamedValue
     contractStorage
+    eventHubEnabled ? [eventHubLogger] : null
   ]
   params: {
     policyXml: policyWithBackendHosts

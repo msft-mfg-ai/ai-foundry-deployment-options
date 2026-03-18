@@ -85,9 +85,16 @@ type aiServiceConfigType = {
 // ------------------
 
 var logSettings = {
-  // Include x-caller-id and x-caller-name header for Caller ID correlation with gateway logs
-  headers: [ 'Content-type', 'User-agent', 'x-ms-region', 'x-ratelimit-remaining-tokens' , 'x-ratelimit-remaining-requests', 'x-aml-data-proxy-url', 'x-aml-vnet-identifier', 'x-aml-static-ingress-ip', 'x-caller-name', 'x-foundry-name', 'x-caller-id' ]
+  // Include x-caller-id, x-caller-name, and x-caller-priority headers for caller correlation with gateway logs
+  headers: [ 'Content-type', 'User-agent', 'x-ms-region', 'x-ratelimit-remaining-tokens' , 'x-ratelimit-remaining-requests', 'x-aml-data-proxy-url', 'x-aml-vnet-identifier', 'x-aml-static-ingress-ip', 'x-caller-name', 'x-caller-priority', 'x-foundry-name', 'x-caller-id' ]
   body: { bytes: 8192 }
+}
+
+// Response headers to log — captures caller identity from on-error/outbound responses
+// so that rate-limited (429) and error requests still show CallerName in dashboard queries
+var responseLogSettings = {
+  headers: [ 'x-caller-name', 'x-caller-priority', 'x-caller-id', 'x-error-reason', 'x-error-source' ]
+  body: { bytes: 0 }
 }
 
 var updatedPolicyXml = replace(policyXml, '{backend-id}', (length(aiServicesConfig) > 1) ? inferenceBackendPoolName : length(aiServicesConfig) == 1 ? '${aiServicesConfig[0].name}-${inferenceAPIType}-backend' : 'no-backend')
@@ -313,12 +320,7 @@ resource apiDiagnostics 'Microsoft.ApiManagement/service/apis/diagnostics@2024-0
     }
     frontend: {
       request: logSettings
-      response: {
-        headers: []
-        body: {
-          bytes: 0
-        }
-      }
+      response: responseLogSettings
     }
     backend: {
       request: logSettings

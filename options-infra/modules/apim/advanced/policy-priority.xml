@@ -179,7 +179,7 @@
         <!-- Derive priority label for headers/logging -->
         <set-variable name="priority-label" value="@{
             var p = (int)context.Variables[&quot;priority&quot;];
-            return p == 1 ? &quot;production&quot; : p == 2 ? &quot;standard&quot; : &quot;batch&quot;;
+            return p == 1 ? &quot;production&quot; : p == 2 ? &quot;standard&quot; : &quot;economy&quot;;
         }" />
 
         <!-- ================================================================ -->
@@ -283,24 +283,63 @@
             remaining-quota-tokens-header-name="x-quota-remaining-tokens" />
 
         <!-- ================================================================ -->
-        <!-- STEP 8: Three-Priority Routing with PTU Quota                    -->
+        <!-- STEP 7c: Estimate token usage for pre-debit routing              -->
         <!--                                                                  -->
-        <!-- Two caches feed the routing decision:                            -->
-        <!--   A) ptu-remaining:{model} — global PTU capacity (for P2 check)  -->
-        <!--   B) ptu-consumed:{azp}:{model} — per-team PTU usage (quota)     -->
+        <!-- Before forwarding, estimate how many tokens this request will    -->
+        <!-- consume. This feeds the pre-debit mechanism: we immediately      -->
+        <!-- increment the PTU cache so concurrent in-flight requests see     -->
+        <!-- realistic utilization (not stale post-response values).          -->
         <!--                                                                  -->
-        <!-- Single pool per model: {model-clean}-pool                        -->
-        <!-- Pool has PTU backends (P1/P2) and paygo backends (P3).           -->
-        <!-- All priorities use the same pool — APIM pool priority handles    -->
-        <!-- the PTU → paygo failover via circuit breaker.                    -->
+        <!-- Estimation heuristic:                                            -->
+        <!--   prompt_tokens  ≈ total_chars_in_messages / 4  (~4 chars/token) -->
+        <!--   completion_est ≈ max_tokens / 2  (conservative midpoint)       -->
+        <!--   total_estimate = prompt_tokens + completion_est                -->
         <!--                                                                  -->
-        <!-- Contract priority (P1/P2/P3) controls WHO gets to use the pool:  -->
-        <!--   P1 (prod) → always routed to pool (PTU tried first by pool)    -->
-        <!--   P2 (dev)  → routed to pool only if PTU utilization < threshold -->
-        <!--   P3 (batch) → routed to pool (paygo backends only via policy)   -->
+        <!-- Outbound reconciles: replaces estimate with actual usage.        -->
+        <!-- For streaming: estimate stands (SSE body can't be parsed).       -->
+        <!-- ================================================================ -->
+        <set-variable name="is-streaming" value="@{
+            try {
+                var body = context.Request.Body.As&lt;Newtonsoft.Json.Linq.JObject&gt;(preserveContent: true);
+                var stream = body[&quot;stream&quot;];
+                return stream != null &amp;&amp; stream.Value&lt;bool&gt;();
+            } catch { return false; }
+        }" />
+
+        <set-variable name="estimated-tokens" value="@{
+            try {
+                var body = context.Request.Body.As&lt;Newtonsoft.Json.Linq.JObject&gt;(preserveContent: true);
+                var messages = body[&quot;messages&quot;] as Newtonsoft.Json.Linq.JArray;
+                int promptChars = 0;
+                if (messages != null) {
+                    foreach (var msg in messages) {
+                        promptChars += (msg[&quot;content&quot;]?.ToString() ?? &quot;&quot;).Length;
+                    }
+                }
+                int promptTokens = Math.Max(promptChars / 4, 10);
+                var maxTok = body[&quot;max_tokens&quot;];
+                int maxTokens = maxTok != null ? maxTok.Value&lt;int&gt;() : 100;
+                int completionEstimate = Math.Max(maxTokens / 2, 10);
+                return promptTokens + completionEstimate;
+            } catch { return 50; }
+        }" />
+
+        <!-- ================================================================ -->
+        <!-- STEP 8: Three-Priority Routing with PTU Soft Limits              -->
+        <!--                                                                  -->
+        <!-- Two pools per model:                                             -->
+        <!--   {model}-pool      — Mixed: PTU (priority 1) + PAYG (priority 2)-->
+        <!--   {model}-payg-pool — PAYG-only (for overflow / economy)         -->
+        <!--                                                                  -->
+        <!-- Routing by contract priority:                                    -->
+        <!--   P1 (production) → always {model}-pool → PTU first, circuit     -->
+        <!--                     breaker handles 429 → PAYG fallback          -->
+        <!--   P2 (standard)   → {model}-pool when utilization < threshold    -->
+        <!--                     AND team has PTU quota; else {model}-payg-pool-->
+        <!--   P3 (economy)    → always {model}-payg-pool (never uses PTU)    -->
         <!-- ================================================================ -->
 
-        <!-- Read cached global PTU consumption (total tokens routed to PTU, set by outbound) -->
+        <!-- Read cached global PTU consumption -->
         <cache-lookup-value
             key="@(&quot;ptu-consumed-global:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
             variable-name="ptu-consumed-global-cached"
@@ -311,6 +350,38 @@
             key="@(&quot;ptu-consumed:&quot; + (string)context.Variables[&quot;caller-name&quot;] + &quot;:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
             variable-name="ptu-consumed-cached"
             default-value="0" />
+
+        <!-- Pre-debit: project consumption INCLUDING this request's estimate.       -->
+        <!-- Write projected values to cache so concurrent requests see in-flight     -->
+        <!-- usage. Outbound reconciles estimate → actual (or un-debits if PAYG).     -->
+        <set-variable name="ptu-consumed-global-projected" value="@{
+            int prev = 0;
+            int.TryParse((string)context.Variables[&quot;ptu-consumed-global-cached&quot;], out prev);
+            return (int)context.Variables[&quot;priority&quot;] &lt;= 2
+                ? prev + (int)context.Variables[&quot;estimated-tokens&quot;]
+                : prev;
+        }" />
+        <set-variable name="ptu-consumed-projected" value="@{
+            int prev = 0;
+            int.TryParse((string)context.Variables[&quot;ptu-consumed-cached&quot;], out prev);
+            return (int)context.Variables[&quot;priority&quot;] &lt;= 2
+                ? prev + (int)context.Variables[&quot;estimated-tokens&quot;]
+                : prev;
+        }" />
+
+        <!-- Write pre-debited values for P1/P2 (P3 never uses PTU) -->
+        <choose>
+            <when condition="@((int)context.Variables[&quot;priority&quot;] &lt;= 2)">
+                <cache-store-value
+                    key="@(&quot;ptu-consumed-global:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
+                    value="@(((int)context.Variables[&quot;ptu-consumed-global-projected&quot;]).ToString())"
+                    duration="60" />
+                <cache-store-value
+                    key="@(&quot;ptu-consumed:&quot; + (string)context.Variables[&quot;caller-name&quot;] + &quot;:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
+                    value="@(((int)context.Variables[&quot;ptu-consumed-projected&quot;]).ToString())"
+                    duration="60" />
+            </when>
+        </choose>
 
         <!-- PTU capacity is per-model, stored in the contracts blob -->
         <set-variable name="ptu-capacity" value="@{
@@ -323,61 +394,72 @@
             return val.Value&lt;int&gt;();
         }" />
 
-        <!-- Calculate PTU utilization from tracked consumption vs capacity -->
+        <!-- Calculate PTU utilization from PROJECTED consumption (includes pre-debit) -->
         <set-variable name="ptu-utilization" value="@{
-            var consumedStr = (string)context.Variables[&quot;ptu-consumed-global-cached&quot;];
-            double consumed;
-            if (!double.TryParse(consumedStr, out consumed)) { return 0.0; }
+            double consumed = (int)context.Variables[&quot;ptu-consumed-global-projected&quot;];
             var capacity = (int)context.Variables[&quot;ptu-capacity&quot;];
             if (capacity &lt;= 0) { return 1.0; }
             var util = consumed / capacity;
             return util &lt; 0.0 ? 0.0 : util > 1.0 ? 1.0 : util;
         }" />
 
-        <!-- Check if team has PTU quota remaining for THIS MODEL (soft limit) -->
+        <!-- Check if team has PTU quota remaining (using PROJECTED per-team consumption) -->
         <set-variable name="ptu-quota-available" value="@{
             var ptuLimit = (int)context.Variables[&quot;model-ptu-tpm&quot;];
-            if (ptuLimit &lt;= 0) { return false; } // No PTU allocation for this model
-            var consumed = 0;
-            int.TryParse((string)context.Variables[&quot;ptu-consumed-cached&quot;], out consumed);
+            if (ptuLimit &lt;= 0) { return false; }
+            var consumed = (int)context.Variables[&quot;ptu-consumed-projected&quot;];
             return consumed &lt; ptuLimit;
         }" />
 
-        <!-- P2 routing threshold (default 0.7 = 70%) -->
+        <!-- P2 routing threshold (default 0.5 = 50%) -->
         <set-variable name="ptu-threshold" value="@{
             var t = &quot;{ptu-utilization-threshold}&quot;;
             double val;
-            return double.TryParse(t, out val) ? val : 0.7;
+            return double.TryParse(t, out val) ? val : 0.5;
         }" />
 
         <!-- Build pool ID from model name (single pool per model) -->
         <set-variable name="model-clean" value="@(((string)context.Variables[&quot;requestedModel&quot;]).Replace(&quot;.&quot;, &quot;&quot;).Replace(&quot;-&quot;, &quot;&quot;))" />
         <set-variable name="pool-id" value="@((string)context.Variables[&quot;model-clean&quot;] + &quot;-pool&quot;)" />
+        <set-variable name="payg-pool-id" value="@((string)context.Variables[&quot;model-clean&quot;] + &quot;-payg-pool&quot;)" />
 
         <!-- Priority routing decision -->
-        <!-- All priorities use the same pool. The pool's internal priority  -->
-        <!-- (PTU P1/P2, paygo P3) handles backend selection + failover.    -->
-        <!-- Contract priority controls access, not pool selection.          -->
         <choose>
-            <!-- P1 (prod): Always route to pool — PTU tried first by pool priority -->
+            <!-- P1 (production): PTU while soft limit not reached.                      -->
+            <!-- When PTU 429s, <retry> in <backend> fails over to PAYG.                 -->
+            <!-- When soft limit reached, go straight to PAYG.                            -->
             <when condition="@((int)context.Variables[&quot;priority&quot;] == 1)">
-                <set-variable name="route-target" value="pool" />
-                <set-backend-service backend-id="@((string)context.Variables[&quot;pool-id&quot;])" />
+                <choose>
+                    <when condition="@((bool)context.Variables[&quot;ptu-quota-available&quot;])">
+                        <set-variable name="route-target" value="pool" />
+                        <set-backend-service backend-id="@((string)context.Variables[&quot;pool-id&quot;])" />
+                    </when>
+                    <otherwise>
+                        <set-variable name="route-target" value="payg-overflow" />
+                        <set-backend-service backend-id="@((string)context.Variables[&quot;payg-pool-id&quot;])" />
+                    </otherwise>
+                </choose>
             </when>
 
-            <!-- P2 (dev): Route to pool only if PTU utilization < threshold AND quota available -->
-            <!-- If PTU is busy, P2 still uses the pool (paygo backends are in there too) -->
+            <!-- P2 (standard): PTU only when utilization < threshold AND team has quota -->
+            <!-- Otherwise route to PAYG-only pool to preserve PTU for P1.               -->
             <when condition="@((int)context.Variables[&quot;priority&quot;] == 2)">
-                <set-variable name="route-target" value="pool" />
-                <set-backend-service backend-id="@((string)context.Variables[&quot;pool-id&quot;])" />
+                <choose>
+                    <when condition="@((double)context.Variables[&quot;ptu-utilization&quot;] < (double)context.Variables[&quot;ptu-threshold&quot;] &amp;&amp; (bool)context.Variables[&quot;ptu-quota-available&quot;])">
+                        <set-variable name="route-target" value="pool" />
+                        <set-backend-service backend-id="@((string)context.Variables[&quot;pool-id&quot;])" />
+                    </when>
+                    <otherwise>
+                        <set-variable name="route-target" value="payg-overflow" />
+                        <set-backend-service backend-id="@((string)context.Variables[&quot;payg-pool-id&quot;])" />
+                    </otherwise>
+                </choose>
             </when>
 
-            <!-- P3 (batch): Route to pool — will naturally land on paygo (P3 backends) -->
-            <!-- since PTU backends are higher priority in pool, P3 traffic only reaches -->
-            <!-- paygo when PTU is healthy (but that's fine — P3 is cost-insensitive)   -->
+            <!-- P3 (economy): Always route to PAYG-only pool — never touches PTU.      -->
             <otherwise>
-                <set-variable name="route-target" value="pool" />
-                <set-backend-service backend-id="@((string)context.Variables[&quot;pool-id&quot;])" />
+                <set-variable name="route-target" value="payg" />
+                <set-backend-service backend-id="@((string)context.Variables[&quot;payg-pool-id&quot;])" />
             </otherwise>
         </choose>
 
@@ -434,7 +516,16 @@
     </inbound>
 
     <backend>
-        <forward-request buffer-request-body="true" />
+        <!-- Forward to the backend chosen in inbound (pool or payg-pool).            -->
+        <!-- If 429, retry once on the PAYG-only pool.                                -->
+        <retry condition="@(context.Response != null &amp;&amp; context.Response.StatusCode == 429)" count="2" interval="0" first-fast-retry="true">
+            <choose>
+                <when condition="@(context.Response != null &amp;&amp; context.Response.StatusCode == 429)">
+                    <set-backend-service backend-id="@((string)context.Variables[&quot;payg-pool-id&quot;])" />
+                </when>
+            </choose>
+            <forward-request buffer-request-body="true" />
+        </retry>
     </backend>
 
     <outbound>
@@ -458,12 +549,15 @@
         }" />
 
         <!-- ================================================================ -->
-        <!-- Track PTU consumption from response body usage.total_tokens     -->
-        <!-- Only tracked when the backend was actually PTU (not PAYG).      -->
-        <!-- PTU deployments don't return rate-limit headers, so we read     -->
-        <!-- actual token counts from the response body instead.             -->
+        <!-- Reconcile pre-debit: adjust PTU cache with actual vs estimated   -->
+        <!--                                                                  -->
+        <!-- Inbound pre-debited the cache with estimated tokens. Now:        -->
+        <!--   PTU + non-streaming: reconcile (cache += actual - estimate)    -->
+        <!--   PTU + streaming:     estimate stands (can't parse SSE body)    -->
+        <!--   PAYG / error:        un-debit (cache -= estimate)             -->
         <!-- ================================================================ -->
         <set-variable name="actual-tokens" value="@{
+            if ((bool)context.Variables[&quot;is-streaming&quot;]) { return 0; }
             try {
                 var body = context.Response.Body.As&lt;Newtonsoft.Json.Linq.JObject&gt;(preserveContent: true);
                 var usage = body[&quot;usage&quot;] as Newtonsoft.Json.Linq.JObject;
@@ -474,36 +568,65 @@
         }" />
 
         <choose>
-            <!-- Only track PTU consumption when backend was actually PTU AND priority <= 2 -->
-            <when condition="@((string)context.Variables[&quot;backend-type&quot;] == &quot;ptu&quot; &amp;&amp; (int)context.Variables[&quot;priority&quot;] <= 2 &amp;&amp; (int)context.Variables[&quot;actual-tokens&quot;] > 0)">
-                <!-- Accumulate global PTU consumption (for P2 utilization decisions) -->
+            <!-- PTU non-streaming with actual data: reconcile estimate → actual -->
+            <when condition="@((string)context.Variables[&quot;backend-type&quot;] == &quot;ptu&quot; &amp;&amp; (int)context.Variables[&quot;priority&quot;] &lt;= 2 &amp;&amp; !(bool)context.Variables[&quot;is-streaming&quot;] &amp;&amp; (int)context.Variables[&quot;actual-tokens&quot;] > 0)">
                 <cache-lookup-value
                     key="@(&quot;ptu-consumed-global:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
-                    variable-name="prev-ptu-global"
+                    variable-name="reconcile-global"
                     default-value="0" />
                 <cache-store-value
                     key="@(&quot;ptu-consumed-global:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
                     value="@{
-                        var prev = 0;
-                        int.TryParse((string)context.Variables[&quot;prev-ptu-global&quot;], out prev);
-                        return (prev + (int)context.Variables[&quot;actual-tokens&quot;]).ToString();
+                        int current = 0;
+                        int.TryParse((string)context.Variables[&quot;reconcile-global&quot;], out current);
+                        int adj = (int)context.Variables[&quot;actual-tokens&quot;] - (int)context.Variables[&quot;estimated-tokens&quot;];
+                        return Math.Max(0, current + adj).ToString();
                     }"
                     duration="60" />
-
-                <!-- Accumulate per-team PTU consumption (for per-team PTU quota) -->
                 <cache-lookup-value
                     key="@(&quot;ptu-consumed:&quot; + (string)context.Variables[&quot;caller-name&quot;] + &quot;:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
-                    variable-name="prev-ptu-consumed"
+                    variable-name="reconcile-team"
                     default-value="0" />
                 <cache-store-value
                     key="@(&quot;ptu-consumed:&quot; + (string)context.Variables[&quot;caller-name&quot;] + &quot;:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
                     value="@{
-                        var prev = 0;
-                        int.TryParse((string)context.Variables[&quot;prev-ptu-consumed&quot;], out prev);
-                        return (prev + (int)context.Variables[&quot;actual-tokens&quot;]).ToString();
+                        int current = 0;
+                        int.TryParse((string)context.Variables[&quot;reconcile-team&quot;], out current);
+                        int adj = (int)context.Variables[&quot;actual-tokens&quot;] - (int)context.Variables[&quot;estimated-tokens&quot;];
+                        return Math.Max(0, current + adj).ToString();
                     }"
                     duration="60" />
             </when>
+
+            <!-- PAYG backend (P1/P2 only): un-debit — request didn't use PTU -->
+            <when condition="@((string)context.Variables[&quot;backend-type&quot;] == &quot;payg&quot; &amp;&amp; (int)context.Variables[&quot;priority&quot;] &lt;= 2)">
+                <cache-lookup-value
+                    key="@(&quot;ptu-consumed-global:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
+                    variable-name="undebit-global"
+                    default-value="0" />
+                <cache-store-value
+                    key="@(&quot;ptu-consumed-global:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
+                    value="@{
+                        int current = 0;
+                        int.TryParse((string)context.Variables[&quot;undebit-global&quot;], out current);
+                        return Math.Max(0, current - (int)context.Variables[&quot;estimated-tokens&quot;]).ToString();
+                    }"
+                    duration="60" />
+                <cache-lookup-value
+                    key="@(&quot;ptu-consumed:&quot; + (string)context.Variables[&quot;caller-name&quot;] + &quot;:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
+                    variable-name="undebit-team"
+                    default-value="0" />
+                <cache-store-value
+                    key="@(&quot;ptu-consumed:&quot; + (string)context.Variables[&quot;caller-name&quot;] + &quot;:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
+                    value="@{
+                        int current = 0;
+                        int.TryParse((string)context.Variables[&quot;undebit-team&quot;], out current);
+                        return Math.Max(0, current - (int)context.Variables[&quot;estimated-tokens&quot;]).ToString();
+                    }"
+                    duration="60" />
+            </when>
+
+            <!-- PTU streaming: estimate stands (can't parse SSE body) — no action -->
         </choose>
 
         <!-- ================================================================ -->
@@ -539,6 +662,12 @@
         <set-header name="x-actual-tokens" exists-action="override">
             <value>@(((int)context.Variables["actual-tokens"]).ToString())</value>
         </set-header>
+        <set-header name="x-estimated-tokens" exists-action="override">
+            <value>@(((int)context.Variables["estimated-tokens"]).ToString())</value>
+        </set-header>
+        <set-header name="x-is-streaming" exists-action="override">
+            <value>@(((bool)context.Variables["is-streaming"]).ToString().ToLower())</value>
+        </set-header>
         <set-header name="x-backend-type" exists-action="override">
             <value>@((string)context.Variables["backend-type"])</value>
         </set-header>
@@ -548,11 +677,9 @@
         <base />
         <!-- ================================================================ -->
         <!-- EVENT HUB: Emit quota-exceeded event when monthly quota is hit   -->
-        <!-- The logger-id placeholder is replaced at deploy time.            -->
-        <!-- If empty (no Event Hub configured), this block is skipped.       -->
         <!-- ================================================================ -->
         <choose>
-            <when condition="@(&quot;{eventhub-logger-id}&quot; != &quot;&quot; &amp;&amp; (context.LastError?.Message ?? &quot;&quot;).Contains(&quot;quota&quot;))">
+            <when condition="@((context.LastError?.Message ?? &quot;&quot;).Contains(&quot;quota&quot;))">
                 <log-to-eventhub logger-id="{eventhub-logger-id}">@{
                     var team   = (string)context.Variables.GetValueOrDefault("caller-name", "unknown");
                     var model  = (string)context.Variables.GetValueOrDefault("requestedModel", "unknown");
@@ -569,7 +696,20 @@
             </when>
         </choose>
         <return-response>
-            <set-status code="@(context.Response.StatusCode)" reason="@(context.Response.StatusReason)" />
+            <set-status code="@{
+                var source = context.LastError?.Source ?? "";
+                var reason = context.LastError?.Reason ?? "";
+                // Auth failure → 401
+                if (source == "validate-azure-ad-token" || source == "validate-jwt") { return 401; }
+                // llm-token-limit → use its configured status (429 for TPM, 403 for quota)
+                if (source == "llm-token-limit") {
+                    return reason.Contains("quota") ? 403 : 429;
+                }
+                // Backend responded → forward its status
+                if (context.Response != null) { return context.Response.StatusCode; }
+                // Fallback
+                return 500;
+            }" reason="@(context.LastError?.Reason ?? (context.Response != null ? context.Response.StatusReason : "Internal Server Error"))" />
             <set-header name="Content-Type" exists-action="override">
                 <value>application/json</value>
             </set-header>
@@ -588,15 +728,86 @@
             <set-header name="x-caller-id" exists-action="override">
                 <value>@((string)context.Variables.GetValueOrDefault("caller-id", "unknown"))</value>
             </set-header>
+            <set-header name="x-caller-name" exists-action="override">
+                <value>@((string)context.Variables.GetValueOrDefault("caller-name", "unknown"))</value>
+            </set-header>
+            <set-header name="x-caller-identity" exists-action="override">
+                <value>@((string)context.Variables.GetValueOrDefault("matched-identity", "unknown"))</value>
+            </set-header>
+            <set-header name="x-caller-priority" exists-action="override">
+                <value>@((string)context.Variables.GetValueOrDefault("priority-label", "unknown"))</value>
+            </set-header>
             <set-header name="x-route-target" exists-action="override">
                 <value>@((string)context.Variables.GetValueOrDefault("route-target", "unknown"))</value>
             </set-header>
+            <set-header name="x-ratelimit-limit-tokens" exists-action="override">
+                <value>@(context.Variables.ContainsKey("model-tpm") ? ((int)context.Variables["model-tpm"]).ToString() : "0")</value>
+            </set-header>
+            <set-header name="x-ratelimit-remaining-tokens" exists-action="override">
+                <value>@(context.Variables.ContainsKey("tpm-remaining") ? ((int)context.Variables["tpm-remaining"]).ToString() : "0")</value>
+            </set-header>
+            <set-header name="x-quota-limit-tokens" exists-action="override">
+                <value>@(context.Variables.ContainsKey("caller-monthly-quota") ? ((long)context.Variables["caller-monthly-quota"]).ToString() : "0")</value>
+            </set-header>
+            <set-header name="x-quota-remaining-tokens" exists-action="override">
+                <value>@(context.Variables.ContainsKey("quota-remaining") ? ((int)context.Variables["quota-remaining"]).ToString() : "0")</value>
+            </set-header>
+            <set-header name="x-ptu-consumed" exists-action="override">
+                <value>@(context.Variables.ContainsKey("ptu-consumed-projected") ? ((int)context.Variables["ptu-consumed-projected"]).ToString() : "0")</value>
+            </set-header>
+            <set-header name="x-ptu-limit" exists-action="override">
+                <value>@(context.Variables.ContainsKey("model-ptu-tpm") ? ((int)context.Variables["model-ptu-tpm"]).ToString() : "0")</value>
+            </set-header>
+            <set-header name="x-ptu-utilization" exists-action="override">
+                <value>@(context.Variables.ContainsKey("ptu-utilization") ? ((double)context.Variables["ptu-utilization"]).ToString("F2") : "0.00")</value>
+            </set-header>
+            <set-header name="x-estimated-tokens" exists-action="override">
+                <value>@(context.Variables.ContainsKey("estimated-tokens") ? ((int)context.Variables["estimated-tokens"]).ToString() : "0")</value>
+            </set-header>
             <set-body>@{
-                var reason = context.LastError?.Reason ?? "unknown";
-                var message = context.LastError?.Message ?? "An error occurred processing the request.";
+                var source  = context.LastError?.Source ?? "";
+                var reason  = context.LastError?.Reason ?? "unknown";
+                var rawMsg  = context.LastError?.Message ?? "";
+                var team    = (string)context.Variables.GetValueOrDefault("caller-name", "unknown");
+                var model   = (string)context.Variables.GetValueOrDefault("requestedModel", "unknown");
+
+                string code;
+                string message;
+
+                if (source == "validate-azure-ad-token")
+                {
+                    code = "unauthorized";
+                    message = "Invalid or missing bearer token. Provide a valid Entra ID token with audience https://cognitiveservices.azure.com.";
+                }
+                else if (rawMsg.Contains("quota"))
+                {
+                    var quota = context.Variables.ContainsKey("caller-monthly-quota")
+                        ? ((long)context.Variables["caller-monthly-quota"]).ToString("N0")
+                        : "unknown";
+                    code = "monthly_quota_exceeded";
+                    message = "Monthly token quota exhausted for '" + team + "'. "
+                            + "Your contract allows " + quota + " tokens per month across all models. "
+                            + "Contact the platform team to request a quota increase.";
+                }
+                else if (source == "llm-token-limit")
+                {
+                    var tpm = context.Variables.ContainsKey("model-tpm")
+                        ? ((int)context.Variables["model-tpm"]).ToString("N0")
+                        : "unknown";
+                    code = "rate_limit_exceeded";
+                    message = "Per-model rate limit exceeded for '" + team + "' on model '" + model + "'. "
+                            + "Your contract allows " + tpm + " tokens per minute for this model. "
+                            + "Wait a moment and retry, or contact the platform team to request a higher limit.";
+                }
+                else
+                {
+                    code = reason;
+                    message = !string.IsNullOrEmpty(rawMsg) ? rawMsg : "An error occurred processing the request.";
+                }
+
                 return new Newtonsoft.Json.Linq.JObject(
                     new Newtonsoft.Json.Linq.JProperty("error", new Newtonsoft.Json.Linq.JObject(
-                        new Newtonsoft.Json.Linq.JProperty("code", reason),
+                        new Newtonsoft.Json.Linq.JProperty("code", code),
                         new Newtonsoft.Json.Linq.JProperty("message", message)
                     ))
                 ).ToString();

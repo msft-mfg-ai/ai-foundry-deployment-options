@@ -48,9 +48,9 @@ Teams (apps) are identified solely by JWT claims (`azp`, `appid`, `xms_mirid`, e
 │  3. Enforce: per-model TPM (hard 429), monthly quota (cost cap)       │
 │  4. Check PTU quota (per-model PTU TPM, soft redirect to standard)     │
 │  5. Three-priority routing (+ PTU quota check):                       │
-│     P1 (prod)    → PTU pool IF PTU quota available, else std overflow │
-│     P2 (dev/test)→ PTU when utilization < 70% AND PTU quota available │
-│     P3 (batch)   → Always standard pool                              │
+│     P1 (production) → PTU pool IF PTU quota available, else PAYG overflow │
+│     P2 (standard)   → PTU when utilization < 50% AND PTU quota available │
+│     P3 (economy)    → Always PAYG pool                                │
 │  6. Backend auth: APIM Managed Identity → Foundry                     │
 │                                                                       │
 │  ┌─────────────────────────────────────────────────────────────────┐  │
@@ -80,12 +80,12 @@ Teams (apps) are identified solely by JWT claims (`azp`, `appid`, `xms_mirid`, e
 │  ┌──────────────────────────┐     ┌───────────────────────┐           │
 │  │ APIM Internal Cache      │     │ Backend Pools         │           │
 │  │                          │     │                       │           │
-│  │ ptu-remaining:           │     │ gpt52chat-ptu-pool:   │           │
+│  │ ptu-remaining:           │     │ gpt52chat-pool:       │           │
 │  │   gpt-52-chat: 45231     │────►│   P1: PTU deploys     │           │
-│  │   (global utilization)   │     │   P2: std deploys     │           │
+│  │   (global utilization)   │     │   P2: PAYG deploys    │           │
 │  │                          │     │                       │           │
-│  │ ptu-consumed:            │     │ gpt52chat-pool:       │           │
-│  │   team-a:gpt-52-chat: 3K │     │   all deployments     │           │
+│  │ ptu-consumed:            │     │ gpt52chat-payg-pool:  │           │
+│  │   team-a:gpt-52-chat: 3K │     │   PAYG deployments    │           │
 │  │   team-b:gpt-52-chat: 8K │     └───────────────────────┘           │
 │  │   (per-contract PTU use) │                                         │
 │  └──────────────────────────┘                                         │
@@ -131,13 +131,13 @@ APIM Inbound Policy
   │     PTU quota available? = ptuConsumed < contract.models[model].ptuTpm
   │
   └─ 6. Priority-based routing (requires BOTH priority AND PTU quota):
-        ┌─── priority == 1 AND ptuQuotaAvailable ──► {model}-ptu-pool
-        │    priority == 1 AND PTU quota exhausted ──► {model}-pool (soft overflow)
+        ┌─── priority == 1 AND ptuQuotaAvailable ──► {model}-pool
+        │    priority == 1 AND PTU quota exhausted ──► {model}-payg-pool (soft overflow)
         │
-        ├─── priority == 2 AND ptuQuotaAvailable AND utilization < 70% ──► {model}-ptu-pool
-        │    priority == 2 AND (no quota OR utilization ≥ 70%) ──► {model}-pool
+        ├─── priority == 2 AND ptuQuotaAvailable AND utilization < 50% ──► {model}-pool
+        │    priority == 2 AND (no quota OR utilization ≥ 50%) ──► {model}-payg-pool
         │
-        └─── priority == 3 ──► {model}-pool (always standard)
+        └─── priority == 3 ──► {model}-payg-pool (always PAYG)
 
 APIM Outbound Policy (when response came from PTU)
   │
@@ -217,7 +217,7 @@ The original Citadel `access-contract-request.schema.json` is adapted to remove 
         "priority": {
           "type": "integer",
           "enum": [1, 2, 3],
-          "description": "1=Production, 2=Dev/Test, 3=Batch/Low"
+          "description": "1=Production, 2=Standard, 3=Economy"
         },
         "models": {
           "type": "array",
@@ -311,7 +311,7 @@ The `identities` array supports multiple identity types via different JWT claims
 
 > **Reading this contract**: Team A has **two identities** — an app registration (matched via `azp`) and a managed identity (matched via `xms_mirid`). Both identities share the same contract: **8,000 TPM on `gpt-52-chat`** (hard 429), of which **at most 4,000 TPM** flows through PTU. Once the PTU allocation is consumed, additional requests spill to PAYG (still within the 8K per-model cap). They also get 20K TPM on embeddings (no `ptuTpm` — embeddings are PAYG-only). A **4M monthly token quota** caps total cost across all models. Because both identities share the same contract name as counter-key, quota is shared.
 
-#### Team B — Dev/Test (Priority 2: PTU when available, PAYG when busy)
+#### Team B — Standard (Priority 2: PTU when available, PAYG when busy)
 
 ```json
 {
@@ -319,7 +319,7 @@ The `identities` array supports multiple identity types via different JWT claims
     "businessUnit": "Engineering",
     "useCaseName": "DevPlayground",
     "environment": "DEV",
-    "description": "Dev/test — uses PTU idle capacity, falls back to PAYG when PTU > 70%"
+    "description": "Standard — uses PTU idle capacity, falls back to PAYG when PTU > 50%"
   },
   "identity": {
     "identities": [
@@ -340,17 +340,17 @@ The `identities` array supports multiple identity types via different JWT claims
 }
 ```
 
-> **Reading this contract**: Team B gets **20K TPM on `gpt-52-chat`**, of which **10K TPM can be PTU** (only when PTU utilization < 70%). Once their PTU allocation is consumed, all requests go to PAYG. A **1M monthly quota** caps total cost.
+> **Reading this contract**: Team B gets **20K TPM on `gpt-52-chat`**, of which **10K TPM can be PTU** (only when PTU utilization < 50%). Once their PTU allocation is consumed, all requests go to PAYG. A **1M monthly quota** caps total cost.
 
-#### Team C — Batch Processing (Priority 3: always PAYG)
+#### Team C — Economy (Priority 3: always PAYG)
 
 ```json
 {
   "contractInfo": {
     "businessUnit": "DataScience",
-    "useCaseName": "BatchEmbeddings",
+    "useCaseName": "EconomyEmbeddings",
     "environment": "PROD",
-    "description": "Batch embedding jobs — always PAYG, never competes for PTU"
+    "description": "Economy embedding jobs — always PAYG, never competes for PTU"
   },
   "identity": {
     "identities": []
@@ -366,7 +366,7 @@ The `identities` array supports multiple identity types via different JWT claims
 }
 ```
 
-> **Reading this contract**: Team C has **empty identities** (auto-created contract, identities to be added later). Gets **5K TPM on `gpt-52-chat`** and **5K TPM on embeddings**, all on PAYG. No `ptuTpm` — P3 teams never touch PTU. A **200K monthly quota** caps total cost.
+> **Reading this contract**: Team C has **empty identities** (auto-created contract, identities to be added later). Gets **5K TPM on `gpt-52-chat`** and **5K TPM on embeddings**, all on PAYG. No `ptuTpm` — P3 (economy) teams never touch PTU. A **200K monthly quota** caps total cost.
 
 
 ---
@@ -378,8 +378,8 @@ The core routing logic uses three priority tiers with distinct PTU/PAYG behavior
 | Priority | Name | PTU Routing | PAYG Routing | Use Case |
 |---|---|---|---|---|
 | **P1** | Production | ✅ PTU first, **up to `ptuTpm`** | Overflow when PTU quota consumed OR on 429 | Production workloads — PTU is reserved for these, capped per model per team |
-| **P2** | Standard | ✅ PTU when utilization < 70% **AND `ptuTpm` not exhausted** | Direct to PAYG when PTU busy or PTU quota consumed | Dev/test, staging — uses PTU idle capacity within allocation |
-| **P3** | Low / Batch | ❌ Never PTU | ✅ Always PAYG | Batch processing, experiments — never competes for PTU |
+| **P2** | Standard | ✅ PTU when utilization < 50% **AND `ptuTpm` not exhausted** | Direct to PAYG when PTU busy or PTU quota consumed | Standard, staging — uses PTU idle capacity within allocation |
+| **P3** | Economy | ❌ Never PTU | ✅ Always PAYG | Batch processing, experiments — never competes for PTU |
 
 ### How It Works
 
@@ -429,13 +429,13 @@ The core routing logic uses three priority tiers with distinct PTU/PAYG behavior
 
 The PTU `x-ratelimit-remaining-tokens` header reports **remaining capacity in the current 1-minute window**. A PTU with 100K TPM capacity at 70% utilization has ~30K tokens remaining.
 
-- **> 30% remaining** (< 70% utilized): P2 traffic can safely use PTU without starving P1
-- **≤ 30% remaining** (≥ 70% utilized): PTU headroom is low — P2 diverted to PAYG to protect P1
+- **> 50% remaining** (< 50% utilized): P2 traffic can safely use PTU without starving P1
+- **≤ 50% remaining** (≥ 50% utilized): PTU headroom is low — P2 diverted to PAYG to protect P1
 - **PTU returns 429**: P1 requests spill to PAYG via backend pool circuit breaker
 
-The threshold is configurable via the `{{ptu-utilization-threshold}}` Named Value (default: `0.7`).
+The threshold is configurable via the `{{ptu-utilization-threshold}}` Named Value (default: `0.5`).
 
-> **Why 70%?** It provides a 30% safety buffer for P1 burst traffic. If P1 suddenly spikes, there's headroom before 429s. Adjust based on observed traffic patterns — lower threshold = more PAYG cost but better P1 protection; higher threshold = better PTU utilization but more P1 429 risk.
+> **Why 50%?** It provides a 50% safety buffer for P1 burst traffic. If P1 suddenly spikes, there's headroom before 429s. Adjust based on observed traffic patterns — lower threshold = more PAYG cost but better P1 protection; higher threshold = better PTU utilization but more P1 429 risk.
 
 ---
 
@@ -449,7 +449,7 @@ The threshold is configurable via the `{{ptu-utilization-threshold}}` Named Valu
 | Product-level policy (per product XML) | Single API-level policy with `<choose>` on JWT claims |
 | Model access via `allowedModels` set-variable in product policy | Model access via `models` map lookup (also provides per-model TPM) |
 | Identity from subscription key header | Identity from `Authorization: Bearer` header |
-| All priorities route to same backend pool | P1→PTU, P2→PTU/PAYG dynamic, P3→PAYG always |
+| All priorities route to same backend pool | P1→{model}-pool, P2→{model}-pool/{model}-payg-pool dynamic, P3→{model}-payg-pool always |
 | No utilization awareness | `x-ratelimit-remaining-tokens` cached for P2 decisions |
 
 ### Policy 1: Complete API-Level Policy (Inbound + Backend + Outbound)
@@ -464,9 +464,9 @@ This is the **full production policy** — a single XML applied at the API level
   Prerequisites:
     - Bicep deploy-time: tenant-id, api-audience (hardcoded as https://cognitiveservices.azure.com)
     - Bicep deploy-time: {{contracts-blob-url}} — Blob Storage URL for compiled contracts JSON
-    - Named Value: {{ptu-utilization-threshold}} — e.g., "0.7" (default)
-    - Backend:     {model}-ptu-pool        — PTU deployments (P1) + standard deployments (P2 spillover)
-    - Backend:     {model}-pool            — all deployments (standard pool for P3 and P2 overflow)
+    - Named Value: {{ptu-utilization-threshold}} — e.g., "0.5" (default)
+    - Backend:     {model}-pool           — Mixed pool: PTU backends (P1) + PAYG backends (P2). Circuit breaker on 429.
+    - Backend:     {model}-payg-pool       — PAYG-only pool for P2 overflow and P3 economy routing.
     - Fragment:    set-llm-requested-model — Citadel fragment (extracts model from request)
     - Fragment:    set-backend-authorization — Citadel fragment (sets managed identity auth)
 -->
@@ -697,13 +697,13 @@ This is the **full production policy** — a single XML applied at the API level
     <!--   B) PTU TPM quota (has this team used up their PTU allocation?) -->
     <!--      ptuTpm = max TPM on PTU per model (soft cap)                 -->
     <!--      Tracked via APIM cache counter, reset every 60s (≈1 min)   -->
-    <!--      When exceeded → overflow to standard pool (NOT 429)         -->
+    <!--      When exceeded → overflow to PAYG pool (NOT 429)             -->
     <!--                                                                  -->
     <!-- Both A and B must allow PTU for the request to route there.      -->
     <!--                                                                  -->
-    <!-- Backend pool naming (per-deployment):                             -->
-    <!--   PTU pool:       {model}-ptu-pool                               -->
-    <!--   Standard pool:  {model}-pool                                   -->
+    <!-- Backend pool naming:                                              -->
+    <!--   Mixed pool:     {model}-pool      (PTU priority 1, PAYG priority 2) -->
+    <!--   PAYG-only pool: {model}-payg-pool (P2 overflow, P3 economy)    -->
     <!-- ================================================================ -->
 
     <!-- PTU TPM from per-model config (already parsed in STEP 3) -->
@@ -747,52 +747,52 @@ This is the **full production policy** — a single XML applied at the API level
     <set-variable name="threshold" value="@{
       var t = "{{ptu-utilization-threshold}}";
       double val;
-      return double.TryParse(t, out val) ? val : 0.7;
+      return double.TryParse(t, out val) ? val : 0.5;
     }" />
 
-    <!-- Build pool IDs from model name (per-deployment pool naming) -->
+    <!-- Build pool IDs from model name -->
     <!-- Dots stripped from model names in pool names -->
     <set-variable name="modelClean" value="@(((string)context.Variables["requestedModel"]).Replace(".", ""))" />
-    <set-variable name="ptuPoolId" value="@((string)context.Variables["modelClean"] + "-ptu-pool")" />
-    <set-variable name="stdPoolId" value="@((string)context.Variables["modelClean"] + "-pool")" />
+    <set-variable name="ptuPoolId" value="@((string)context.Variables["modelClean"] + "-pool")" />
+    <set-variable name="stdPoolId" value="@((string)context.Variables["modelClean"] + "-payg-pool")" />
 
     <choose>
-      <!-- ── P1: Route to PTU pool IF PTU quota available ────────────── -->
-      <!-- Pool has PTU at priority=1, standard at priority=2.         -->
-      <!-- If PTU quota exhausted → standard pool (soft overflow).    -->
-      <!-- If PTU returns 429, pool's circuit breaker spills to std.  -->
+      <!-- ── P1: Route to mixed pool IF PTU quota available ──────────── -->
+      <!-- Pool has PTU at priority=1, PAYG at priority=2.                -->
+      <!-- If PTU quota exhausted → PAYG-only pool (soft overflow).       -->
+      <!-- If PTU returns 429, pool's circuit breaker spills to PAYG.     -->
       <when condition="@((int)context.Variables["priority"] == 1)">
         <choose>
           <when condition="@((bool)context.Variables["ptuQuotaAvailable"])">
-            <set-variable name="routeTarget" value="ptu-pool" />
+            <set-variable name="routeTarget" value="pool" />
             <set-backend-service backend-id="@((string)context.Variables["ptuPoolId"])" />
           </when>
           <otherwise>
-            <!-- PTU quota exhausted → overflow to standard pool (still within total TPM) -->
-            <set-variable name="routeTarget" value="std-pool" />
+            <!-- PTU quota exhausted → overflow to PAYG-only pool (still within total TPM) -->
+            <set-variable name="routeTarget" value="payg-pool" />
             <set-backend-service backend-id="@((string)context.Variables["stdPoolId"])" />
           </otherwise>
         </choose>
       </when>
 
-      <!-- ── P2: PTU pool when utilization < threshold AND PTU quota available ── -->
+      <!-- ── P2: Mixed pool when utilization < threshold AND PTU quota available ── -->
       <when condition="@((int)context.Variables["priority"] == 2)">
         <choose>
           <when condition="@((bool)context.Variables["ptuQuotaAvailable"]
                              && (double)context.Variables["ptuUtilization"] < (double)context.Variables["threshold"])">
-            <set-variable name="routeTarget" value="ptu-pool" />
+            <set-variable name="routeTarget" value="pool" />
             <set-backend-service backend-id="@((string)context.Variables["ptuPoolId"])" />
           </when>
           <otherwise>
-            <set-variable name="routeTarget" value="std-pool" />
+            <set-variable name="routeTarget" value="payg-pool" />
             <set-backend-service backend-id="@((string)context.Variables["stdPoolId"])" />
           </otherwise>
         </choose>
       </when>
 
-      <!-- ── P3: Always standard pool ────────────────────────────────── -->
+      <!-- ── P3: Always PAYG-only pool ────────────────────────────────── -->
       <otherwise>
-        <set-variable name="routeTarget" value="std-pool" />
+        <set-variable name="routeTarget" value="payg-pool" />
         <set-backend-service backend-id="@((string)context.Variables["stdPoolId"])" />
       </otherwise>
     </choose>
@@ -832,7 +832,7 @@ This is the **full production policy** — a single XML applied at the API level
     <!-- Cache PTU remaining tokens (only when response came from PTU) -->
     <choose>
       <when condition="@(context.Response.Headers.ContainsKey("x-ratelimit-remaining-tokens")
-                         && (string)context.Variables.GetValueOrDefault("routeTarget","") == "ptu-pool")">
+                         && (string)context.Variables.GetValueOrDefault("routeTarget","") == "pool")">
         <!-- Cache global PTU remaining capacity (for P2 utilization decisions) -->
         <cache-store-value
           key="@("ptu-remaining:" + (string)context.Variables["requestedModel"])"
@@ -945,7 +945,7 @@ If `tokens-per-minute` does **not** accept policy expressions (only static integ
       retry-after-header-name="retry-after" />
   </when>
 
-  <!-- Tier: low (5K TPM, 200K monthly) — P3 batch -->
+  <!-- Tier: low (5K TPM, 200K monthly) — P3 economy -->
   <when condition="@((string)context.Variables["tpmTier"] == "low")">
     <llm-token-limit
       counter-key="@((string)context.Variables["caller-name"])"
@@ -1107,7 +1107,7 @@ Note that `models` is an **object (map)** in the compiled form — not an array 
 
 | Named Value ID | Example Value | Purpose |
 |---|---|---|
-| `ptu-utilization-threshold` | `0.7` | P2 routing threshold (0.0-1.0) |
+| `ptu-utilization-threshold` | `0.5` | P2 routing threshold (0.0-1.0) |
 
 > **Note**: `tenant-id` and `api-audience` (`https://cognitiveservices.azure.com`) are replaced at deploy time by Bicep — they are not runtime Named Values. `contracts-blob-url` is also injected at deploy time by Bicep and points to the blob storage URL containing the compiled contracts JSON.
 
@@ -1151,7 +1151,7 @@ llm-policy-fragments.bicep
 
 ### Example: What Gets Created
 
-With per-deployment PTU configuration, each Foundry instance declares its deployments with an `isPtu` flag. The system creates per-model pools automatically — a `{model}-ptu-pool` (PTU at P1, standard spillover at P2) and a `{model}-pool` (all deployments):
+With per-deployment PTU configuration, each Foundry instance declares its deployments with an `isPtu` flag. The system creates per-model pools automatically — a `{model}-pool` (mixed pool: PTU backends at priority 1, PAYG backends at priority 2) and a `{model}-payg-pool` (PAYG-only):
 
 ```bicep
 param foundryInstances = [
@@ -1190,34 +1190,34 @@ The system auto-creates per-model pools:
 | `foundry-eastus` | Backend | East US endpoint (PTU + standard deploys) | — |
 | `foundry-westus` | Backend | West US endpoint (standard deploys) | — |
 | `foundry-northeu` | Backend | North EU endpoint (standard deploys) | — |
-| **`gpt52chat-ptu-pool`** | Pool | PTU deployments (P1) + standard deployments (P2 spillover) | **P1 always, P2 when PTU < 70%** |
-| **`gpt52chat-pool`** | Pool | All deployments (PTU + standard) | **Default pool: P2 overflow, P3 always** |
+| **`gpt52chat-pool`** | Pool | PTU backends (priority 1) + PAYG backends (priority 2). Circuit breaker on 429. | **P1 always, P2 when PTU < 50%** |
+| **`gpt52chat-payg-pool`** | Pool | PAYG backends only | **P2 overflow, P3 economy always** |
 | `text-embedding-3-large` | Direct | → `foundry-eastus` | All priorities (no PTU) |
 
 **Pool naming**: Per-deployment `isPtu` flags create two pools per model. The policy maps priorities to the right pool:
 
 ```
-P1  →  set-backend-service: gpt52chat-ptu-pool   (PTU first, standard spillover on 429)
+P1  →  set-backend-service: gpt52chat-pool        (mixed pool: PTU first, PAYG spillover on 429)
 P2  →  check utilization:
-         < 70%  →  gpt52chat-ptu-pool              (use PTU idle capacity)
-         ≥ 70%  →  gpt52chat-pool                  (standard pool, protect PTU for P1)
-P3  →  set-backend-service: gpt52chat-pool         (standard pool, always)
+         < 50%  →  gpt52chat-pool                  (use PTU idle capacity)
+         ≥ 50%  →  gpt52chat-payg-pool              (PAYG-only pool, protect PTU for P1)
+P3  →  set-backend-service: gpt52chat-payg-pool    (PAYG-only pool, always)
 ```
 
 ### Simplified Routing Policy (with PTU Quota)
 
-With per-deployment pools, the policy constructs backend IDs from the model name. The PTU quota check is integrated — teams exceeding their per-model `ptuTpm` overflow to the standard pool:
+With per-deployment pools, the policy constructs backend IDs from the model name. The PTU quota check is integrated — teams exceeding their per-model `ptuTpm` overflow to the PAYG-only pool:
 
 ```xml
 <!-- ================================================================ -->
-<!-- STEP 5: Three-Priority Routing with Per-Deployment Pools + Quota  -->
+<!-- STEP 5: Three-Priority Routing with 2-Pool Design + Quota         -->
 <!--                                                                   -->
-<!-- Backend pool naming (per-deployment):                              -->
-<!--   PTU pool:       {model}-ptu-pool                               -->
-<!--   Standard pool:  {model}-pool                                    -->
+<!-- Backend pool naming:                                               -->
+<!--   Mixed pool:     {model}-pool      (PTU priority 1, PAYG priority 2) -->
+<!--   PAYG-only pool: {model}-payg-pool (P2 overflow, P3 economy)    -->
 <!--                                                                   -->
 <!-- The policy checks BOTH priority AND PTU quota before routing      -->
-<!-- to the PTU pool. PTU quota exceeded → soft overflow to standard.  -->
+<!-- to the mixed pool. PTU quota exceeded → soft overflow to PAYG.    -->
 <!-- ================================================================ -->
 
 <!-- PTU TPM from per-model config (already parsed in STEP 3) -->
@@ -1253,53 +1253,53 @@ With per-deployment pools, the policy constructs backend IDs from the model name
 <set-variable name="threshold" value="@{
   var t = "{{ptu-utilization-threshold}}";
   double val;
-  return double.TryParse(t, out val) ? val : 0.7;
+  return double.TryParse(t, out val) ? val : 0.5;
 }" />
 
-<!-- Build pool names from model name (per-deployment pool naming) -->
+<!-- Build pool names from model name -->
 <set-variable name="modelClean" value="@(((string)context.Variables["requestedModel"]).Replace(".", ""))" />
-<set-variable name="ptuPoolId" value="@((string)context.Variables["modelClean"] + "-ptu-pool")" />
-<set-variable name="stdPoolId" value="@((string)context.Variables["modelClean"] + "-pool")" />
+<set-variable name="ptuPoolId" value="@((string)context.Variables["modelClean"] + "-pool")" />
+<set-variable name="stdPoolId" value="@((string)context.Variables["modelClean"] + "-payg-pool")" />
 
 <choose>
-  <!-- P1: PTU pool if PTU quota available, else standard overflow -->
+  <!-- P1: Mixed pool if PTU quota available, else PAYG-only overflow -->
   <when condition="@((int)context.Variables["priority"] == 1)">
     <choose>
       <when condition="@((bool)context.Variables["ptuQuotaAvailable"])">
-        <set-variable name="routeTarget" value="ptu-pool" />
+        <set-variable name="routeTarget" value="pool" />
         <set-backend-service backend-id="@((string)context.Variables["ptuPoolId"])" />
       </when>
       <otherwise>
-        <set-variable name="routeTarget" value="std-pool" />
+        <set-variable name="routeTarget" value="payg-pool" />
         <set-backend-service backend-id="@((string)context.Variables["stdPoolId"])" />
       </otherwise>
     </choose>
   </when>
 
-  <!-- P2: PTU pool when utilization < threshold AND PTU quota available -->
+  <!-- P2: Mixed pool when utilization < threshold AND PTU quota available -->
   <when condition="@((int)context.Variables["priority"] == 2)">
     <choose>
       <when condition="@((bool)context.Variables["ptuQuotaAvailable"]
                          && (double)context.Variables["ptuUtilization"] < (double)context.Variables["threshold"])">
-        <set-variable name="routeTarget" value="ptu-pool" />
+        <set-variable name="routeTarget" value="pool" />
         <set-backend-service backend-id="@((string)context.Variables["ptuPoolId"])" />
       </when>
       <otherwise>
-        <set-variable name="routeTarget" value="std-pool" />
+        <set-variable name="routeTarget" value="payg-pool" />
         <set-backend-service backend-id="@((string)context.Variables["stdPoolId"])" />
       </otherwise>
     </choose>
   </when>
 
-  <!-- P3: Always standard pool -->
+  <!-- P3: Always PAYG-only pool -->
   <otherwise>
-    <set-variable name="routeTarget" value="std-pool" />
+    <set-variable name="routeTarget" value="payg-pool" />
     <set-backend-service backend-id="@((string)context.Variables["stdPoolId"])" />
   </otherwise>
 </choose>
 ```
 
-> **Note**: Models without PTU deployments (like `text-embedding-3-large`) only have a `{model}-pool`, no `-ptu-pool` variant. For non-PTU models, omit `ptuTpm` (or set to 0) in the model config — the policy will always route to the standard pool.
+> **Note**: Models without PTU deployments (like `text-embedding-3-large`) only have a `{model}-payg-pool`, no mixed `{model}-pool` variant. For non-PTU models, omit `ptuTpm` (or set to 0) in the model config — the policy will always route to the PAYG-only pool.
 
 ### What About the Actual Deployment Name?
 
@@ -1309,7 +1309,7 @@ The `deploymentName` in the Foundry instance config identifies the actual deploy
 
 | Named Value ID | Example Value | Purpose |
 |---|---|---|
-| `ptu-utilization-threshold` | `0.7` | P2 routing threshold (0.0-1.0) |
+| `ptu-utilization-threshold` | `0.5` | P2 routing threshold (0.0-1.0) |
 | `ptu-models` | `gpt-52-chat,gpt-4o` | (Optional) Models that have PTU pools — for policy to skip PTU routing on non-PTU models |
 
 ---
@@ -1343,12 +1343,12 @@ Each team has **three controls** per model plus **priority routing** — indepen
                    │  P1: PTU pool IF ptuQuotaAvailable          │
                    │      else → PAYG (soft overflow)            │
                    │  P2: PTU pool IF ptuQuotaAvailable           │
-                   │      AND utilization < 70%                   │
+                   │      AND utilization < 50%                   │
                    │      else → PAYG                             │
                    │  P3: Always → PAYG                           │
                    └────────────────────┬──────────────┬────────┘
                                         │              │
-                                  PTU pool        standard pool
+                                  {model}-pool    {model}-payg-pool
                                         │              │
                                   ┌─────▼──────┐ ┌─────▼──────┐
                                   │ Foundry    │ │ Foundry    │

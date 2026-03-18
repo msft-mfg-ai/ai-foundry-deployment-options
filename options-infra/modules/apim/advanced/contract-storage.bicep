@@ -142,6 +142,7 @@ resource uploadScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
     azCliVersion: '2.63.0'
     retentionInterval: 'PT1H'
     timeout: 'PT5M'
+    forceUpdateTag: uniqueString(string(contractMap))
     environmentVariables: [
       { name: 'STORAGE_ACCOUNT', value: storageAccount.outputs.name }
       { name: 'CONTAINER_NAME', value: 'contracts' }

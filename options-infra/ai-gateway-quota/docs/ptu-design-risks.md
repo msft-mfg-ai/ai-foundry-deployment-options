@@ -160,7 +160,7 @@ Our custom cache-based PTU tracking is strictly worse than `llm-token-limit` for
 ## 4. P2 Priority — Feasibility Assessment
 
 ### Current Design
-P2 (dev/test) routes to PTU when utilization < 70%, to standard when ≥ 70%.
+P2 (standard) routes to PTU when utilization < 50%, to standard when ≥ 50%.
 
 ### Problems
 
@@ -172,8 +172,8 @@ P2 (dev/test) routes to PTU when utilization < 70%, to standard when ≥ 70%.
 
 | Approach | Complexity | Accuracy |
 |----------|-----------|----------|
-| **A. Simple priority pools** (current): P1→PTU pool, P2+P3→standard pool. PTU spillover on 429 handled by pool priority. | Low | N/A — no dynamic routing |
-| **B. 429-reactive**: P2 always tries PTU. On 429, circuit breaker sends to standard. No utilization tracking. | Low | Reactive, not proactive |
+| **A. Simple priority pools** (current): P1→PTU pool, P2+P3→PAYG pool. PTU spillover on 429 handled by pool priority. | Low | N/A — no dynamic routing |
+| **B. 429-reactive**: P2 always tries PTU. On 429, circuit breaker sends to PAYG. No utilization tracking. | Low | Reactive, not proactive |
 | **C. Sliding window estimation**: Track total tokens consumed (all teams) via cache. Compare to PTU capacity. Route P2 if estimated utilization < threshold. | Medium | Approximate, race-prone |
 | **D. External state**: Use Redis or Cosmos DB with atomic increments for real-time utilization tracking. | High | Best accuracy |
 | **E. Azure Monitor metrics**: Query PTU utilization metric via Azure Monitor. Cache for 1 min. | Medium | 1-2 min lag, but authoritative |
@@ -182,9 +182,9 @@ P2 (dev/test) routes to PTU when utilization < 70%, to standard when ≥ 70%.
 
 **Option A or B for v1.** Dynamic P2 routing (current design) is architecturally sound but **operationally fragile** due to the limitations above. For a production deployment:
 
-- **P1 → PTU pool** (with standard spillover on 429) — this works reliably
-- **P2 → standard pool** (or PTU pool with lower priority, relying on 429+circuit breaker)
-- **P3 → standard pool only**
+- **P1 → PTU pool** (with PAYG spillover on 429) — this works reliably
+- **P2 → PAYG pool** (or PTU pool with lower priority, relying on 429+circuit breaker)
+- **P3 → PAYG pool only**
 
 The dynamic utilization check can be kept as an **optimization layer** with clear documentation that it's approximate and best-effort.
 
@@ -268,16 +268,18 @@ Instances must be **PTU-only or paygo-only** — do not mix on the same instance
 
 ### 6.1 Pool Design: Single Pool Per Model with 3-Priority Failover
 
-Each model gets **one pool** containing all backends ordered by priority:
+Each model gets **two pools**:
 
 ```
-{model-clean}-pool:
-  Priority 1: Local-region PTU        (lowest latency, "free" provisioned capacity)
-  Priority 2: Remote-region PTU       (cross-region latency, but still PTU — no token cost)
-  Priority 3: Co-located Paygo        (same region as APIM gateway, pay-per-token)
+{model-clean}-pool:          (mixed pool)
+  Priority 1: PTU backends   ("free" provisioned capacity)
+  Priority 2: PAYG backends  (pay-per-token, circuit breaker failover)
+
+{model-clean}-payg-pool:     (PAYG-only pool)
+  PAYG backends only          (for P2 overflow and P3 economy routing)
 ```
 
-The pool's circuit breaker handles failover: on 429 from priority 1, future requests go to priority 2, then priority 3. The APIM policy adds instant retry so the **current** request also benefits from failover.
+The pool's circuit breaker handles failover: on 429 from PTU backends (priority 1), the request fails over to PAYG backends (priority 2). The APIM policy adds instant retry so the **current** request also benefits from failover.
 
 This design works because **all backends use the same deployment name** (see Section 5). The URL path passes through unchanged regardless of which backend the pool selects.
 
@@ -402,17 +404,18 @@ If paygo capacity is limited in one region, add paygo backends in the other regi
 
 ---
 
-## 8. Token Estimation Policy Fragments
+### 8. Token Estimation Policy Fragments (Pre-Debit/Reconcile Pattern)
 
-Two APIM policy fragments implement the pre-decrement pattern:
+Two APIM policy fragments implement the pre-debit/reconcile pattern:
 
 ### Inbound: `token-estimation-inbound.xml`
 
 ```
 Request arrives → parse body size + max_tokens → estimate total tokens
+  (formula: prompt_chars/4 + max_tokens/2)
   → read ptu-consumed cache → check if estimate fits under limit
-  → if yes: pre-increment counter, route to PTU
-  → if no: route to standard
+  → if yes: pre-debit counter, route to PTU
+  → if no: route to PAYG pool
 ```
 
 Key implementation details:
@@ -423,15 +426,18 @@ Key implementation details:
 ### Outbound: `token-estimation-outbound.xml`
 
 ```
-Response arrives → parse usage.total_tokens from response body
-  → compute adjustment = estimated - actual
-  → decrement counter by adjustment (release over-estimate)
+Response arrives → determine route:
+  PTU non-streaming: reconcile (cache += actual - estimate)
+  PTU streaming: estimate stands (can't parse SSE body)
+  PAYG: un-debit (cache -= estimate, request didn't use PTU)
   → emit x-estimated-tokens and x-actual-tokens headers for observability
 ```
 
 Key implementation details:
-- Only adjusts counter for PTU-routed requests
-- Tracks standard pool consumption separately (for observability)
+- Only adjusts counter for PTU-routed requests (non-streaming)
+- For PTU streaming requests, the inbound estimate stands (cannot parse SSE response body)
+- For PAYG-routed requests, un-debits the estimate (request didn't consume PTU)
+- Tracks PAYG pool consumption separately (for observability)
 - Prevents counter from going negative
 - These fragments are NOT yet integrated into the main policy — they are prototypes to be wired in when the P2 strategy is finalized
 

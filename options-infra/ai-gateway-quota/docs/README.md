@@ -4,10 +4,11 @@ Designing a priority-based routing solution for Azure OpenAI PTU deployments usi
 
 ## Problem
 
-When multiple internal teams share a PTU deployment with different priorities (production vs dev/test), we need to:
+When multiple internal teams share a PTU deployment with different priorities (production vs standard vs economy), we need to:
 - Maximize PTU utilization (it's pre-paid)
 - Ensure production traffic gets PTU preference
-- Spill lower-priority traffic to PAYG first
+- Route standard traffic to PTU only when utilization is low
+- Route economy traffic to PAYG only
 
 ## Documentation
 

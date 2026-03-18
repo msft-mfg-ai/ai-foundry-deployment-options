@@ -8,9 +8,8 @@
 //   {model-clean}-pool  — All backends for this model, ordered by instance priority
 //
 // Priority ordering within each pool (configured via instance priority param):
-//   Priority 1: Local-region PTU backends
-//   Priority 2: Remote-region PTU backends
-//   Priority 3: Paygo backends (co-located with APIM)
+//   Priority 1: PTU backends
+//   Priority 2: Paygo backends (fallback)
 //
 // The pool's circuit breaker trips on 429, moving FUTURE requests to the next
 // priority tier. The APIM policy handles instant retry for the CURRENT request.
@@ -76,7 +75,7 @@ var allDeployments = flatten(map(foundryInstances, instance =>
     modelName: dep.modelName
     isPtu: instance.isPtu
     ptuCapacityTpm: dep.?ptuCapacityTpm ?? 0
-    priority: instance.?priority ?? (instance.isPtu ? 1 : 3)
+    priority: instance.?priority ?? (instance.isPtu ? 1 : 2)
     weight: instance.?weight ?? 1
     location: instance.location
   })
@@ -107,7 +106,7 @@ var paygoCountPerModel = reduce(uniqueModels, {}, (acc, model) => union(acc, {
 
 // -- Per-Model Pools ----------------------------------------------------------
 // Single pool per model with all backends ordered by priority.
-// PTU backends (priority 1-2) are tried first; paygo (priority 3) is fallback.
+// PTU backends (priority 1) are tried first; paygo (priority 2) is fallback.
 @batchSize(1)
 resource modelPools 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' = [
   for (model, i) in uniqueModels: {
@@ -128,12 +127,37 @@ resource modelPools 'Microsoft.ApiManagement/service/backends@2024-06-01-preview
   }
 ]
 
+// -- PAYG-Only Pools (for PTU soft-limit enforcement) -------------------------
+// When a team exceeds their per-model PTU allocation, the policy routes to
+// the payg-only pool to preserve PTU capacity for other teams.
+@batchSize(1)
+resource paygoOnlyPools 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' = [
+  for (model, i) in uniqueModels: if (paygoCountPerModel[model] > 0) {
+    parent: apimService
+    name: '${replace(replace(model, '.', ''), '-', '')}-payg-pool'
+    dependsOn: [backends]
+    properties: {
+      description: 'PAYG-only pool for ${model} — ${paygoCountPerModel[model]} paygo backend(s) (PTU soft-limit overflow)'
+      type: 'Pool'
+      pool: {
+        services: map(filter(allDeployments, d => d.modelName == model && !d.isPtu), d => {
+          id: '/backends/${d.instanceName}-backend'
+          priority: 1
+          weight: d.weight
+        })
+      }
+    }
+  }
+]
+
 // -- Outputs ------------------------------------------------------------------
 output backendNames array = [for (instance, i) in foundryInstances: backends[i].name]
 output poolNames array = [for (model, i) in uniqueModels: {
   model: model
   pool: '${replace(replace(model, '.', ''), '-', '')}-pool'
+  paygoPool: '${replace(replace(model, '.', ''), '-', '')}-payg-pool'
   hasPtu: length(filter(allDeployments, d => d.modelName == model && d.isPtu)) > 0
+  hasPaygo: paygoCountPerModel[model] > 0
 }]
 output uniqueModels array = uniqueModels
 output hasPtuDeployments bool = length(filter(allDeployments, d => d.isPtu)) > 0

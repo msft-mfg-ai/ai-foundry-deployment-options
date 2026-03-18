@@ -56,7 +56,7 @@
                 ? "&lt;span class='badge p1'&gt;P1 Production&lt;/span&gt;"
                 : priority == 2
                     ? "&lt;span class='badge p2'&gt;P2 Standard&lt;/span&gt;"
-                    : "&lt;span class='badge p3'&gt;P3 Batch&lt;/span&gt;";
+                    : "&lt;span class='badge p3'&gt;P3 Economy&lt;/span&gt;";
             var envBadge = env == "PROD"
                 ? "&lt;span class='env prod'&gt;" + env + "&lt;/span&gt;"
                 : "&lt;span class='env dev'&gt;" + env + "&lt;/span&gt;";
@@ -96,7 +96,10 @@
                         : "";
                     modelRows.Append("&lt;div class='model-row'&gt;&lt;code&gt;" + mp.Name + "&lt;/code&gt; ");
                     modelRows.Append("&lt;span class='num'&gt;" + tpm.ToString("N0") + " TPM&lt;/span&gt;");
-                    if (ptuTpm &gt; 0) { modelRows.Append(" &lt;span class='ptu-badge'&gt;" + ptuTpm.ToString("N0") + " PTU&lt;/span&gt;"); }
+                    if (ptuTpm &gt; 0) {
+                        var ptuLabel = ptuTpm == tpm ? "PTU TPM (limit)" : "PTU TPM (soft limit)";
+                        modelRows.Append(" &lt;span class='ptu-badge'&gt;" + ptuTpm.ToString("N0") + " " + ptuLabel + "&lt;/span&gt;");
+                    }
                     modelRows.Append(ptuBar + "&lt;/div&gt;");
                 }
             }
@@ -172,7 +175,7 @@
     &lt;div class='stat'&gt;&lt;div class='label'&gt;Teams&lt;/div&gt;&lt;div class='value'&gt;" + totalContracts + @"&lt;/div&gt;&lt;/div&gt;
     &lt;div class='stat'&gt;&lt;div class='label'&gt;P1 Prod&lt;/div&gt;&lt;div class='value' style='color:var(--p1)'&gt;" + p1Count + @"&lt;/div&gt;&lt;/div&gt;
     &lt;div class='stat'&gt;&lt;div class='label'&gt;P2 Standard&lt;/div&gt;&lt;div class='value' style='color:var(--p2)'&gt;" + p2Count + @"&lt;/div&gt;&lt;/div&gt;
-    &lt;div class='stat'&gt;&lt;div class='label'&gt;P3 Batch&lt;/div&gt;&lt;div class='value' style='color:var(--p3)'&gt;" + p3Count + @"&lt;/div&gt;&lt;/div&gt;
+    &lt;div class='stat'&gt;&lt;div class='label'&gt;P3 Economy&lt;/div&gt;&lt;div class='value' style='color:var(--p3)'&gt;" + p3Count + @"&lt;/div&gt;&lt;/div&gt;
     &lt;div class='stat'&gt;&lt;div class='label'&gt;Total Monthly&lt;/div&gt;&lt;div class='value'&gt;" + totalMonthly.ToString("N0") + @"&lt;/div&gt;&lt;/div&gt;
   &lt;/div&gt;
 
