@@ -2,27 +2,32 @@
 
 ## 1. Scaling to More Clients
 
-**Status:** Not started
+**Status:** ✅ Implemented (access contracts in blob storage)
 **Priority:** High
 
 Currently supports ~20 client apps (`azp` entries). Expected to grow to 20–30, potentially up to 100.
 
-- [ ] Document the [Named Value pair limit](https://learn.microsoft.com/en-us/azure/api-management/api-management-howto-properties) in APIM and its impact on scaling
-- [ ] Evaluate alternatives for storing caller-tier mappings at scale (e.g., external cache, Cosmos DB lookup, policy expressions with backend call)
-- [ ] Test and document the maximum number of entries in a single Named Value
+Access contracts are now stored as JSON in Azure Blob Storage (cached 5 min in APIM), removing the Named Value pair limit. Identity matching supports multiple claim types (`azp`, `appid`, `xms_mirid`, `oid`, `sub`) with prefix matching.
+
+- [x] Document the [Named Value pair limit](https://learn.microsoft.com/en-us/azure/api-management/api-management-howto-properties) in APIM and its impact on scaling
+- [x] Evaluate alternatives for storing caller-tier mappings at scale (e.g., external cache, Cosmos DB lookup, policy expressions with backend call)
+- [x] Test and document the maximum number of entries in a single Named Value
+- [ ] Load test with 100+ contracts in blob storage
 
 ## 2. Multi-Deployment Routing
 
-**Status:** Not started
+**Status:** ✅ Implemented (per-model PTU + PAYG pools with priority routing)
 **Priority:** High
 
 Route requests to different backend deployments based on the model requested. A model may be available in a different AI backend (e.g., PTU vs. PayGo, different regions).
 
+Implemented via per-model backend pools (`{model}-ptu-pool`, `{model}-payg-pool`). Each pool aggregates all Foundry instances that serve that model. Priority routing directs P1 → PTU first (with PAYG failover on 429), P2 → PTU when idle, P3 → always PAYG. Circuit breaker handles backend failures.
+
 ### Requirements
 
-- Route requests to the correct backend based on model name (from URL path or request body)
-- Support load balancing and retries across backends
-- Allow per-client routing rules (e.g., Gold-tier clients → PTU, Bronze-tier → PayGo)
+- [x] Route requests to the correct backend based on model name (from URL path or request body)
+- [x] Support load balancing and retries across backends
+- [x] Allow per-client routing rules (e.g., Gold-tier clients → PTU, Bronze-tier → PayGo)
 
 ### Reference Implementations
 
@@ -43,21 +48,27 @@ Route requests to different backend deployments based on the model requested. A 
 
 ## 5. Per consumer configuration
 
-**Status:** Not started
+**Status:** ✅ Implemented (access contracts with per-team models, quotas, and priority)
 **Priority:** High
 
-- [ ] Allow APIM Operations team to specify models, quotas (TMP/Monthly), email for notifications, traffic priority (PTU / PAYGO)
+Access contracts define per-team configuration: allowed models, per-model TPM limits, PTU allocations, monthly token budgets, and routing priority. Contracts are defined in `main.bicepparam` and compiled to blob storage at deploy time. Teams can have auto-created Entra ID apps or bring pre-existing identities.
+
+- [x] Allow APIM Operations team to specify models, quotas (TMP/Monthly), email for notifications, traffic priority (PTU / PAYGO)
+- [ ] Self-service UI for APIM ops team to manage contracts without redeploying
 
 ## 6. Virtual Quotas for PTU
 
-**Status:** Not started
+**Status:** ✅ Implemented (per-model `ptuTpm` with PAYG overflow)
 **Priority:** High
 
-- [ ] Teams should be able to specify virtual Quota (TPM) for PTU deployment per team, when exceeded request should be routed to PAYGO deployment
+Each team's access contract specifies `ptuTpm` per model — a soft PTU allocation enforced via `llm-token-limit` in the PTU gate loopback API. When the PTU allocation is exceeded, requests overflow to the PAYG pool automatically. P1 callers get PTU priority; P2 callers get PTU when utilization is low; P3 callers always route to PAYG.
+
+- [x] Teams should be able to specify virtual Quota (TPM) for PTU deployment per team, when exceeded request should be routed to PAYGO deployment
 
 ### References
 
 - [Token Limit Policy](https://learn.microsoft.com/en-us/azure/api-management/llm-token-limit-policy)
+- [APIM ChargeBack](https://github.com/seiggy/apim-chargeback)
 
 ## 7. Chargeback - FinOps
 
