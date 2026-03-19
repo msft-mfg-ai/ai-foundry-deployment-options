@@ -3,10 +3,10 @@
 // ============================================================================
 // Extension of the base AI Gateway that adds:
 //   - JWT-only auth (no subscription keys) via Entra ID tokens
-//   - Per-team access contracts with priority routing (P1/P2/P3)
-//   - Per-model backend pools with PTU/standard separation
+//   - Per-team access contracts with priority routing (P1 Production / P3 Economy)
+//   - Per-model PTU-only and PAYG-only backend pools
 //   - Per-model and per-team TPM quotas + monthly cost caps
-//   - PTU utilization-aware routing for P2 traffic
+//   - Two-API loopback: PTU gate with atomic llm-token-limit, retry fallback to PAYG
 //   - Per-project Foundry connections (identity-based, optional)
 //
 // Uses: v2/apim.bicep (APIM service), v2/inference-api.bicep (inference API)
@@ -40,9 +40,6 @@ param foundryInstances foundryInstanceType[]
 @description('Access contracts defining team identities, priorities, and quotas')
 param accessContracts accessContractType[]
 
-@description('P2 routing threshold — route to PTU when utilization < this value (0.0–1.0)')
-param ptuUtilizationThreshold string = '0.7'
-
 @description('APIM SKU tier')
 @allowed(['Basicv2', 'Standardv2', 'Premiumv2'])
 param apimSku string = 'Basicv2'
@@ -68,12 +65,6 @@ param staticModels ModelType[] = []
 
 var createFoundryConnections = !empty(aiFoundryName)
 var connectionPerProject = createFoundryConnections && !empty(aiFoundryProjectNames)
-
-// PTU endpoint hostnames (for backend-type detection in policy)
-var ptuEndpointHosts = join(
-  map(filter(foundryInstances, i => i.isPtu), i => split(replace(i.endpoint, 'https://', ''), '/')[0]),
-  ','
-)
 
 // Subscriptions are only needed for Foundry connections
 var subscriptions = connectionPerProject
@@ -169,7 +160,7 @@ resource eventHubLogger 'Microsoft.ApiManagement/service/loggers@2024-06-01-prev
 }
 
 // ============================================================================
-// -- APIM Named Values (PTU config)
+// -- APIM Reference
 // ============================================================================
 
 resource apimRef 'Microsoft.ApiManagement/service@2024-06-01-preview' existing = {
@@ -177,36 +168,93 @@ resource apimRef 'Microsoft.ApiManagement/service@2024-06-01-preview' existing =
   dependsOn: [apimService]
 }
 
-resource ptuThresholdNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-06-01-preview' = {
-  parent: apimRef
-  name: 'ptu-utilization-threshold'
-  dependsOn: [apimService]
-  properties: {
-    displayName: 'ptu-utilization-threshold'
-    value: ptuUtilizationThreshold
-    secret: false
-    tags: ['routing', 'ptu']
-  }
-}
-
 // ============================================================================
-// -- Priority Routing Policy
+// -- Policy Fragment: Identity & Authorization
 // ============================================================================
-var policyXml = replace(
-  replace(loadTextContent('advanced/policy-priority.xml'), '{tenant-id}', subscription().tenantId),
+var fragmentXml = replace(
+  replace(loadTextContent('advanced/fragment-identity.xml'), '{tenant-id}', subscription().tenantId),
   '{contracts-blob-url}',
   contractStorage.outputs.blobUrl
 )
 
-var policyWithThreshold = replace(policyXml, '{ptu-utilization-threshold}', '{{ptu-utilization-threshold}}')
+resource identityFragment 'Microsoft.ApiManagement/service/policyFragments@2024-06-01-preview' = {
+  parent: apimRef
+  name: 'identity-and-authorization'
+  dependsOn: [apimService, contractStorage]
+  properties: {
+    description: 'Shared JWT validation, identity resolution, contract loading, and model authorization'
+    format: 'rawxml'
+    value: fragmentXml
+  }
+}
 
-var finalPolicyXml = replace(
-  policyWithThreshold,
+// ============================================================================
+// -- Priority Routing Policy (Main API)
+// ============================================================================
+var mainPolicyXml = replace(
+  replace(loadTextContent('advanced/policy-priority.xml'), '{loopback-backend-id}', 'ptu-gate-loopback'),
   '{eventhub-logger-id}',
   eventHubEnabled ? 'quota-eventhub-logger' : ''
 )
 
-var policyWithBackendHosts = replace(finalPolicyXml, '{ptu-backend-hosts}', ptuEndpointHosts)
+// ============================================================================
+// -- PTU Gate Policy (Internal Loopback API)
+// ============================================================================
+var ptuGatePolicyXml = loadTextContent('advanced/policy-ptu-gate.xml')
+
+// ============================================================================
+// -- PTU Gate Loopback Backend
+// ============================================================================
+resource ptuGateLoopbackBackend 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' = {
+  parent: apimRef
+  name: 'ptu-gate-loopback'
+  dependsOn: [apimService, ptuGateApi]
+  properties: {
+    description: 'Loopback to PTU gate API for atomic PTU token counting via llm-token-limit'
+    url: '${apimService.outputs.gatewayUrl}/ptu-gate/openai'
+    protocol: 'http'
+  }
+}
+
+// ============================================================================
+// -- PTU Gate API (Internal — called via loopback only)
+// ============================================================================
+resource ptuGateApi 'Microsoft.ApiManagement/service/apis@2024-06-01-preview' = {
+  parent: apimRef
+  name: 'ptu-gate-api'
+  dependsOn: [apimService]
+  properties: {
+    apiType: 'http'
+    description: 'Internal PTU gate — applies atomic llm-token-limit before routing to PTU-only backends. Called via loopback from the main inference API.'
+    displayName: 'PTU Gate (Internal)'
+    path: 'ptu-gate/openai'
+    protocols: ['https']
+    subscriptionRequired: false
+    type: 'http'
+  }
+}
+
+// Catch-all POST operation (inference requests are always POST)
+resource ptuGateCatchAll 'Microsoft.ApiManagement/service/apis/operations@2024-06-01-preview' = {
+  parent: ptuGateApi
+  name: 'catch-all-post'
+  properties: {
+    displayName: 'Forward POST (catch-all)'
+    method: 'POST'
+    urlTemplate: '/*'
+    description: 'Catches all POST requests for PTU gate processing'
+  }
+}
+
+resource ptuGatePolicy 'Microsoft.ApiManagement/service/apis/policies@2024-06-01-preview' = {
+  parent: ptuGateApi
+  name: 'policy'
+  dependsOn: [foundryBackends]
+  properties: {
+    format: 'rawxml'
+    value: ptuGatePolicyXml
+  }
+}
 
 // ============================================================================
 // -- Inference API (with priority routing policy)
@@ -219,12 +267,13 @@ module inferenceApi 'v2/inference-api.bicep' = {
   name: 'inference-api-deployment'
   dependsOn: [
     foundryBackends
-    ptuThresholdNamedValue
+    identityFragment
+    ptuGateLoopbackBackend
     contractStorage
     eventHubEnabled ? [eventHubLogger] : null
   ]
   params: {
-    policyXml: policyWithBackendHosts
+    policyXml: mainPolicyXml
     apiManagementName: apimService.outputs.name
     apimLoggerId: apimService.outputs.loggerId
     aiServicesConfig: []

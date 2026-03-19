@@ -53,7 +53,7 @@ This deployment creates an **Azure API Management (APIM)** AI Gateway with **Ent
 
 ## Request Flow
 
-1. **Client application** obtains a bearer token from Entra ID (MSAL client credentials flow)
+1. **Client application** obtains a bearer token from Entra ID (MSAL client credentials flow) with audience `https://cognitiveservices.azure.com`
 2. Client sends request to APIM with `Authorization: Bearer <token>`
 3. APIM **validates the JWT** against Entra ID (`validate-azure-ad-token` policy)
 4. **`azp` claim** is extracted — this is the client application's App ID
@@ -63,6 +63,17 @@ This deployment creates an **Azure API Management (APIM)** AI Gateway with **Ent
    - If TPM quota exceeded → **429 Too Many Requests**
    - If monthly token quota exceeded → **403 Quota Exceeded**
 7. Request is **forwarded to Azure OpenAI** using APIM's managed identity
+
+## JWT Audience: `https://cognitiveservices.azure.com`
+
+The gateway validates tokens with audience `https://cognitiveservices.azure.com` — the standard Azure Cognitive Services audience. This is intentional:
+
+- **Simpler for clients** — no need to discover or configure a custom gateway audience; any Azure AI SDK or tool that already targets Cognitive Services can use the gateway with no token changes.
+- **Still secure** — a Cognitive Services token alone grants **no access** to any Foundry instance. Access requires an RBAC role assignment (e.g., `Cognitive Services User`) on the specific Azure OpenAI resource. The team app registrations do **not** have this role; only APIM's managed identity does. Clients cannot bypass the gateway.
+- **Authorization via access contracts** — the gateway enforces per-team access through its own access contract system (identity matching, model allow-lists, TPM limits, monthly quotas), which is independent of the token audience.
+
+> **Token generation**: use `https://cognitiveservices.azure.com/.default` as the MSAL scope.
+> The `generate_token.py --from-azd` flag does this automatically.
 
 ## Entra ID App Registrations
 
@@ -82,7 +93,7 @@ Client secrets are created post-deploy via `scripts/add_app_reg_secrets.sh` (fol
 | Tier     | Tokens Per Minute (TPM) | Description               |
 |----------|------------------------|---------------------------|
 | **Gold**   | 200,000                | High-priority teams       |
-| **Silver** | 50,000                 | Standard teams            |
+| **Silver** | 50,000                 | Economy teams             |
 | **Bronze** | 10,000                 | Low-priority / dev teams  |
 
 Quota is tracked per caller (using the `azp` claim as the counter key), so each application gets its own independent quota within its tier.
@@ -179,9 +190,10 @@ python generate_token.py \
     --tenant-id <TENANT_ID> \
     --client-id <CLIENT_ID> \
     --client-secret <CLIENT_SECRET> \
-    --audience <AUDIENCE> \
     --decode
 ```
+
+> The `--audience` flag defaults to `https://cognitiveservices.azure.com`. Override only if your APIM policy uses a different audience.
 
 ### Call the gateway directly
 
@@ -238,11 +250,12 @@ In addition to per-minute TPM quotas, the gateway enforces **monthly token budge
 
 ### How It Works
 
-1. Monthly quota values (`monthlyQuota`) are defined per caller in the **`caller-tier-mapping`** Named Value alongside tier and TPM settings
+1. Monthly quota values (`monthlyQuota`) are defined per caller in the access contracts
 2. The `llm-token-limit` policy reads each caller's `monthlyQuota` at request time and applies it with `token-quota-period="Monthly"`
-3. APIM tracks token consumption natively — no external components (Logic App, KQL alerts, or custom tables) are required
-4. When a caller exceeds their monthly budget, the policy returns **403** automatically
-5. Counters reset at the start of each calendar month
+3. **Monthly quota only applies to non-P1 callers** — P1 teams route to PTU (pre-paid), so PTU tokens don't count against their budget. Any PAYG overflow for P1 is expected and not budget-capped.
+4. APIM tracks token consumption natively — no external components (Logic App, KQL alerts, or custom tables) are required
+5. When a non-P1 caller exceeds their monthly budget, the policy returns **403** automatically
+6. Counters reset at the start of each calendar month
 
 ### Configuring Monthly Budgets
 
@@ -272,18 +285,16 @@ Every successful response includes these headers for observability:
 |--------|-------------|----------------|
 | `x-caller-name` | Contract name the caller was matched to | `Team Alpha`, `Team Beta`, `Team Gamma` |
 | `x-caller-identity` | The JWT claim value that matched the caller's contract identity | `bb90b0d2-...` (app ID), `unknown` if unmatched |
-| `x-caller-priority` | Caller's priority label from the contract | `production`, `standard`, `economy` |
-| `x-route-target` | Backend pool the request was routed to | `pool`, `payg-overflow`, `payg` |
+| `x-caller-priority` | Caller's priority label from the contract | `production`, `economy` |
+| `x-route-target` | Backend pool the request was routed to | `ptu-gate`, `payg` |
 | `x-ratelimit-limit-tokens` | Per-model TPM limit from the contract | `500`, `400`, `300` |
 | `x-ratelimit-remaining-tokens` | Remaining tokens in the current per-minute window (set by `llm-token-limit`) | `484`, `0` |
 | `x-tokens-consumed` | Tokens consumed by this request (prompt estimate + completion) | `16`, `42` |
-| `x-quota-limit-tokens` | Monthly token quota from the contract | `5000`, `3000`, `1000` |
-| `x-quota-remaining-tokens` | Remaining tokens in the current monthly quota period (set by `llm-token-limit`) | `4984`, `0` |
+| `x-quota-limit-tokens` | Monthly token quota from the contract (non-P1 callers only) | `5000`, `3000`, `1000` |
+| `x-quota-remaining-tokens` | Remaining tokens in the current monthly quota period (non-P1 callers only) | `4984`, `0` |
 | `x-ptu-utilization` | Global PTU utilization for the requested model (consumed / capacity, 60s window) | `0.0%`, `25.6%`, `100.0%` |
 | `x-ptu-consumed` | Per-team PTU tokens consumed in the current 60s window | `0`, `176`, `300` |
 | `x-ptu-limit` | Per-team PTU TPM allocation from the contract (`0` = no PTU access) | `300`, `200`, `0` |
-| `x-actual-tokens` | Actual `usage.total_tokens` from the backend response body | `16`, `42` |
-| `x-estimated-tokens` | Inbound token estimate used for pre-debit routing | `25`, `60` |
 | `x-is-streaming` | Whether the request was a streaming (`stream: true`) request | `true`, `false` |
 | `x-backend-type` | Which backend type actually served the request | `ptu`, `payg` |
 
@@ -317,7 +328,7 @@ When the policy encounters an unhandled error, additional debug headers are incl
 | `x-error-section` | Policy section where the error occurred | `inbound`, `backend`, `outbound` |
 | `x-error-source` | Policy element that caused the error | `validate-azure-ad-token`, `forward-request` |
 | `x-caller-id` | Best-effort caller identifier (may be `unknown` if JWT parsing failed) | `bb90b0d2-...`, `unknown` |
-| `x-route-target` | Route target at time of error (may be `unknown` if not yet determined) | `pool`, `unknown` |
+| `x-route-target` | Backend pool name |
 
 #### Request Headers (forwarded to backend)
 
@@ -328,7 +339,7 @@ These headers are set on the request before forwarding to the backend, useful fo
 | `x-caller-id` | Best available caller identifier from JWT (`azp` > `appid` > `xms_mirid` > `oid`) |
 | `x-caller-identity` | Matched identity claim value |
 | `x-caller-name` | Contract name |
-| `x-caller-priority` | Priority label (`production` / `standard` / `economy`) |
+| `x-caller-priority` | Priority label (`production` / `economy`) |
 | `x-route-target` | Backend pool name |
 
 ## Dashboard

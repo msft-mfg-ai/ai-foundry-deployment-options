@@ -64,7 +64,8 @@ def main():
     parser.add_argument("--client-secret", help="Application client secret")
     parser.add_argument(
         "--audience",
-        help="Gateway audience (Application ID URI, e.g., api://<app-name>)",
+        default="https://cognitiveservices.azure.com",
+        help="Token audience (default: https://cognitiveservices.azure.com)",
     )
     parser.add_argument(
         "--from-azd",
@@ -82,7 +83,7 @@ def main():
         env = get_azd_env_values()
         team = args.from_azd.upper()
         args.tenant_id = env["TENANT_ID"]
-        args.audience = env["GATEWAY_AUDIENCE"]
+        args.audience = "https://cognitiveservices.azure.com"
         args.client_id = env[f"TEAM_{team}_APP_ID"]
         args.client_secret = env[f"TEAM_{team}_SECRET"]
 

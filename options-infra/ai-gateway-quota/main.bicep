@@ -22,9 +22,6 @@ param foundryInstances foundryInstanceType[]
 @description('Access contracts defining team identities, priorities, and quotas')
 param accessContracts accessContractType[]
 
-@description('P2 routing threshold — route to PTU when utilization < this value (0.0–1.0)')
-param ptuUtilizationThreshold string = '0.7'
-
 // -- Variables ----------------------------------------------------------------
 
 var tags = {
@@ -94,7 +91,6 @@ module aiGateway '../modules/apim/ai-gateway-advanced.bicep' = {
     appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
     foundryInstances: foundryInstances
     accessContracts: entraApps.outputs.contractsWithIdentities
-    ptuUtilizationThreshold: ptuUtilizationThreshold
     eventHubNamespaceName: eventHub.outputs.namespaceName
     eventHubName: eventHub.outputs.eventHubName
   }
