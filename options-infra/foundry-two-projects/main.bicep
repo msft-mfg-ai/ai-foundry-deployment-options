@@ -6,7 +6,6 @@
 targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
-param vnetLocation string = location
 param projectsCount int = 2
 var tags = {
   'created-by': 'foundry-two-projects'
@@ -31,7 +30,7 @@ module vnet '../modules/networking/vnet.bicep' = {
   name: 'vnet'
   params: {
     tags: tags
-    location: vnetLocation
+    location: location
     vnetName: 'project-vnet-${resourceToken}'
   }
 }
@@ -41,7 +40,6 @@ module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
   params: {
     tags: tags
     location: location
-    vnetLocation: vnetLocation
     peSubnetName: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.name
     vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     resourceToken: resourceToken
