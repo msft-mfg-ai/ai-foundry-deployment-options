@@ -85,7 +85,7 @@ type accessContractType = {
   @description('Identity matchers — each entry specifies a JWT claim name and a value to prefix-match against it. Multiple identities can share a single contract (e.g., an app registration + a managed identity for the same team).')
   identities: identityType[]
 
-  @description('Routing priority: 1=Production (PTU first), 2=Standard (PTU when idle), 3=Batch (PAYG only)')
+  @description('Routing priority: 1=Production (PTU first, PAYG fallback), 3=Economy (PAYG only)')
   @minValue(1)
   @maxValue(3)
   priority: int

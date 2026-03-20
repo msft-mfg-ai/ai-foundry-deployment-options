@@ -40,7 +40,7 @@ type foundryInstanceType = {
   @description('Model deployments on this instance. Deployment name = modelName (convention enforced).')
   deployments: foundryDeploymentType[]
 
-  @description('Priority in backend pool (1=PTU, 2=PAYG). Lower = preferred. Within a pool, APIM tries all backends at priority N before moving to priority N+1.')
+  @description('Priority in backend pool. Lower = preferred. Within a pool, APIM tries all backends at priority N before moving to priority N+1.')
   priority: int?
 
   @description('Weight for load balancing within the same priority tier')

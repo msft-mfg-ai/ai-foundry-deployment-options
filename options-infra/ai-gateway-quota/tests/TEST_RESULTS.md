@@ -117,3 +117,109 @@ uv run --directory scripts jupyter nbconvert \
 ```
 
 > **Note:** For clean notebook results, wait 60s between runs to allow per-minute TPM counters to reset, or increase team TPM limits in `main.bicepparam`.
+
+---
+
+## Dashboard KQL Query Results
+
+All 7 dashboard queries validated against Log Analytics workspace `log-analytics` (`6ec7cbbf-ac9c-4c39-8ab8-150c77cdfb74`).
+
+### 1. Quota Overview (This Month)
+
+Joins `ApiManagementGatewayLlmLog` with `ApiManagementGatewayLogs` to aggregate monthly tokens per caller.
+
+| CallerName | CallerPriority | MonthlyTokens | PromptTokens | CompletionTokens | Requests |
+|------------|---------------|---------------|-------------|-----------------|----------|
+| (unmatched) | — | 12,731 | 10,906 | 1,825 | 755 |
+| Team Alpha2 | production | 2,530 | 1,919 | 611 | 78 |
+| Team Alpha | production | 1,276 | 923 | 353 | 36 |
+| Team Gamma2 | economy | 992 | 873 | 119 | 21 |
+| Team Beta2 | economy | 319 | 258 | 61 | 20 |
+| Team Beta2 | standard | 144 | 117 | 27 | 9 |
+| Team Beta | standard | 32 | 26 | 6 | 2 |
+
+> "Unmatched" rows are requests where the `CorrelationId` join didn't find a caller header (e.g., failed auth, config viewer, or health probes).
+
+### 2. Token Usage Over Time
+
+Hourly token breakdown by caller. **44 rows** spanning 3 days of testing (2026-03-17 through 2026-03-19).
+
+```
+Team Alpha  | 2026-03-17 15:00 |    20 tokens
+Team Alpha  | 2026-03-17 17:00 |   272 tokens
+Team Alpha  | 2026-03-17 18:00 |   266 tokens
+Team Alpha2 | 2026-03-19 22:00 | 2,434 tokens  ← bulk of test runs
+Team Beta2  | 2026-03-19 22:00 |   399 tokens
+Team Gamma2 | 2026-03-19 22:00 |   472 tokens
+```
+
+### 3. Rate Limit Events (429s)
+
+| CallerName | CallerPriority | ThrottledRequests | Window |
+|------------|---------------|-------------------|--------|
+| Team Alpha2 | production | 152 | 2026-03-19 22:43 – 22:51 |
+| (unmatched) | — | 31 | 2026-03-17 18:51 – 2026-03-18 00:55 |
+| Team Gamma2 | economy | 23 | 2026-03-19 04:30 – 22:43 |
+
+> Alpha2 throttling from notebook's burst tests (3 requests in quick succession at 1,000 TPM). Gamma2 throttling from monthly quota exhaustion.
+
+### 4. Model Usage by Caller
+
+| CallerName | DeploymentName | ModelName | TotalTokens | Requests |
+|------------|---------------|-----------|-------------|----------|
+| Team Alpha | gpt-4.1-mini | gpt-4.1-mini-2025-04 | 6,994 | 225 |
+| Team Alpha2 | gpt-4.1-mini | gpt-4.1-mini-2025-04 | 2,296 | 75 |
+| Team Alpha2 | gpt-oss-120b | gpt-oss-120b | 234 | 3 |
+| Team Beta | gpt-4.1-mini | gpt-4.1-mini-2025-04 | 752 | 47 |
+| Team Beta2 | gpt-4.1-mini | gpt-4.1-mini-2025-04 | 416 | 26 |
+| Team Beta2 | gpt-5.1-chat | gpt-5.1-chat-2025-11 | 34 | 2 |
+| Team Gamma | gpt-4.1-mini | gpt-4.1-mini-2025-04 | 1,013 | 15 |
+| Team Gamma2 | gpt-4.1-mini | gpt-4.1-mini-2025-04 | 928 | 17 |
+| Team Gamma2 | gpt-4.1 | gpt-4.1-2025-04 | 64 | 4 |
+
+### 5. Daily Usage by Caller
+
+**17 rows** with per-day breakdown. Example:
+
+| Date | CallerName | Priority | TotalTokens | Requests |
+|------|------------|----------|-------------|----------|
+| 2026-03-19 | Team Alpha2 | production | 2,434 | 72 |
+| 2026-03-19 | Team Gamma2 | economy | 928 | 17 |
+| 2026-03-19 | Team Beta2 | economy | 319 | 20 |
+| 2026-03-18 | Team Alpha | (unresolved) | 4,044 | 119 |
+| 2026-03-17 | Team Alpha | (unresolved) | 592 | 34 |
+
+### 6. Error Breakdown
+
+**60 rows** covering all error types. Key patterns:
+
+| ResponseCode | Meaning | Examples |
+|-------------|---------|----------|
+| 429 | TPM rate limit exceeded | Alpha2 (152), Gamma2 (12) — from burst tests |
+| 403 | Model not authorized / monthly quota exceeded | Gamma2 (37), test denied-model assertions |
+| 401 | Invalid/missing JWT | Unauthenticated test assertions |
+| 404 | Unknown deployment | Test requests for non-existent models |
+| 400 | Bad request | `max_tokens` vs `max_completion_tokens` for gpt-5.1-chat |
+| 500 | Internal error | Invalid token format (malformed JWT) |
+
+### 7. Monthly Budget Burn-Down
+
+**54 rows** with cumulative running totals per caller. Example for Gamma2 (1,000 monthly limit):
+
+```
+Team Gamma2 | 2026-03-18 15:00 |    64 cumulative
+Team Gamma2 | 2026-03-19 04:00 |   520 cumulative
+Team Gamma2 | 2026-03-19 22:00 |   992 cumulative  ← near 1,000 limit → 403s
+```
+
+### Dashboard KQL Summary
+
+| Query | Status | Rows | Notes |
+|-------|--------|------|-------|
+| Quota Overview | ✅ | 7 | All teams visible with correct priority labels |
+| Token Usage Over Time | ✅ | 44 | Hourly granularity, 3 days of data |
+| Rate Limit Events | ✅ | 3 | 429s correctly attributed to callers |
+| Model Usage by Caller | ✅ | 15 | Per-model breakdown with deployment + model names |
+| Daily Usage | ✅ | 17 | Per-day aggregation with priority |
+| Error Breakdown | ✅ | 60 | All error codes tracked with caller attribution |
+| Monthly Burn-Down | ✅ | 54 | Cumulative running total with `row_cumsum` |

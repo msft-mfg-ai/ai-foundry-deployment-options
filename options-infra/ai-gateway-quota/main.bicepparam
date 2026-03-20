@@ -128,8 +128,4 @@ param accessContracts = [
   }
 ]
 
-// ============================================================================
-// Routing Configuration
-// ============================================================================
 
-param ptuUtilizationThreshold = '0.5' // P2 → PTU when utilization < 50%

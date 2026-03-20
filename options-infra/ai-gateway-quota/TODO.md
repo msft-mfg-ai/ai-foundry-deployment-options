@@ -39,7 +39,7 @@ Implemented via per-model backend pools (`{model}-ptu-pool`, `{model}-payg-pool`
 
 ## 3. Monthly Quota Notifications
 
-**Status:** Not started
+**Status:** Event Hub Notification Done. Email Not started
 **Priority:** Medium
 
 - [ ] Notify teams when their monthly token budget is approaching the limit (e.g., at 80% and 90% thresholds)
@@ -83,3 +83,4 @@ For PTU, specify % of PTU quota used.
 - [APIM OpenAI Chargeback](https://github.com/andyogah/apim-openai-chargeback-environment)
 - [AI Gateway FinOps](https://github.com/Azure-Samples/AI-Gateway/blob/main/labs/finops-framework/finops-framework.ipynb)
 - [Power BI Report](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/blob/citadel-v1/guides/power-bi-dashboard.md)
+- [APIM ChargeBack](https://github.com/seiggy/apim-chargeback)

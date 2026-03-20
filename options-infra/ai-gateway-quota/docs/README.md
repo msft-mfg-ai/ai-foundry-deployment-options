@@ -4,17 +4,16 @@ Designing a priority-based routing solution for Azure OpenAI PTU deployments usi
 
 ## Problem
 
-When multiple internal teams share a PTU deployment with different priorities (production vs standard vs economy), we need to:
+When multiple internal teams share a PTU deployment with different priorities (production vs economy), we need to:
 - Maximize PTU utilization (it's pre-paid)
-- Ensure production traffic gets PTU preference
-- Route standard traffic to PTU only when utilization is low
+- Ensure production traffic gets PTU preference via atomic token counting
 - Route economy traffic to PAYG only
+- Monthly quotas only apply to PAYG (PTU is pre-paid)
 
 ## Documentation
 
 - **[Architecture Plan](docs/architecture-plan.md)** — Full analysis of 5 options, 5 deployment topologies, comparison tables, Citadel & SimpleL7Proxy deep-dives, and phased implementation approach
 - **[PTU Design Risks & Limitations](docs/ptu-design-risks.md)** — Deployment naming requirements, multi-region topology, token estimation, race conditions, and risk summary
-- **[Requested APIM Features](docs/requested-apim-features.md)** — Feature gaps in APIM that would simplify PTU priority routing (atomic counters, auto-discovery, model routing, etc.)
 - **[JWT Citadel Implementation](docs/jwt-citadel-implementation.md)** — Implementation details for the JWT-based priority routing policy
 
 ## ⚠️ Critical Requirement: Consistent Deployment Names

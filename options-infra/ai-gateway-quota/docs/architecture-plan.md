@@ -1,11 +1,25 @@
 # Priority Queue for PTU OpenAI with APIM + Foundry
 
+> ## Implementation Outcome (March 2026)
+>
+> After evaluating all 5 options below, the production implementation is a **hybrid of Option 3 (Custom APIM Policy)** with key simplifications:
+>
+> - **Two-API loopback architecture** — A Priority API (external) handles identity, per-team TPM, and routing. A PTU Gate API (internal loopback) enforces PTU capacity via `llm-token-limit`. This replaces cache-based PTU counters with atomic token limits.
+> - **P2 removed** — Only P1 (production → PTU preference) and P3 (economy → PAYG only). The "PTU when idle" tier was eliminated — PTU utilization tracking added too much complexity for the benefit.
+> - **`llm-token-limit` everywhere** — Custom token estimation (`token-estimation-*.xml`) and cache-based counters deleted. `llm-token-limit` with custom `counter-key` (a shipped APIM feature) handles all quota enforcement.
+> - **Policy fragments** — Identity/contract logic in `fragment-identity.xml` (~80 lines) shared across both APIs via `<include-fragment>` (another shipped APIM feature).
+> - **Monthly quota: PAYG-only** — PTU is pre-paid, so monthly token quotas only apply to non-P1 callers.
+> - **Pools fully separated** — PTU-only (`{model}-ptu-pool`) and PAYG-only (`{model}-payg-pool`), no mixed pools.
+> - **~250 lines total policy** across Priority API + PTU Gate + fragment (down from the projected 500+).
+>
+> The analysis below remains valuable for understanding the trade-offs and why alternatives were not chosen.
+
 ## Problem Statement
 
 A customer deploys a **PTU (Provisioned Throughput Units)** Azure OpenAI deployment (e.g., `gpt-5.2-chat`). Multiple internal teams subscribe to this model with different priorities:
 
 - **Priority 1** — Production use cases (Dev Team A production, Dev Team B production)
-- **Priority 2** — Standard use cases (Dev Team A standard, Dev Team B standard)
+- ~~**Priority 2** — Standard use cases~~ *(removed — see Implementation Outcome above)*
 - **Priority 3** — Economy use cases (batch processing, experiments)
 
 **Goals:**

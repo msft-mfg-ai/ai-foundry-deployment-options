@@ -3,6 +3,9 @@ using 'main.bicep'
 var projectsCountValue = readEnvironmentVariable('PROJECTS_COUNT','')
 param projectsCount = empty(projectsCountValue) ? null : int(projectsCountValue)
 
+var vnetLocationValue = readEnvironmentVariable('VNET_LOCATION','')
+param vnetLocation = empty(vnetLocationValue) ? null : vnetLocationValue
+
 // Parameters for the main Bicep template
 // param externalApis = [
 //   {

@@ -1,5 +1,16 @@
 # JWT-Based Citadel Access Contracts — Implementation Plan
 
+> **Current Status (March 2026):** This document describes the original design plan. The production implementation diverges in several key areas:
+> - **P2 abandoned.** Only P1 (production) and P3 (economy) are used. No "PTU when idle" tier.
+> - **Two-API loopback architecture.** PTU routing uses a separate PTU Gate API with its own `llm-token-limit`, not cache-based PTU counters.
+> - **No custom token estimation.** `llm-token-limit` handles estimation internally; `token-estimation-*.xml` fragments were deleted.
+> - **No PTU utilization tracking.** No `ptu-remaining` or `ptu-consumed` caches; `llm-token-limit` on the PTU Gate enforces capacity atomically.
+> - **Monthly quota is PAYG-only.** PTU is pre-paid, so monthly quota enforcement only applies to non-P1 callers.
+> - **Policy fragments.** Identity/contract logic extracted to `fragment-identity.xml` (~80 lines) shared across both APIs.
+> - **Pools separated.** PTU-only pools (`{model}-ptu-pool`) and PAYG-only pools (`{model}-payg-pool`), no mixed pools.
+> 
+> See `policy-priority.xml`, `policy-ptu-gate.xml`, and `fragment-identity.xml` for the actual implementation.
+
 ## Problem Statement
 
 We want to adopt [Citadel's Access Contracts](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1) pattern for governing AI model access across multiple internal teams, but with a critical constraint:
@@ -49,7 +60,7 @@ Teams (apps) are identified solely by JWT claims (`azp`, `appid`, `xms_mirid`, e
 │  4. Check PTU quota (per-model PTU TPM, soft redirect to standard)     │
 │  5. Three-priority routing (+ PTU quota check):                       │
 │     P1 (production) → PTU pool IF PTU quota available, else PAYG overflow │
-│     P2 (standard)   → PTU when utilization < 50% AND PTU quota available │
+│     ~~P2 (standard)   → PTU when utilization < 50% AND PTU quota available~~ (P2 removed) │
 │     P3 (economy)    → Always PAYG pool                                │
 │  6. Backend auth: APIM Managed Identity → Foundry                     │
 │                                                                       │
@@ -216,8 +227,8 @@ The original Citadel `access-contract-request.schema.json` is adapted to remove 
       "properties": {
         "priority": {
           "type": "integer",
-          "enum": [1, 2, 3],
-          "description": "1=Production, 2=Standard, 3=Economy"
+          "enum": [1, 3],
+          "description": "1=Production (PTU preference), 3=Economy (PAYG only). P2 was removed."
         },
         "models": {
           "type": "array",
@@ -311,7 +322,7 @@ The `identities` array supports multiple identity types via different JWT claims
 
 > **Reading this contract**: Team A has **two identities** — an app registration (matched via `azp`) and a managed identity (matched via `xms_mirid`). Both identities share the same contract: **8,000 TPM on `gpt-52-chat`** (hard 429), of which **at most 4,000 TPM** flows through PTU. Once the PTU allocation is consumed, additional requests spill to PAYG (still within the 8K per-model cap). They also get 20K TPM on embeddings (no `ptuTpm` — embeddings are PAYG-only). A **4M monthly token quota** caps total cost across all models. Because both identities share the same contract name as counter-key, quota is shared.
 
-#### Team B — Standard (Priority 2: PTU when available, PAYG when busy)
+#### Team B — ~~Standard (Priority 2)~~ Economy (Priority 3)\n\n> **Note:** P2 was removed. In the production system, Team B would be assigned P1 (if they need PTU) or P3 (PAYG-only).
 
 ```json
 {
@@ -371,14 +382,14 @@ The `identities` array supports multiple identity types via different JWT claims
 
 ---
 
-## Three-Priority Routing Model
+## ~~Three~~ Two-Priority Routing Model
 
-The core routing logic uses three priority tiers with distinct PTU/PAYG behavior. Each tier is **also gated by the team's per-model PTU TPM** (`models[model].ptuTpm`):
+The core routing logic uses ~~three~~ **two** priority tiers. P2 ("standard / PTU when idle") was removed — the complexity of real-time PTU utilization tracking was not justified.
 
 | Priority | Name | PTU Routing | PAYG Routing | Use Case |
 |---|---|---|---|---|
-| **P1** | Production | ✅ PTU first, **up to `ptuTpm`** | Overflow when PTU quota consumed OR on 429 | Production workloads — PTU is reserved for these, capped per model per team |
-| **P2** | Standard | ✅ PTU when utilization < 50% **AND `ptuTpm` not exhausted** | Direct to PAYG when PTU busy or PTU quota consumed | Standard, staging — uses PTU idle capacity within allocation |
+| **P1** | Production | ✅ PTU first via two-API loopback (Case A: 100% PTU direct, Case B: partial PTU via gate) | Overflow when PTU `llm-token-limit` returns 429 | Production workloads — PTU preference with PAYG fallback |
+| ~~**P2**~~ | ~~Standard~~ | ~~PTU when idle~~ | ~~PAYG when busy~~ | **Removed** — eliminated utilization tracking complexity |
 | **P3** | Economy | ❌ Never PTU | ✅ Always PAYG | Batch processing, experiments — never competes for PTU |
 
 ### How It Works

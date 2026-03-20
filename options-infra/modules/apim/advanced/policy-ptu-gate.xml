@@ -1,0 +1,83 @@
+<policies>
+    <inbound>
+        <base />
+
+        <!-- ================================================================ -->
+        <!-- PTU Gate — Atomic token counting via llm-token-limit             -->
+        <!--                                                                  -->
+        <!-- Internal API called by the main inference API via loopback.      -->
+        <!-- Reads routing info from internal headers set by the main API,    -->
+        <!-- applies llm-token-limit as an atomic PTU token quota gate, then  -->
+        <!-- forwards to the PTU-only backend pool.                           -->
+        <!--                                                                  -->
+        <!-- If the team's PTU budget is exceeded → returns 429.              -->
+        <!-- The main API catches this 429 and retries with the PAYG pool.    -->
+        <!-- ================================================================ -->
+
+        <!-- Read routing headers set by the main API -->
+        <set-variable name="ptu-counter-key" value="@(context.Request.Headers.GetValueOrDefault(&quot;x-ptu-counter-key&quot;, &quot;&quot;))" />
+        <set-variable name="ptu-tpm" value="@{
+            int val;
+            return int.TryParse(context.Request.Headers.GetValueOrDefault(&quot;x-ptu-tpm&quot;, &quot;0&quot;), out val) ? val : 0;
+        }" />
+        <set-variable name="ptu-pool-id" value="@(context.Request.Headers.GetValueOrDefault(&quot;x-ptu-pool-id&quot;, &quot;&quot;))" />
+
+        <!-- Reject requests without valid internal headers (external bypass protection) -->
+        <choose>
+            <when condition="@(string.IsNullOrEmpty((string)context.Variables[&quot;ptu-counter-key&quot;]) || (int)context.Variables[&quot;ptu-tpm&quot;] &lt;= 0)">
+                <return-response>
+                    <set-status code="400" reason="Bad Request" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-body>{"error": "missing_internal_headers", "message": "PTU gate requires x-ptu-counter-key and x-ptu-tpm headers. This API is for internal loopback only."}</set-body>
+                </return-response>
+            </when>
+        </choose>
+
+        <!-- ================================================================ -->
+        <!-- Atomic PTU gate                                                  -->
+        <!--                                                                  -->
+        <!-- llm-token-limit manages a 60-second sliding window counter.      -->
+        <!-- It atomically increments the counter with estimated token usage   -->
+        <!-- and returns 429 if the counter exceeds tokens-per-minute.        -->
+        <!-- No manual token estimation or cache management needed.           -->
+        <!-- ================================================================ -->
+        <llm-token-limit
+            counter-key="@((string)context.Variables[&quot;ptu-counter-key&quot;])"
+            tokens-per-minute="@((int)context.Variables[&quot;ptu-tpm&quot;])"
+            estimate-prompt-tokens="true"
+            remaining-tokens-header-name="x-ptu-remaining-tokens"
+            tokens-consumed-header-name="x-ptu-tokens-consumed" />
+
+        <!-- Route to PTU-only backend pool -->
+        <set-backend-service backend-id="@((string)context.Variables[&quot;ptu-pool-id&quot;])" />
+
+        <!-- Authenticate to backend with APIM's managed identity -->
+        <authentication-managed-identity resource="https://cognitiveservices.azure.com" output-token-variable-name="ptu-access-token" ignore-error="false" />
+        <set-header name="Authorization" exists-action="override">
+            <value>@("Bearer " + (string)context.Variables["ptu-access-token"])</value>
+        </set-header>
+
+        <!-- Strip internal routing headers before sending to backend -->
+        <set-header name="x-ptu-counter-key" exists-action="delete" />
+        <set-header name="x-ptu-tpm" exists-action="delete" />
+        <set-header name="x-ptu-pool-id" exists-action="delete" />
+    </inbound>
+
+    <backend>
+        <forward-request buffer-request-body="true" />
+    </backend>
+
+    <outbound>
+        <base />
+        <!-- Mark response as coming from PTU gate -->
+        <set-header name="x-ptu-gate" exists-action="override">
+            <value>true</value>
+        </set-header>
+    </outbound>
+
+    <on-error>
+        <base />
+    </on-error>
+</policies>

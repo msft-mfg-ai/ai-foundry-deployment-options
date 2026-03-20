@@ -1,8 +1,10 @@
 # PTU Priority Routing — Design Risks & Limitations
 
+> **Last updated:** March 2026 — reflects implementation of the two-API loopback architecture. Sections below retain the original analysis with **Resolution** blocks documenting what was actually built.
+
 ## Overview
 
-This document captures known risks, limitations, and open questions in the PTU priority routing design. These affect the **P2 (PTU when idle)** tier most significantly, and have implications for per-team PTU quota tracking.
+This document captures known risks, limitations, and open questions in the PTU priority routing design. ~~These affect the **P2 (PTU when idle)** tier most significantly, and have implications for per-team PTU quota tracking.~~ P2 was abandoned — the production system uses only P1 (production → PTU) and P3 (economy → PAYG).
 
 ---
 
@@ -45,6 +47,8 @@ utilization = 1.0 - (remainingTokens / ptuCapacity)
 | **D. Inbound pre-decrement** | Estimate tokens from request body (see formula above). Pre-decrement on inbound, adjust on outbound. Use aggregate counter for P2 utilization check. | Real-time | Best available in APIM |
 
 **Recommendation**: Option A for production v1. Options C/D as progressive enhancements with documented limitations.
+
+> **Resolution:** Option A (429-reactive) was implemented. PTU utilization headers are not used in the routing decision. Instead, `llm-token-limit` on the PTU Gate API enforces atomic PTU capacity limits — if exceeded, the request gets 429 from the gate, and the Priority API falls back to PAYG. No utilization tracking needed.
 
 ---
 
@@ -113,6 +117,8 @@ Where:
 
 This shrinks the race window from "entire request duration" (seconds) to "inbound policy execution" (milliseconds). The over-estimation provides a safety buffer against concurrent bursts.
 
+> **Resolution:** Pre-decrement / custom token estimation was abandoned entirely. `llm-token-limit` handles token estimation internally (both prompt estimation on inbound and actual-token reconciliation on outbound). The custom `token-estimation-inbound.xml` and `token-estimation-outbound.xml` fragments were deleted. `llm-token-limit` with custom `counter-key` (Feature #12, now shipped) provides per-team TPM enforcement without any manual token counting.
+
 ---
 
 ## 3. APIM Cache is Not Atomic — Race Conditions
@@ -155,6 +161,8 @@ APIM's built-in `llm-token-limit` policy likely has the same concurrency limitat
 
 Our custom cache-based PTU tracking is strictly worse than `llm-token-limit` for atomicity.
 
+> **Resolution:** All custom cache counters were replaced by `llm-token-limit`. Additionally, APIM's cache was discovered to NOT use sliding windows — it uses fixed-interval expiry. This makes cache-based counters fundamentally unsuitable for matching PTU's 60-second sliding window, regardless of atomicity. `llm-token-limit` uses proper sliding windows internally, confirming the switch was correct.
+
 ---
 
 ## 4. P2 Priority — Feasibility Assessment
@@ -187,6 +195,8 @@ P2 (standard) routes to PTU when utilization < 50%, to standard when ≥ 50%.
 - **P3 → PAYG pool only**
 
 The dynamic utilization check can be kept as an **optimization layer** with clear documentation that it's approximate and best-effort.
+
+> **Resolution:** P2 was abandoned. The production system uses only P1 (production) and P3 (economy). P1 gets PTU preference via the two-API loopback (Case A: 100% PTU direct, Case B: partial PTU via gate with PAYG fallback). P3 always routes to PAYG. There is no "PTU when idle" tier — PTU utilization tracking, stale cache reads, and dynamic routing decisions are all eliminated.
 
 ---
 
@@ -278,6 +288,8 @@ Each model gets **two pools**:
 {model-clean}-payg-pool:     (PAYG-only pool)
   PAYG backends only          (for P2 overflow and P3 economy routing)
 ```
+
+> **Resolution:** Pools were further separated. Each model now gets **PTU-only** (`{model}-ptu-pool`) and **PAYG-only** (`{model}-payg-pool`) pools — no mixed pools. The Priority API policy selects the correct pool based on the routing case (A/B/C), and the PTU Gate API always targets the PTU-only pool. This eliminates the need for pool-internal priority/circuit-breaker to handle PTU→PAYG failover (that's handled by the two-API loopback instead).
 
 The pool's circuit breaker handles failover: on 429 from PTU backends (priority 1), the request fails over to PAYG backends (priority 2). The APIM policy adds instant retry so the **current** request also benefits from failover.
 
@@ -441,6 +453,11 @@ Key implementation details:
 - Prevents counter from going negative
 - These fragments are NOT yet integrated into the main policy — they are prototypes to be wired in when the P2 strategy is finalized
 
+> **Resolution:** Both `token-estimation-inbound.xml` and `token-estimation-outbound.xml` were **deleted**. Token estimation is now handled entirely by `llm-token-limit` (which does it internally). The pre-debit/reconcile pattern was replaced by atomic `llm-token-limit` calls in the two-API architecture:
+> - Priority API: `llm-token-limit` with `counter-key` = caller + model for per-team TPM
+> - PTU Gate API: `llm-token-limit` with `counter-key` = model for PTU capacity gating
+> - No custom token estimation, no cache-based counters, no reconciliation step.
+
 ---
 
 ## 9. Next Steps
@@ -448,14 +465,14 @@ Key implementation details:
 - [ ] **Choose APIM topology**: Single Premium multi-region (recommended) vs. separate instances per region
 - [ ] **Create region-specific pools in Bicep**: Refactor `multi-foundry-backends.bicep` to produce `{model}-{region}-pool` with 3-priority tiers (local PTU → remote PTU → paygo)
 - [ ] **Add `context.Deployment.Region` routing**: Policy selects the right regional pool based on which APIM gateway handles the request
-- [ ] **Establish deployment naming convention**: Document that all Foundry instances must use identical deployment names per model
-- [ ] **Refactor `multi-foundry-backends.bicep`**: Remove paygo backends from PTU pools — use 3-priority regional pools instead
-- [ ] **Implement policy-level spillover**: On PTU 429, re-route to standard pool via `send-request` or retry logic in the policy (not pool priority)
+- [x] **Establish deployment naming convention**: Documented; enforced by Bicep type system (no `deploymentName` override field)
+- [x] **Refactor `multi-foundry-backends.bicep`**: Done — PTU-only pools (`{model}-ptu-pool`) and PAYG-only pools (`{model}-payg-pool`), no mixed pools
+- [x] **Implement policy-level spillover**: Done — two-API loopback: PTU Gate returns 429 → Priority API catches it via `<retry>` → routes to PAYG pool
 - [ ] **Empirical PTU header test**: Deploy a real PTU deployment and capture all response headers
-- [ ] **Decide P2 strategy**: Dynamic (current) vs. pool-priority-only (simpler)
+- [x] **Decide P2 strategy**: P2 abandoned. Only P1 (production → PTU) and P3 (economy → PAYG)
 - [ ] **Document soft limit behavior**: Make it clear in contract docs that PTU quotas are approximate
-- [ ] **Evaluate `azure-openai-deployment-utilization` header**: If available, rewrite utilization calc to use it
-- [ ] **Integrate token estimation fragments**: Wire `token-estimation-inbound.xml` and `token-estimation-outbound.xml` into the main policy once P2 strategy is finalized
-- [ ] **Validate estimation formula with real PTU**: Run the 5 test patterns against a real deployment and compare estimated vs actual tokens
-- [ ] **Consider `llm-token-limit` for PTU pool**: Use APIM's built-in estimation instead of custom counters
+- [ ] ~~**Evaluate `azure-openai-deployment-utilization` header**~~: Not needed — utilization tracking eliminated by two-API design
+- [x] ~~**Integrate token estimation fragments**~~: Fragments deleted — `llm-token-limit` handles estimation internally
+- [ ] ~~**Validate estimation formula with real PTU**~~: Not needed — custom estimation abandoned
+- [x] **Consider `llm-token-limit` for PTU pool**: Done — PTU Gate API uses `llm-token-limit` with PTU TPM as the limit
 - [ ] **Streaming support**: `context.Response.Body.As<JObject>` may not work for `stream: true` responses — need to handle chunked responses separately

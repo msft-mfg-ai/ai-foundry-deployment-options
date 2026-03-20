@@ -156,7 +156,7 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
               inputs: []
               settings: {
                 content: {
-                  content: '# 🔒 AI Gateway - Quota Tiers Dashboard\n\nMonitor per-caller token usage, quota consumption, and rate limit events.\nPriority Levels: **Production** (P1) · **Standard** (P2) · **Economy** (P3)\n\nData sourced from `ApiManagementGatewayLlmLog` joined with `ApiManagementGatewayLogs` for caller identification.'
+                  content: '# 🔒 AI Gateway - Quota Tiers Dashboard\n\nMonitor per-caller token usage, quota consumption, and rate limit events.\nPriority Levels: **Production** (P1) · **Economy** (P3)\n\nData sourced from `ApiManagementGatewayLlmLog` joined with `ApiManagementGatewayLogs` for caller identification.'
                   title: ''
                   subtitle: ''
                   markdownSource: 1
