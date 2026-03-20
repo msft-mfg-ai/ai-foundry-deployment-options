@@ -23,7 +23,9 @@ load_dotenv()
 from agent_manager import AgentManager  # noqa: E402
 from semantic_kernel.contents import FunctionCallContent  # noqa: E402
 from semantic_kernel.contents import FunctionResultContent  # noqa: E402
-from semantic_kernel.contents.chat_message_content import ChatMessageContent  # noqa: E402
+from semantic_kernel.contents.chat_message_content import (
+    ChatMessageContent,
+)  # noqa: E402
 from semantic_kernel.contents.chat_message_content import TextContent  # noqa: E402
 
 

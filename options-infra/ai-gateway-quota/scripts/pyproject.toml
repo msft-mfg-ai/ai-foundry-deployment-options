@@ -1,0 +1,10 @@
+[project]
+name = "scripts"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.13"
+dependencies = [
+    "msal>=1.28.0",
+    "pyjwt>=2.8.0",
+    "requests>=2.31.0",
+]

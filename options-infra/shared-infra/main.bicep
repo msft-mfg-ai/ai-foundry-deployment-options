@@ -2,9 +2,17 @@
 // this would go to AI-Subscription and build services that can be shared with app-landing-zone
 // Deployment creates 2 AI Services: one private and one public
 param location string = resourceGroup().location
+param foundrySecondaryRegion string = 'eastus2'
+
+var tags = {
+  'created-by': 'shared-ai-infra'
+  'hidden-title': 'Shared Tools and Models'
+  SecurityControl: 'Ignore'
+}
 
 param resourceToken string = toLower(uniqueString(resourceGroup().id, location))
 param aiServicesName string = 'foundry-landing-zone-${location}-${resourceToken}'
+param aiServicesName2 string = 'foundry-landing-zone-${foundrySecondaryRegion}-${resourceToken}'
 param aiServicesPublicName string = 'foundry-landing-zone-${location}-PUBLIC-${resourceToken}'
 
 // Foundry doesn't support cross-subscription VNet injection or cross subscription resources, so we need to deploy it in the same subscription
@@ -13,14 +21,17 @@ var doesFoundrySupportsCrossSubscriptionVnet = false
 module identity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.0' = {
   name: 'mgmtidentity-${uniqueString(deployment().name, location)}'
   params: {
-    name: 'landing-zone-identity-${resourceToken}'
     location: location
+    tags: tags
+    name: 'landing-zone-identity-${resourceToken}'
   }
 }
 
 module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.15.0' = {
   name: 'log-${resourceToken}'
   params: {
+    location: location
+    tags: tags
     name: 'loganaly01'
     dataRetention: 30
     features: { immediatePurgeDataOn30Days: true, disableLocalAuth: false }
@@ -33,6 +44,8 @@ module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.15.0' = 
 module appInsights 'br/public:avm/res/insights/component:0.7.1' = {
   name: 'appinsights-${resourceToken}'
   params: {
+    location: location
+    tags: tags
     name: 'appinsights01'
     workspaceResourceId: logAnalytics.outputs.resourceId
     applicationType: 'web'
@@ -50,11 +63,12 @@ module appInsights 'br/public:avm/res/insights/component:0.7.1' = {
 module apps '../modules/function/function-app-with-plan.bicep' = {
   name: 'function-app'
   params: {
+    location: 'canadacentral'
+    tags: tags
     name: 'apps'
     applicationInsightResourceId: appInsights.outputs.resourceId
     artifactUrl: 'https://github.com/karpikpl/weather-MCP-OpenAPI-server/blob/main/artifacts/azure-functions-package.zip?raw=true'
     managedIdentityResourceId: identity.outputs.resourceId
-    location: 'canadacentral'
     privateEndpointSubnetResourceId: null // No private endpoint for this example
     logAnalyticsWorkspaceResourceId: logAnalytics.outputs.resourceId
     resourceToken: resourceToken
@@ -64,9 +78,10 @@ module apps '../modules/function/function-app-with-plan.bicep' = {
 module aiServices '../modules/ai/ai-foundry.bicep' = {
   name: 'ai-services'
   params: {
+    location: location
+    tags: tags
     managedIdentityResourceId: identity.outputs.resourceId
     name: aiServicesName
-    location: location
     publicNetworkAccess: 'Disabled' // 'enabled' or 'disabled'
     deployments: [
       {
@@ -87,12 +102,40 @@ module aiServices '../modules/ai/ai-foundry.bicep' = {
   }
 }
 
+module aiServices2 '../modules/ai/ai-foundry.bicep' = {
+  name: 'ai-services2'
+  params: {
+    location: foundrySecondaryRegion
+    tags: tags
+    managedIdentityResourceId: identity.outputs.resourceId
+    name: aiServicesName2
+    publicNetworkAccess: 'Disabled' // 'enabled' or 'disabled'
+    deployments: [
+      {
+        name: 'gpt-5.2-chat'
+        properties: {
+          model: {
+            format: 'OpenAI'
+            name: 'gpt-5.2-chat'
+            version: '2025-12-11'
+          }
+        }
+        sku: {
+          name: 'GlobalStandard'
+          capacity: 20
+        }
+      }
+    ]
+  }
+}
+
 module aiServicesPublic '../modules/ai/ai-foundry.bicep' = {
   name: 'ai-services-public'
   params: {
+    location: location
+    tags: tags
     managedIdentityResourceId: identity.outputs.resourceId
     name: aiServicesPublicName
-    location: location
     publicNetworkAccess: 'Enabled' // 'enabled' or 'disabled'
     deployments: [
       {
@@ -117,6 +160,7 @@ module managedEnvironment '../modules/aca/container-app-environment.bicep' = {
   name: 'managed-environment'
   params: {
     location: location
+    tags: tags
     appInsightsConnectionString: appInsights.outputs.connectionString
     name: 'aca${resourceToken}'
     logAnalyticsWorkspaceResourceId: logAnalytics.outputs.resourceId
@@ -130,6 +174,7 @@ module appMcp '../modules/aca/container-app.bicep' = {
   name: 'app-mcp'
   params: {
     location: location
+    tags: tags
     name: 'aca-mcp-${resourceToken}'
     workloadProfileName: managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
     applicationInsightsConnectionString: appInsights.outputs.connectionString
@@ -138,7 +183,7 @@ module appMcp '../modules/aca/container-app.bicep' = {
     }
     ingressTargetPort: 3000
     existingImage: 'ghcr.io/karpikpl/sample-mcp-fastmcp-python:main'
-    userAssignedManagedIdentityClientId: identity.outputs.resourceId
+    userAssignedManagedIdentityClientId: identity.outputs.clientId
     userAssignedManagedIdentityResourceId: identity.outputs.resourceId
     ingressExternal: true
     cpu: '0.25'
@@ -159,10 +204,45 @@ module appMcp '../modules/aca/container-app.bicep' = {
   }
 }
 
+module SampleMcp '../modules/aca/container-app.bicep' = {
+  name: 'sample-mcp'
+  params: {
+    location: location
+    tags: tags
+    name: 'sample-mcp-${resourceToken}'
+    workloadProfileName: managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
+    applicationInsightsConnectionString: appInsights.outputs.connectionString
+    definition: {
+      settings: []
+    }
+    ingressTargetPort: 8080
+    existingImage: 'docker.io/karpikpl/sample-mcp:latest'
+    userAssignedManagedIdentityClientId: identity.outputs.clientId
+    userAssignedManagedIdentityResourceId: identity.outputs.resourceId
+    ingressExternal: true
+    cpu: '0.25'
+    memory: '0.5Gi'
+    scaleMaxReplicas: 1
+    scaleMinReplicas: 0
+    containerAppsEnvironmentResourceId: managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_ID
+    keyVaultName: null
+    probes: [
+      {
+        type: 'Readiness'
+        httpGet: {
+          path: '/'
+          port: 8080
+        }
+      }
+    ]
+  }
+}
+
 module appOpenAPI '../modules/aca/container-app.bicep' = {
   name: 'app-openapi'
   params: {
     location: location
+    tags: tags
     name: 'aca-openapi-${resourceToken}'
     workloadProfileName: managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
     applicationInsightsConnectionString: appInsights.outputs.connectionString
@@ -171,7 +251,7 @@ module appOpenAPI '../modules/aca/container-app.bicep' = {
     }
     ingressTargetPort: 3000
     existingImage: 'ghcr.io/karpikpl/wttr-docker:main'
-    userAssignedManagedIdentityClientId: identity.outputs.resourceId
+    userAssignedManagedIdentityClientId: identity.outputs.clientId
     userAssignedManagedIdentityResourceId: identity.outputs.resourceId
     ingressExternal: true
     cpu: '0.25'
@@ -197,14 +277,16 @@ module appOpenAPI '../modules/aca/container-app.bicep' = {
 module vnet '../modules/networking/vnet.bicep' = if (doesFoundrySupportsCrossSubscriptionVnet) {
   name: 'vnet'
   params: {
-    vnetName: 'project-vnet-${resourceToken}'
     location: location
+    tags: tags
+    vnetName: 'project-vnet-${resourceToken}'
   }
 }
 
 module ai_dependencies '../modules/ai-dependencies/standard-dependent-resources.bicep' = if (doesFoundrySupportsCrossSubscriptionVnet) {
   params: {
     location: location
+    tags: tags
     azureStorageName: 'projstorage${resourceToken}'
     aiSearchName: 'project-search-${resourceToken}'
     cosmosDBName: 'project-cosmosdb-${resourceToken}'
@@ -226,6 +308,9 @@ module ai_dependencies '../modules/ai-dependencies/standard-dependent-resources.
 module privateEndpointAndDNS '../modules/networking/private-endpoint-and-dns.bicep' = if (doesFoundrySupportsCrossSubscriptionVnet) {
   name: 'private-endpoints-and-dns'
   params: {
+    location: location
+    tags: tags
+
     #disable-next-line what-if-short-circuiting
     aiAccountName: aiServices.outputs.FOUNDRY_NAME // AI Services to secure
     #disable-next-line what-if-short-circuiting

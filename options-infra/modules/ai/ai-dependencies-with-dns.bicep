@@ -53,6 +53,7 @@ module privateEndpointAndDNS '../networking/private-endpoint-and-dns.bicep' = {
   name: 'private-endpoints-and-dns-deployment'
   params: {
     tags: tags
+    location: location
     aiAccountName: aiServicesName // AI Services to secure
     aiAccountNameResourceGroup: aiAccountNameResourceGroupName
     #disable-next-line what-if-short-circuiting

@@ -85,12 +85,19 @@ type aiServiceConfigType = {
 // ------------------
 
 var logSettings = {
-  // Include x-caller-id and x-caller-name header for Caller ID correlation with gateway logs
-  headers: [ 'Content-type', 'User-agent', 'x-ms-region', 'x-ratelimit-remaining-tokens' , 'x-ratelimit-remaining-requests', 'x-aml-data-proxy-url', 'x-aml-vnet-identifier', 'x-aml-static-ingress-ip', 'x-caller-name', 'x-foundry-name', 'x-caller-id' ]
+  // Include x-caller-id, x-caller-name, and x-caller-priority headers for caller correlation with gateway logs
+  headers: [ 'Content-type', 'User-agent', 'x-ms-region', 'x-ratelimit-remaining-tokens' , 'x-ratelimit-remaining-requests', 'x-aml-data-proxy-url', 'x-aml-vnet-identifier', 'x-aml-static-ingress-ip', 'x-caller-name', 'x-caller-priority', 'x-foundry-name', 'x-caller-id' ]
   body: { bytes: 8192 }
 }
 
-var updatedPolicyXml = replace(policyXml, '{backend-id}', (length(aiServicesConfig) > 1) ? inferenceBackendPoolName : '${aiServicesConfig[0].name}-${inferenceAPIType}-backend')
+// Response headers to log — captures caller identity from on-error/outbound responses
+// so that rate-limited (429) and error requests still show CallerName in dashboard queries
+var responseLogSettings = {
+  headers: [ 'x-caller-name', 'x-caller-priority', 'x-caller-id', 'x-error-reason', 'x-error-source' ]
+  body: { bytes: 0 }
+}
+
+var updatedPolicyXml = replace(policyXml, '{backend-id}', (length(aiServicesConfig) > 1) ? inferenceBackendPoolName : length(aiServicesConfig) == 1 ? '${aiServicesConfig[0].name}-${inferenceAPIType}-backend' : 'no-backend')
 
 // ------------------
 //    RESOURCES
@@ -143,7 +150,7 @@ resource api 'Microsoft.ApiManagement/service/apis@2024-06-01-preview' = {
       header: 'api-key'
       query: 'api-key'
     }
-    subscriptionRequired: true
+    subscriptionRequired: false
     type: 'http'
     value: apiDefinition
   }
@@ -164,8 +171,8 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-06-01-pre
 // ------------------
 
 
-var listDeploymentsPolicyXml = replace(loadTextContent('deploymentsPolicy.xml'), 'FOUNDRY_ID', first(aiServicesConfig).resourceId)
-var getDeploymentPolicyXml = replace(loadTextContent('deploymentPolicy.xml'), 'FOUNDRY_ID', first(aiServicesConfig).resourceId)
+var listDeploymentsPolicyXml = replace(loadTextContent('deploymentsPolicy.xml'), 'FOUNDRY_ID', !empty(aiServicesConfig) ? first(aiServicesConfig).resourceId : 'no-resource')
+var getDeploymentPolicyXml = replace(loadTextContent('deploymentPolicy.xml'), 'FOUNDRY_ID', !empty(aiServicesConfig) ? first(aiServicesConfig).resourceId : 'no-resource')
 
 // List Deployments Operation - Returns all available models/deployments
 resource listDeploymentsOperation 'Microsoft.ApiManagement/service/apis/operations@2024-06-01-preview' = if (enableModelDiscovery) {
@@ -247,7 +254,7 @@ resource inferenceBackend 'Microsoft.ApiManagement/service/backends@2024-06-01-p
   parent: apimService
   properties: {
     description: 'Inference backend for ${config.name} API Type: ${inferenceAPIType}'
-    url: '${config.endpoint}${endpointPath}'
+    url: '${config.endpoint}${endsWith(config.endpoint, '/') ? '' : '/'}${endpointPath}'
     protocol: 'http'
     circuitBreaker: (configureCircuitBreaker) ? {
       rules: [
@@ -313,12 +320,7 @@ resource apiDiagnostics 'Microsoft.ApiManagement/service/apis/diagnostics@2024-0
     }
     frontend: {
       request: logSettings
-      response: {
-        headers: []
-        body: {
-          bytes: 0
-        }
-      }
+      response: responseLogSettings
     }
     backend: {
       request: logSettings

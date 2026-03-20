@@ -28,6 +28,7 @@ exclude = [
     "options-infra/foundry-search/scripts/agents_v1",
     "options-infra/foundry-rag-search/scripts/agents_v1",
     "options-infra/foundry-workshop/scripts/agents_v1",
-    "options-infra/foundry-sk-agents/apps/sk-agents"
+    "options-infra/foundry-sk-agents/apps/sk-agents",
+    "options-infra/ai-gateway-quota/scripts"
 ]
 

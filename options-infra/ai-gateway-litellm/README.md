@@ -94,6 +94,69 @@ export OPENAI_API_KEY="your-azure-openai-api-key"
 export OPENAI_API_BASE="https://your-resource.openai.azure.com"
 ```
 
+## Run LiteLLM with Docker Compose
+
+For local/self-managed LiteLLM, use the Compose file in `gateway/docker-compose.yml`.
+
+### Required environment variables
+
+Create `.env` from the example file and fill all required values:
+
+```bash
+cd options-infra/ai-gateway-litellm/gateway
+cp .env.example .env
+```
+
+Required values in `.env`:
+
+```env
+POSTGRES_DB=litellm
+POSTGRES_USER=litellm
+POSTGRES_PASSWORD=change-me-strong-password
+
+LITELLM_MASTER_KEY=sk-your-master-key
+UI_USERNAME=admin
+UI_PASSWORD=change-me-ui-password
+
+AZURE_API_BASE=https://your-resource.openai.azure.com
+AZURE_API_KEY=your-azure-openai-api-key
+```
+
+Variables used by Compose:
+- `POSTGRES_DB` - PostgreSQL database name for LiteLLM
+- `POSTGRES_USER` - PostgreSQL username
+- `POSTGRES_PASSWORD` - PostgreSQL password
+- `LITELLM_MASTER_KEY` - LiteLLM master key for API authentication
+- `UI_USERNAME` - LiteLLM Admin UI username
+- `UI_PASSWORD` - LiteLLM Admin UI password
+- `AZURE_API_BASE` - Azure OpenAI endpoint (used by `gateway/config.yaml`)
+- `AZURE_API_KEY` - Azure OpenAI API key (used by `gateway/config.yaml`)
+
+### Start the stack
+
+```bash
+cd options-infra/ai-gateway-litellm/gateway
+
+# Required once if the external network does not exist yet
+docker network create traefik-net
+
+docker compose up -d
+```
+
+You do need to provide these values either via `.env` (recommended) or via exported shell environment variables before `docker compose up`.
+
+### Stop the stack
+
+```bash
+cd options-infra/ai-gateway-litellm/gateway
+docker compose down
+```
+
+Notes:
+- The Compose file expects an external Docker network named `traefik-net`.
+- LiteLLM is exposed to Traefik on port `4000` (service internal port).
+- The configured host rule is `litellm.domain.com`; update the Traefik label in `gateway/docker-compose.yml` if you use a different domain.
+
 ## Deployment
 
 ```bash

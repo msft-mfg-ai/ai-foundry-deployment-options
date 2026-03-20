@@ -8,7 +8,6 @@ targetScope = 'resourceGroup'
 param location string = resourceGroup().location
 @secure()
 param openRouterApiKey string
-param existingFoundryName string?
 param projectsCount int = 3
 
 var tags = {
@@ -58,42 +57,20 @@ module keyVault '../modules/kv/key-vault.bicep' = {
   }
 }
 
-var foundryName = existingFoundryName ?? 'ai-foundry-${resourceToken}'
-
-module foundry '../modules/ai/ai-foundry.bicep' = if (empty(existingFoundryName)) {
+module foundry '../modules/ai/ai-foundry.bicep' = {
   name: 'foundry-deployment-${resourceToken}'
   params: {
     tags: tags
     location: location
     #disable-next-line what-if-short-circuiting
     managedIdentityResourceId: foundry_identity.outputs.MANAGED_IDENTITY_RESOURCE_ID
-    name: foundryName
+    name: 'ai-foundry-${resourceToken}'
     publicNetworkAccess: 'Enabled'
     agentSubnetResourceId: null
     deployments: [] // no models
     #disable-next-line what-if-short-circuiting
     keyVaultResourceId: keyVault.outputs.KEY_VAULT_RESOURCE_ID
     keyVaultConnectionEnabled: true
-    existing_Foundry_Name: existingFoundryName
-  }
-}
-
-// This is required due to KeyVault issue resulting in Foundry deployment timeout
-// https://portal.microsofticm.com/imp/v5/incidents/details/21000000774829/summary - AKV Detach Bug
-// https://msdata.visualstudio.com/Vienna/_workitems/edit/4814146/
-module fake_foundry '../modules/ai/ai-foundry-fake.bicep' = if (!empty(existingFoundryName)) {
-  name: 'fake-foundry-deployment-${resourceToken}'
-  params: {
-    tags: tags
-    location: location
-    managedIdentityId: foundry_identity.outputs.MANAGED_IDENTITY_RESOURCE_ID
-    name: foundryName
-    publicNetworkAccess: 'Enabled'
-    agentSubnetResourceId: null
-    deployments: [] // no models
-    keyVaultResourceId: keyVault.outputs.KEY_VAULT_RESOURCE_ID
-    keyVaultConnectionEnabled: true
-    existing_Foundry_Name: existingFoundryName
   }
 }
 
@@ -118,7 +95,7 @@ module projects '../modules/ai/ai-project.bicep' = [
     params: {
       tags: tags
       location: location
-      foundry_name: foundryName
+      foundry_name: foundry.outputs.FOUNDRY_NAME
       project_name: projectNames[i - 1]
       display_name: 'AI Project ${i}'
       project_description: 'AI Project ${i} deployed via AI Gateway OpenRouter option'
@@ -126,7 +103,6 @@ module projects '../modules/ai/ai-project.bicep' = [
       appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
       createAccountCapabilityHost: true
     }
-    dependsOn: [foundry ?? fake_foundry]
   }
 ]
 
@@ -134,7 +110,7 @@ module modelGatewayConnectionStatic '../modules/ai/connection-modelgateway-stati
   for projectName in projectNames: {
     name: '${projectName}-connection-gateway'
     params: {
-      aiFoundryName: foundryName
+      aiFoundryName: foundry.outputs.FOUNDRY_NAME
       aiFoundryProjectName: projectName
       connectionName: 'openrouter-gateway-${projectName}-static'
       apiKey: openRouterApiKey
@@ -186,7 +162,7 @@ module modelGatewayConnectionStatic '../modules/ai/connection-modelgateway-stati
         format: 'Bearer {api_key}'
       }
     }
-    dependsOn: [foundry ?? fake_foundry, projects]
+    dependsOn: [projects]
   }
 ]
 
@@ -218,4 +194,4 @@ output FOUNDRY_PROJECTS_CONNECTION_STRINGS string[] = [
 ]
 output FOUNDRY_PROJECT_NAMES string[] = [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
 output CONFIG_VALIDATION_RESULT bool = valid_config
-output FOUNDRY_NAME string = foundryName
+output FOUNDRY_NAME string = foundry.outputs.FOUNDRY_NAME

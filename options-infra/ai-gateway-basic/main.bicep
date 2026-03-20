@@ -107,7 +107,7 @@ module ai_gateway '../modules/apim/ai-gateway.bicep' = {
     logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
     appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
     appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
-    gatewayAuthenticationType: 'ProjectManagedIdentity'
+    gatewayAuthenticationType: 'ProjectManagedIdentity' // use the project managed identity to authenticate Foundry to APIM
     staticModels: [
       {
         name: 'gpt-4.1-mini'

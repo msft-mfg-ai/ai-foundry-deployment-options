@@ -13,14 +13,6 @@ resource projects 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' exi
   }
 ]
 
-module formatProjectWorkspaceIds '../modules/ai/format-project-workspace-id.bicep' = [
-  for (projectName, i) in projectNames: {
-    name: 'format-project-${projectName}-workspace-id-deployment'
-    params: {
-      projectWorkspaceId: projects[i].properties.internalId
-    }
-  }
-]
 
 module fixCosmosPermissions '../modules/iam/cosmos-container-role-assignments.bicep' = [
   for (projectName, i) in projectNames: {
@@ -28,7 +20,6 @@ module fixCosmosPermissions '../modules/iam/cosmos-container-role-assignments.bi
     params: {
       cosmosAccountName: cosmosAccountName
       principalId: projects[i].identity.principalId
-      projectWorkspaceId: formatProjectWorkspaceIds[i].outputs.FOUNDRY_PROJECT_WORKSPACE_ID
     }
   }
 ]

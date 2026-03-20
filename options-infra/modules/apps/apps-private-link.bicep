@@ -125,7 +125,7 @@ resource aiFoundry 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' exi
 // Create the connection with ApiKey authentication
 resource mcpTools 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-preview' = [
   for (api, index) in externalApis: if (api.apiType == 'mcp' && !empty(aiFoundryName) && !empty(apimGatewayUrl)) {
-    name: 'MC-${api.name}'
+    name: 'MCP-${api.name}'
     parent: aiFoundry
     properties: {
       category: 'RemoteTool'

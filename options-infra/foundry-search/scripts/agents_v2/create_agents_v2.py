@@ -107,7 +107,9 @@ async def create_agent_with_search(
         print(f"  📝 Updating existing agent: {name} with index {index_for_agent}")
         # Delete and recreate (v2 SDK pattern)
         delete_response = await client.agents.delete(agent_name=name)
-        print(f"    🗑️  Deleted existing agent: {name}, response: {delete_response.deleted}")
+        print(
+            f"    🗑️  Deleted existing agent: {name}, response: {delete_response.deleted}"
+        )
         agent = await client.agents.create(
             name=name,
             definition=definition,

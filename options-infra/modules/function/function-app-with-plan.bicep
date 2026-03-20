@@ -2,6 +2,7 @@
 // Public access is disabled. No VNET integration. Uses zip deployment for source code.
 param name string
 param location string
+param tags object = {}
 param artifactUrl string // URL to zip file with function code
 param managedIdentityResourceId string
 param resourceToken string
@@ -22,6 +23,7 @@ resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-07-31-p
 module virtualNetworkDeployment 'br/public:avm/res/network/virtual-network:0.7.2' = {
   name: 'virtual-network-deployment'
   params: {
+    tags: tags
     addressPrefixes: ['10.0.0.0/16']
     name: 'apps-vnet-${resourceToken}'
     location: location
@@ -44,13 +46,15 @@ module virtualNetworkDeployment 'br/public:avm/res/network/virtual-network:0.7.2
 }
 
 // Storage Account for the Function App
-module storageAccount 'br/public:avm/res/storage/storage-account:0.31.0' = {
+module storageAccount 'br/public:avm/res/storage/storage-account:0.32.0' = {
   name: 'storageAccount'
   params: {
+    tags: tags
     name: take('funstor${resourceToken}', 24)
     location: location
     skuName: 'Standard_LRS'
     kind: 'StorageV2'
+    requireInfrastructureEncryption: false
     publicNetworkAccess: 'Disabled'
     networkAcls: {
       bypass: 'AzureServices, Logging, Metrics'
@@ -187,13 +191,14 @@ var storageZones = [
   }
 ]
 
-module storagePrivateDns 'br/public:avm/res/network/private-dns-zone:0.8.0' = [
+module storagePrivateDns 'br/public:avm/res/network/private-dns-zone:0.8.1' = [
   for zone in storageZones: {
     name: 'privateDnsZoneDeployment-${zone.name}'
     params: {
       // Required parameters
       name: zone.name
       // Non-required parameters
+      tags: tags
       location: 'global'
       virtualNetworkLinks: [
         { virtualNetworkResourceId: virtualNetworkDeployment.outputs.resourceId }
@@ -217,6 +222,7 @@ module storagePrivateDns 'br/public:avm/res/network/private-dns-zone:0.8.0' = [
 resource serverfarmForLogicApps 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: 'logic-apps-plan-${resourceToken}'
   location: location
+  tags: tags
   sku: {
     name: 'WS1'
   }
@@ -226,6 +232,7 @@ resource serverfarmForLogicApps 'Microsoft.Web/serverfarms@2023-12-01' = {
 resource serverfarmForFunctions 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: 'function-apps-plan-${resourceToken}'
   location: location
+  tags: tags
   sku: {
     name: 'B1'
   }
@@ -235,11 +242,12 @@ resource serverfarmForFunctions 'Microsoft.Web/serverfarms@2023-12-01' = {
   }
 }
 
-module func 'br/public:avm/res/web/site:0.21.0' = {
+module func 'br/public:avm/res/web/site:0.22.0' = {
   name: 'function-deployment'
   params: {
     location: location
     // Required parameters
+    tags: tags
     kind: 'functionapp'
     name: 'fun-${name}-${resourceToken}'
     serverFarmResourceId: serverfarmForFunctions.id
@@ -290,11 +298,12 @@ module func 'br/public:avm/res/web/site:0.21.0' = {
   }
 }
 
-module logicApp 'br/public:avm/res/web/site:0.21.0' = {
+module logicApp 'br/public:avm/res/web/site:0.22.0' = {
   name: 'logicAppDeployment'
   params: {
     // Required parameters
     location: location
+    tags: tags
     kind: 'functionapp,workflowapp'
     name: '${name}-${resourceToken}'
     serverFarmResourceId: serverfarmForLogicApps.id

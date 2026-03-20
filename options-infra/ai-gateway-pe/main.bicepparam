@@ -7,11 +7,11 @@ param openAiResourceId = readEnvironmentVariable('OPENAI_RESOURCE_ID', '')
 var openAiLocationValue = readEnvironmentVariable('OPENAI_LOCATION', '')
 param openAiLocation = empty(openAiLocationValue) ? null : openAiLocationValue
 
-var existingFoundryNameValue = readEnvironmentVariable('FOUNDRY_NAME', '')
-param existingFoundryName = empty(existingFoundryNameValue) ? null : existingFoundryNameValue
-
 var apimPublicEnabledValue = readEnvironmentVariable('APIM_PUBLIC_ENABLED', '')
 param apimPublicEnabled = toLower(apimPublicEnabledValue) == 'true' ? true : false
+
+var projectsCountValue = readEnvironmentVariable('PROJECTS_COUNT','')
+param projectsCount = empty(projectsCountValue) ? null : int(projectsCountValue)
 
 param apiServices = [
   {
@@ -20,6 +20,14 @@ param apiServices = [
     type: 'managedEnvironments'
     resourceId: '/subscriptions/0721e282-2773-4021-af16-e00641ed5e36/resourceGroups/foundry-landing-zone-westus/providers/Microsoft.App/managedEnvironments/acaqczp34j2qg7pk'
     uri: 'https://aca-mcp-qczp34j2qg7pk.ashyocean-7ea49412.westus.azurecontainerapps.io/mcp/mcp'
+    apiType: 'mcp'
+  }
+  {
+    name: 'sample-mcp'
+    dnsZoneName: 'privatelink.westus.azurecontainerapps.io'
+    type: 'managedEnvironments'
+    resourceId: '/subscriptions/0721e282-2773-4021-af16-e00641ed5e36/resourceGroups/foundry-landing-zone-westus/providers/Microsoft.App/managedEnvironments/acaqczp34j2qg7pk'
+    uri: 'https://sample-mcp-qczp34j2qg7pk.ashyocean-7ea49412.westus.azurecontainerapps.io/mcp'
     apiType: 'mcp'
   }
   {

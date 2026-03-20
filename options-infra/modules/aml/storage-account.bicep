@@ -19,14 +19,14 @@ param haDeploymentEnabled bool = false
 @description('If true, the storage account will allow public access. Not recommended for production scenarios.')
 param publicAccessEnabled bool = false
 
-module storageAccount 'br/public:avm/res/storage/storage-account:0.26.2' = {
+module storageAccount 'br/public:avm/res/storage/storage-account:0.32.0' = {
   name: 'storageAccount-${name}'
   params: {
     name: name
     location: location
     skuName: haDeploymentEnabled ? 'Standard_RAGZRS' : 'Standard_LRS'
     kind: 'StorageV2'
-
+    requireInfrastructureEncryption: false
     allowBlobPublicAccess: false
     tags: tags
     fileServices: {

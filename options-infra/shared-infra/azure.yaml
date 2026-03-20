@@ -1,0 +1,6 @@
+name: shared-ai-infra
+
+infra:
+  provider: bicep
+  path: .
+  module: main

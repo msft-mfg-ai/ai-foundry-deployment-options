@@ -10,7 +10,6 @@ param location string = resourceGroup().location
 param openAiApiBase string
 param openAiResourceId string
 param openAiLocation string = location
-param existingFoundryName string?
 param projectsCount int = 3
 
 var tags = {
@@ -95,16 +94,14 @@ module keyVault '../modules/kv/key-vault.bicep' = {
   }
 }
 
-var foundryName = existingFoundryName ?? 'ai-foundry-${resourceToken}'
-
-module foundry '../modules/ai/ai-foundry.bicep' = if (empty(existingFoundryName)) {
+module foundry '../modules/ai/ai-foundry.bicep' = {
   name: 'foundry-deployment-${resourceToken}'
   params: {
     tags: tags
     location: location
     #disable-next-line what-if-short-circuiting
     managedIdentityResourceId: foundry_identity.outputs.MANAGED_IDENTITY_RESOURCE_ID
-    name: foundryName
+    name: 'ai-foundry-${resourceToken}'
     publicNetworkAccess: 'Enabled'
     disableLocalAuth: false // keep local auth enabled for AI Gateway integration
     agentSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId // Use the first agent subnet
@@ -112,28 +109,10 @@ module foundry '../modules/ai/ai-foundry.bicep' = if (empty(existingFoundryName)
     #disable-next-line what-if-short-circuiting
     keyVaultResourceId: keyVault.outputs.KEY_VAULT_RESOURCE_ID
     keyVaultConnectionEnabled: true
-    existing_Foundry_Name: existingFoundryName
   }
 }
 
-// This is required due to KeyVault issue resulting in Foundry deployment timeout
-// https://portal.microsofticm.com/imp/v5/incidents/details/21000000774829/summary - AKV Detach Bug
-// https://msdata.visualstudio.com/Vienna/_workitems/edit/4814146/
-module fake_foundry '../modules/ai/ai-foundry-fake.bicep' = if (!empty(existingFoundryName)) {
-  name: 'fake-foundry-deployment-${resourceToken}'
-  params: {
-    tags: tags
-    location: location
-    managedIdentityId: foundry_identity.outputs.MANAGED_IDENTITY_RESOURCE_ID
-    name: foundryName
-    publicNetworkAccess: 'Enabled'
-    agentSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId // Use the first agent subnet
-    deployments: [] // no models
-    keyVaultResourceId: keyVault.outputs.KEY_VAULT_RESOURCE_ID
-    keyVaultConnectionEnabled: true
-    existing_Foundry_Name: existingFoundryName
-  }
-}
+
 
 module identities '../modules/iam/identity.bicep' = [
   for i in range(1, projectsCount): {
@@ -153,16 +132,15 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
     params: {
       tags: tags
       location: location
-      foundryName: foundryName
       projectId: i
       project_description: 'AI Project ${i} ${resourceToken}'
       display_name: 'AI Project ${i} ${resourceToken}'
+      foundryName: foundry.outputs.FOUNDRY_NAME
       aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
       existingAiResourceId: null
       managedIdentityResourceId: identities[i - 1].outputs.MANAGED_IDENTITY_RESOURCE_ID
       appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
     }
-    dependsOn: [foundry ?? fake_foundry]
   }
 ]
 
@@ -172,7 +150,7 @@ module ai_gateway '../modules/apim/ai-gateway.bicep' = {
     tags: tags
     location: location
     resourceToken: resourceToken
-    aiFoundryName: foundryName
+    aiFoundryName: foundry.outputs.FOUNDRY_NAME
     aiFoundryProjectNames: [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
     logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
     appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
@@ -228,7 +206,6 @@ module ai_gateway '../modules/apim/ai-gateway.bicep' = {
       }
     ]
   }
-  dependsOn: [foundry ?? fake_foundry]
 }
 
 module apim_role_assignment '../modules/iam/role-assignment-cognitiveServices.bicep' = {
@@ -269,4 +246,4 @@ output FOUNDRY_PROJECTS_CONNECTION_STRINGS string[] = [
 ]
 output FOUNDRY_PROJECT_NAMES string[] = [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
 output CONFIG_VALIDATION_RESULT bool = valid_config
-output FOUNDRY_NAME string = foundryName
+output FOUNDRY_NAME string = foundry.outputs.FOUNDRY_NAME

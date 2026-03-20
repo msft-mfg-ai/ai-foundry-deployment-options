@@ -1,14 +1,32 @@
 import os
+from dataclasses import dataclass, field
 from azure.ai.projects.models import PromptAgentDefinition, Tool, AgentObject
 from azure.ai.projects.aio import AIProjectClient
 from openai import AsyncStream, AsyncOpenAI
 from openai.types.conversations import Conversation
-from openai.types.responses import ResponseStreamEvent, Response, ResponseReasoningItem, ResponseOutputText
+from openai.types.responses import (
+    ResponseStreamEvent,
+    Response,
+    ResponseReasoningItem,
+    ResponseOutputText,
+)
 from openai.types.responses.response_input_param import (
     McpApprovalResponse,
-    
 )
 import logging
+
+
+@dataclass
+class ProcessedResponse:
+    """Result from processing a streaming or non-streaming response."""
+
+    events_received: list = field(default_factory=list)
+    input_list: list = field(default_factory=list)
+    response_id: str | None = None
+    full_response: str = ""
+    served_by_cluster: str = "unknown"
+    openai_processing_ms: str = "unknown"
+    request_id: str = "unknown"
 
 
 class agents_utils:
@@ -85,19 +103,26 @@ class agents_utils:
         return agent
 
 
-async def process_stream(stream: AsyncStream[ResponseStreamEvent]):
+async def process_stream(stream: AsyncStream[ResponseStreamEvent]) -> ProcessedResponse:
     """Process streaming events and handle MCP approval requests."""
-    events_received = []
-    input_list = []
-    response_id = None
-    full_response = ""
+    result = ProcessedResponse(
+        served_by_cluster=stream.response.headers.get(
+            "azureml-served-by-cluster", "unknown"
+        ),
+        openai_processing_ms=stream.response.headers.get(
+            "openai-processing-ms", "unknown"
+        ),
+        request_id=stream.response.headers.get("x-request-id", "unknown"),
+    )
 
     async for event in stream:
-        previous_event = events_received[-1] if len(events_received) > 0 else None
+        previous_event = (
+            result.events_received[-1] if len(result.events_received) > 0 else None
+        )
         if previous_event and previous_event["type"] == event.type:
             previous_event["count"] += 1
         else:
-            events_received.append({"type": event.type, "count": 1})
+            result.events_received.append({"type": event.type, "count": 1})
 
         if event.type == "response.created":
             print(f"🆕 Stream started (ID: {event.response.id})\n")
@@ -110,7 +135,7 @@ async def process_stream(stream: AsyncStream[ResponseStreamEvent]):
                 print(
                     f"\n\n🔐 MCP approval requested: {event.item.name if hasattr(event.item, 'name') else 'tool'}"
                 )
-                input_list.append(
+                result.input_list.append(
                     McpApprovalResponse(
                         type="mcp_approval_response",
                         approve=True,
@@ -122,20 +147,17 @@ async def process_stream(stream: AsyncStream[ResponseStreamEvent]):
         elif event.type == "response.output_item.done":
             print(f"   ✅ Item complete: {event.item.type}")
         elif event.type == "response.completed":
-            response_id = event.response.id
+            result.response_id = event.response.id
             print("\n🎉 Response completed!")
             print(f"💰 Usage: {event.response.to_dict()['usage']}")
-            full_response = event.response.output_text
+            result.full_response = event.response.output_text
 
-    return events_received, input_list, response_id, full_response
+    return result
 
 
-async def process_response(response: Response):
+async def process_response(response: Response) -> ProcessedResponse:
     """Process response and handle MCP approval requests."""
-    events_received = []
-    input_list = []
-    response_id = None
-    full_response = ""
+    result = ProcessedResponse()
 
     if response.status == "incomplete":
         print(f"⚠️ Response incomplete! Reason: {response.incomplete_details}")
@@ -143,11 +165,13 @@ async def process_response(response: Response):
         print(f"✅ Response complete with status: {response.status}.")
 
     for event in response.output:
-        previous_event = events_received[-1] if len(events_received) > 0 else None
+        previous_event = (
+            result.events_received[-1] if len(result.events_received) > 0 else None
+        )
         if previous_event and previous_event["type"] == event.type:
             previous_event["count"] += 1
         else:
-            events_received.append({"type": event.type, "count": 1})
+            result.events_received.append({"type": event.type, "count": 1})
 
         if event.type == "response.created":
             print(f"🆕 Stream started (ID: {event.response.id})\n")
@@ -155,7 +179,9 @@ async def process_response(response: Response):
             print(event.delta, end="", flush=True)
         elif event.type == "reasoning":
             reasoning_item: ResponseReasoningItem = event
-            print(f"🧠 Reasoning update ({reasoning_item.status}): {reasoning_item.content} Summary: {reasoning_item.summary}")
+            print(
+                f"🧠 Reasoning update ({reasoning_item.status}): {reasoning_item.content} Summary: {reasoning_item.summary}"
+            )
         elif event.type == "bing_grounding_call":
             print(f"🔎 Bing grounding call: {event.arguments}")
         elif event.type == "bing_grounding_call_output":
@@ -164,28 +190,32 @@ async def process_response(response: Response):
             print("\n\n✅ Text complete")
         elif event.type == "response.output_item.added":
             if event.item.type == "mcp_approval_request":
-                process_approval(event.item, input_list)
+                process_approval(event.item, result.input_list)
             else:
                 print(f"\n\n📦 Output item added: {event.item.type}")
         elif event.type == "mcp_approval_request":
-            process_approval(event, input_list)
+            process_approval(event, result.input_list)
         elif event.type == "response.output_item.done":
             print(f"   ✅ Item complete: {event.item.type}")
         elif event.type == "response.completed":
-            response_id = event.response.id
+            result.response_id = event.response.id
             print("\n🎉 Response completed!")
             print(f"💰 Usage: {event.response.to_dict()['usage']}")
-            full_response = event.response.output_text
+            result.full_response = event.response.output_text
         elif event.type == "mcp_list_tools":
-            print(f"🔧 Listing tools...")
+            print("🔧 Listing tools...")
+        elif event.type == "mcp_call":
+            print(
+                f"🔧 Making MCP call to {event.name} on server {event.server_label} with arguments {event.arguments[:50]}. Result: '{event.output[:50]}'"
+            )
         elif event.type == "message":
             for message in event.content:
                 if isinstance(message, ResponseOutputText):
-                    full_response += message.text
+                    result.full_response += message.text
                 for annotation in message.annotations:
                     print(f"💬 Message annotation: {annotation}")
 
-    return events_received, input_list, response_id, full_response
+    return result
 
 
 def process_approval(item, input_list=[]):
@@ -203,14 +233,22 @@ def process_approval(item, input_list=[]):
 
 
 async def create_response_with_retry(
-    openai_client: AsyncOpenAI, conversation: Conversation, agent: AgentObject, max_retries: int = 10, use_retry: bool = True
+    openai_client: AsyncOpenAI,
+    conversation: Conversation,
+    agent: AgentObject = None,
+    max_retries: int = 10,
+    use_retry: bool = True,
 ) -> Response:
     last_exception = None
     for attempt in range(1, max_retries + 1):
         try:
             response = await openai_client.responses.create(
                 conversation=conversation.id,
-                extra_body={"agent": {"name": agent.name, "type": "agent_reference"}},
+                extra_body=(
+                    {"agent": {"name": agent.name, "type": "agent_reference"}}
+                    if agent
+                    else None
+                ),
                 input="",
             )
             return response
@@ -222,6 +260,46 @@ async def create_response_with_retry(
             logging.warning(f"Attempt {attempt}/{max_retries} failed: {e}")
             if attempt < max_retries:
                 import asyncio
+
                 await asyncio.sleep(1)  # Wait 1 second before retrying
-    
-    raise Exception(f"Failed to get response after {max_retries} attempts. Last error: {last_exception}")
+
+    raise Exception(
+        f"Failed to get response after {max_retries} attempts. Last error: {last_exception}"
+    )
+
+
+async def stream_response_with_retry(
+    openai_client: AsyncOpenAI,
+    conversation: Conversation,
+    agent: AgentObject = None,
+    max_retries: int = 10,
+    use_retry: bool = True,
+) -> ProcessedResponse:
+    last_exception = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            stream = await openai_client.responses.create(
+                conversation=conversation.id,
+                extra_body=(
+                    {"agent": {"name": agent.name, "type": "agent_reference"}}
+                    if agent
+                    else None
+                ),
+                input="",
+                stream=True,
+            )
+            return await process_stream(stream)
+        except Exception as e:
+            if not use_retry:
+                raise e
+
+            last_exception = e
+            logging.warning(f"Attempt {attempt}/{max_retries} failed: {e}")
+            if attempt < max_retries:
+                import asyncio
+
+                await asyncio.sleep(1)  # Wait 1 second before retrying
+
+    raise Exception(
+        f"Failed to stream response after {max_retries} attempts. Last error: {last_exception}"
+    )

@@ -68,7 +68,9 @@ RETRY_MAX_WAIT = 30  # seconds
 @retry(
     stop=stop_after_attempt(RETRY_ATTEMPTS),
     wait=wait_exponential(multiplier=1, min=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT),
-    retry=retry_if_exception_type((RateLimitError, APIConnectionError, APITimeoutError)),
+    retry=retry_if_exception_type(
+        (RateLimitError, APIConnectionError, APITimeoutError)
+    ),
     before_sleep=before_sleep_log(logger, logging.WARNING),
     reraise=True,
 )
@@ -120,7 +122,9 @@ def generate_embedding(
         )
         return None
     except Exception as e:
-        logger.exception(f"Unexpected error generating embedding: {type(e).__name__}: {e}")
+        logger.exception(
+            f"Unexpected error generating embedding: {type(e).__name__}: {e}"
+        )
         return None
 
 
@@ -343,7 +347,9 @@ def extract_document_content(
         )
 
     result = poller.result()
-    logger.debug(f"Document analysis complete: {len(result.pages) if result.pages else 0} pages")
+    logger.debug(
+        f"Document analysis complete: {len(result.pages) if result.pages else 0} pages"
+    )
 
     extracted = {
         "content": result.content,
@@ -433,7 +439,9 @@ def extract_images_from_pdf(file_path: Path) -> list[dict]:
     try:
         import fitz  # PyMuPDF
     except ImportError:
-        logger.warning("PyMuPDF not installed. Skipping image extraction. Install with: pip install pymupdf")
+        logger.warning(
+            "PyMuPDF not installed. Skipping image extraction. Install with: pip install pymupdf"
+        )
         return []
 
     images = []
@@ -464,7 +472,9 @@ def extract_images_from_pdf(file_path: Path) -> list[dict]:
 @retry(
     stop=stop_after_attempt(RETRY_ATTEMPTS),
     wait=wait_exponential(multiplier=1, min=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT),
-    retry=retry_if_exception_type((RateLimitError, APIConnectionError, APITimeoutError)),
+    retry=retry_if_exception_type(
+        (RateLimitError, APIConnectionError, APITimeoutError)
+    ),
     before_sleep=before_sleep_log(logger, logging.WARNING),
     reraise=True,
 )
@@ -515,7 +525,9 @@ def generate_image_description(
     mime_type = f"image/{image_ext}" if image_ext != "jpg" else "image/jpeg"
 
     try:
-        result = _call_vision_api(openai_client, mime_type, image_base64, deployment_name)
+        result = _call_vision_api(
+            openai_client, mime_type, image_base64, deployment_name
+        )
         # Check for empty response (API succeeded but returned no content)
         if not result or not result.strip():
             logger.warning(
@@ -696,13 +708,18 @@ def process_pdf(
 
             image_context = f"file={file_path.name}, page={img['page_number']}, index={img['index']}"
             description = generate_image_description(
-                openai_client, img["base64"], img["extension"], openai_deployment,
-                context=image_context
+                openai_client,
+                img["base64"],
+                img["extension"],
+                openai_deployment,
+                context=image_context,
             )
             if description:
                 logger.info(
                     f"🖼️  Image description generated for '{file_path.name}' - Page {img['page_number']}: "
-                    f"{description[:100]}..." if len(description) > 100 else description
+                    f"{description[:100]}..."
+                    if len(description) > 100
+                    else description
                 )
             else:
                 logger.warning(
@@ -764,15 +781,15 @@ def _upload_batch(client: SearchClient, batch: list[dict], batch_num: int) -> in
     result = client.upload_documents(batch)
     succeeded = sum(1 for r in result if r.succeeded)
     failed = [r for r in result if not r.succeeded]
-    
+
     if failed:
         for f in failed[:5]:  # Log first 5 failures
-            logger.warning(
-                f"Failed to upload document '{f.key}': {f.error_message}"
-            )
+            logger.warning(f"Failed to upload document '{f.key}': {f.error_message}")
         if len(failed) > 5:
-            logger.warning(f"... and {len(failed) - 5} more failures in batch {batch_num}")
-    
+            logger.warning(
+                f"... and {len(failed) - 5} more failures in batch {batch_num}"
+            )
+
     return succeeded
 
 
@@ -789,7 +806,7 @@ def upload_documents(endpoint: str, index_name: str, documents: list[dict]) -> N
     total_failed = 0
 
     logger.info(f"Uploading {len(documents)} documents in batches of {batch_size}...")
-    
+
     for i in range(0, len(documents), batch_size):
         batch = documents[i : i + batch_size]
         batch_num = i // batch_size + 1
@@ -807,9 +824,13 @@ def upload_documents(endpoint: str, index_name: str, documents: list[dict]) -> N
             )
 
     if total_failed > 0:
-        logger.warning(f"Upload complete: {total_succeeded} succeeded, {total_failed} failed")
+        logger.warning(
+            f"Upload complete: {total_succeeded} succeeded, {total_failed} failed"
+        )
     else:
-        logger.info(f"Upload complete: {total_succeeded}/{len(documents)} documents succeeded")
+        logger.info(
+            f"Upload complete: {total_succeeded}/{len(documents)} documents succeeded"
+        )
 
 
 def main():
@@ -979,10 +1000,14 @@ def main():
                 include_images=not args.skip_images,
             )
             all_documents.extend(docs)
-            logger.info(f"  Generated {len(docs)} search documents from {pdf_file.name}")
+            logger.info(
+                f"  Generated {len(docs)} search documents from {pdf_file.name}"
+            )
         except Exception as e:
             failed_files.append(pdf_file.name)
-            logger.exception(f"Error processing {pdf_file.name}: {type(e).__name__}: {e}")
+            logger.exception(
+                f"Error processing {pdf_file.name}: {type(e).__name__}: {e}"
+            )
 
     # Upload all documents to search
     if all_documents:
@@ -991,10 +1016,12 @@ def main():
 
     # Summary
     if failed_files:
-        logger.warning(f"Completed with {len(failed_files)} failed files: {', '.join(failed_files)}")
+        logger.warning(
+            f"Completed with {len(failed_files)} failed files: {', '.join(failed_files)}"
+        )
     else:
         logger.info(f"Successfully processed all {len(pdf_files)} PDF files")
-    
+
     logger.info("Done!")
 
 

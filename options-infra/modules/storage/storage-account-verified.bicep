@@ -18,6 +18,7 @@ module storageAccount 'br/public:avm/res/storage/storage-account:0.32.0' = {
     location: location
     skuName: 'Premium_LRS'
     kind: 'FileStorage'
+    requireInfrastructureEncryption: false
     tags: tags
     secretsExportConfiguration: {
       keyVaultResourceId: keyVaultResourceId

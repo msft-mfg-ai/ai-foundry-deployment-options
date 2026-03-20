@@ -11,7 +11,7 @@ dependencies = [
     "semantic-kernel[azure]>=1.35.2",
 ]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "black[jupyter]>=25.1.0",
 ]
