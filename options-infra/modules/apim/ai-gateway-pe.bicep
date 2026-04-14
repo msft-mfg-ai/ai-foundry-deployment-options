@@ -17,6 +17,9 @@ param subnetResourceId string
 param peSubnetResourceId string
 @description('Flag to enable public access to the API Management service')
 param apimPublicEnabled bool = false
+// Connection configuration
+@allowed(['ApiKey', 'ProjectManagedIdentity'])
+param authType string = 'ApiKey'
 
 var connection_per_project = !empty(aiFoundryProjectNames)
 var subscriptions subscriptionType[] = connection_per_project
@@ -89,12 +92,13 @@ module aiGatewayConnectionDynamic '../ai/connection-apim-gateway.bicep' = if (!c
     connectionName: 'apim-${resourceToken}-dynamic'
     apimResourceId: apim.outputs.apimResourceId
     apiName: apim.outputs.inferenceApiName
-    apimSubscriptionName: first(apim.outputs.subscriptions).name
+    apimSubscriptionName: authType == 'ApiKey' ? first(apim.outputs.subscriptions).name : null
     isSharedToAll: true
     listModelsEndpoint: '/deployments'
     getModelEndpoint: '/deployments/{deploymentName}'
     deploymentProvider: 'AzureOpenAI'
     inferenceAPIVersion: '2025-03-01-preview'
+    authType: authType
   }
 }
 
@@ -105,10 +109,11 @@ module aiGatewayConnectionStatic '../ai/connection-apim-gateway.bicep' = if (!co
     connectionName: 'apim-${resourceToken}-static'
     apimResourceId: apim.outputs.apimResourceId
     apiName: apim.outputs.inferenceApiName
-    apimSubscriptionName: first(apim.outputs.subscriptions).name
+    apimSubscriptionName: authType == 'ApiKey' ? first(apim.outputs.subscriptions).name : null
     isSharedToAll: true
     staticModels: staticModels
     inferenceAPIVersion: '2025-03-01-preview'
+    authType: authType
   }
 }
 
@@ -121,10 +126,13 @@ module aiGatewayProjectConnectionStatic '../ai/connection-apim-gateway.bicep' = 
       connectionName: 'apim-${resourceToken}-static-for-${projectName}'
       apimResourceId: apim.outputs.apimResourceId
       apiName: apim.outputs.inferenceApiName
-      apimSubscriptionName: first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).name
+      apimSubscriptionName: authType == 'ApiKey'
+        ? first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).name
+        : null
       isSharedToAll: false
       staticModels: staticModels
       inferenceAPIVersion: '2025-03-01-preview'
+      authType: authType
     }
   }
 ]
@@ -138,12 +146,15 @@ module aiGatewayProjectConnectionDynamic '../ai/connection-apim-gateway.bicep' =
       connectionName: 'apim-${resourceToken}-dynamic-for-${projectName}'
       apimResourceId: apim.outputs.apimResourceId
       apiName: apim.outputs.inferenceApiName
-      apimSubscriptionName: first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).name
+      apimSubscriptionName: authType == 'ApiKey'
+        ? first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).name
+        : null
       isSharedToAll: false
       listModelsEndpoint: '/deployments'
       getModelEndpoint: '/deployments/{deploymentName}'
       deploymentProvider: 'AzureOpenAI'
       inferenceAPIVersion: '2025-03-01-preview'
+      authType: authType
     }
   }
 ]

@@ -11,6 +11,11 @@ param existingAiResourceId string = ''
 param existingAiResourceKind string = 'AIServices' // Can be 'AzureOpenAI' or 'AIServices'
 
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
+var tags = {
+  'created-by': 'option-ai-gateway'
+  'hidden-title': 'Foundry - External AI Resource'
+  SecurityControl: 'Ignore'
+}
 
 // --------------------------------------------------------------------------------------------------------------
 // -- Log Analytics Workspace and App Insights ------------------------------------------------------------------
@@ -18,26 +23,29 @@ var resourceToken = toLower(uniqueString(resourceGroup().id, location))
 module logAnalytics '../modules/monitor/loganalytics.bicep' = {
   name: 'law'
   params: {
+    tags: tags
+    location: location
     newLogAnalyticsName: 'project-log-analytics'
     newApplicationInsightsName: 'project-app-insights'
-    location: location
   }
 }
 
 module identity '../modules/iam/identity.bicep' = {
   name: 'app-identity'
   params: {
-    identityName: 'app-project-identity'
+    tags: tags
     location: location
+    identityName: 'app-project-identity'
   }
 }
 
 module foundry '../modules/ai/ai-foundry.bicep' = {
   name: 'foundry'
   params: {
+    tags: tags
+    location: location
     managedIdentityResourceId: identity.outputs.MANAGED_IDENTITY_RESOURCE_ID
     name: 'ai-foundry-${resourceToken}'
-    location: location
     publicNetworkAccess: 'Enabled'
   }
 }
@@ -45,8 +53,9 @@ module foundry '../modules/ai/ai-foundry.bicep' = {
 module aiProject '../modules/ai/ai-project.bicep' = {
   name: 'ai-project'
   params: {
-    foundry_name: foundry.outputs.FOUNDRY_NAME
+    tags: tags
     location: location
+    foundry_name: foundry.outputs.FOUNDRY_NAME
     project_name: 'ai-project1'
     project_description: 'AI Project with existing, external AI resource ${existingAiResourceId}'
     display_name: 'AI Project with ${existingAiResourceKind}'

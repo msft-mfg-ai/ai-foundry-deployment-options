@@ -102,3 +102,31 @@ For PTU, specify % of PTU quota used.
 | **Tech stack** | APIM + Azure Monitor + KQL | APIM + EventHub + Logic App + Cosmos DB + Power BI | APIM + ASP.NET (.NET 10) + Redis + Cosmos DB + React/TS + .NET Aspire | APIM + Azure Functions (Python) + Redis | APIM built-in (no external dependencies) |
 | **Complexity** | Low — uses only native APIM policies + Azure Monitor | High — full pipeline with 5 services and custom policy fragments | High — full .NET platform with dashboard, billing plans, DLP (Purview), and WebSocket streaming | Medium — Function app + Redis, IaC via Bicep/Terraform/ARM/Pulumi | Low — single policy element, no external dependencies |
 | **Key limitation** | No per-model cost breakdown; limited to 6 custom dimensions on metrics; no identity beyond Product | EventHub adds latency; Logic App ingestion can lag; limited to 6 metric dimensions | External API call on every request adds latency (pre-check + log). Heavy infrastructure footprint | `send-request` to Function adds 50-200ms latency per request. 8KB workaround is the main value-add | Always returns 429 on exceeded — can't route to fallback. No cost data. No identity in logs |
+
+### APIM Data Pipeline Limitations for Chargeback
+
+Customers attempting to build chargeback on APIM face a fundamental conflict between APIM's two logging mechanisms — neither is sufficient on its own:
+
+#### `llm-emit-token-metric` / `azure-openai-emit-token-metric` → App Insights
+
+- **Destination:** Application Insights custom metrics (NOT Azure Monitor Log Analytics)
+- **Reliability:** ⚠️ Subject to [App Insights sampling, throttling, and a 50K active time series limit](https://learn.microsoft.com/en-us/azure/azure-monitor/essentials/metrics-limits). High-cardinality dimensions (per-user, per-team) can exhaust the limit quickly. Metrics may be **silently dropped** under load — no error, no warning, just missing data.
+- **Dimension limits:** Max 10 dimension keys per metric (APIM uses 5 internally, leaving 5 for custom). Max 50K unique time series per subscription/region/12h.
+- **Customizable:** ✅ Up to 5 custom dimensions (e.g., Product ID, subscription, app ID)
+- **Latency:** Near real-time
+- **Verdict:** Good for dashboards and near-real-time monitoring. **Not suitable as system of record for billing/chargeback** due to potential data loss under load.
+
+#### `ApiManagementGatewayLlmLog` (built-in LLM logs) → Azure Monitor Log Analytics
+
+- **Destination:** Azure Monitor Log Analytics (workspace-based)
+- **Reliability:** ✅ Not subject to App Insights sampling. Complete record of every request.
+- **Customizable:** ❌ **Fixed schema** — no `callerId`, `teamName`, `subscriptionName`, `priorityTier`, or `backendType` (PTU vs PAYG). Cannot add custom dimensions. Only workaround is injecting custom headers in policy and hoping they appear in `ApiManagementGatewayLogs` (not `LlmLog`), then joining the two tables via `OperationId` in KQL — fragile and complex.
+- **Latency:** ~5 minute ingestion delay
+- **Token granularity:** Prompt tokens, completion tokens, total tokens, model, deployment name
+- **Verdict:** Most reliable token data source. **Unusable for chargeback without identity dimensions.** Adding custom dimensions to `LlmLog` schema (or allowing user-defined fields) would make this the obvious solution.
+
+#### The Gap
+
+The reliable source (`LlmLog`) lacks identity. The customizable source (`emit-token-metric`) can lose data. **This is why every reference implementation above builds a custom pipeline** — using EventHub, external APIs, or Azure Functions to get both reliability and identity in one place. A native solution would eliminate all of this complexity.
+
+**What would fix this:** Add custom dimension support to `ApiManagementGatewayLlmLog` — even just `callerId`, `productName`, and `backendType` would make built-in logs sufficient for chargeback without any custom pipeline.

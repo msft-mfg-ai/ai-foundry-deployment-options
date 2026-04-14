@@ -116,8 +116,10 @@ module inference_api 'v2/inference-api.bicep' = {
 
 // OpenAI v1 API has more than 100 Operations and requires Premium or Standardv2 SKU
 // https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-subscription-service-limits?toc=%2Fazure%2Fapi-management%2Ftoc.json&bc=%2Fazure%2Fapi-management%2Fbreadcrumb%2Ftoc.json#limits---api-management-v2-tiers
+// Depends on inference_api to avoid race condition creating duplicate APIM service-level tags
 module openAiv2Api 'v2/inference-api.bicep' = if (apimSku == 'Premium' || apimSku == 'Standardv2') {
   name: 'openai-v2-api-deployment'
+  dependsOn: [inference_api]
   params: {
     policyXml: gatewayAuthenticationType == 'ProjectManagedIdentity' ? updatedJwtInferencePolicyXml : updatedInferencePolicyXml
     apiManagementName: apim.outputs.name

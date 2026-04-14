@@ -1,6 +1,6 @@
-# Option: AI Gateway (APIM v2 Premium VNet Injection - Internal) with Foundry
+# Option: AI Gateway (APIM Standard v2) with Foundry
 
-This deployment creates a Foundry environment with an **Azure API Management v2 Premium** instance deployed in **VNet Injection mode**, acting as an AI Gateway. The goal is to allow **Foundry Agent Service** to use models from APIM, which proxies requests to an external Azure OpenAI resource.
+This deployment creates a Foundry environment with an **Azure API Management (APIM) v2 Standard sku with private endpoint** instance acting as an AI Gateway. The goal is to allow **Foundry Agent Service** to use models from APIM, which proxies requests to an external Azure OpenAI resource.
 
 ## Architecture Overview
 
@@ -13,18 +13,17 @@ This deployment creates a Foundry environment with an **Azure API Management v2 
 │  │  ┌─────────────────────────────────────────────────────────────┐ │                     │
 │  │  │  Project(s) with Capability Hosts                           │ │                     │
 │  │  │                                                             │ │                     │
-│  │  │  Agent Service ─── Vnet injection ──────────────────────────┼─┼──┐                  │
+│  │  │  Agent Service ─────────────────────────────────────────────┼─┼──┐                  │
 │  │  └─────────────────────────────────────────────────────────────┘ │  │                  │
 │  └──────────────────────────────────────────────────────────────────┘  │                  │
 │                                                                        │                  │
 │                                                                        ▼                  │
 │                                              ┌─────────────────────────────────────────┐  │
-│                                              │   Azure API Management v2 Premium        │  │
-│                                              │   (VNet Injection Mode)                  │  │
-│                                              │   - AI Gateway                           │  │
-│                                              │   - Static Model Definitions            │  │
-│                                              │   - Load Balancing (future)             │  │
-│                                              │   - Rate Limiting / Policies            │  │
+│                                              │  Azure API Management (Private Endpoint)│  │
+│                                              │  - AI Gateway                           │  │
+│                                              │  - Static Model Definitions             │  │
+│                                              │  - Load Balancing (future)              │  │
+│                                              │  - Rate Limiting / Policies             │  │
 │                                              └──────────────────┬──────────────────────┘  │
 │                                                                 │                         │
 │  ┌──────────────────────────────────────────────────────────────┼───────────────────────┐ │
@@ -36,7 +35,7 @@ This deployment creates a Foundry environment with an **Azure API Management v2 
                                            (Private Endpoint)     │
                                                                   ▼
                                 ┌──────────────────────────────────────────────┐
-                                │    External: Azure OpenAI (Landing Zone)     │
+                                │    Azure OpenAI (Landing Zone)               │
                                 │                                              │
                                 │    Models:                                   │
                                 │    - gpt-4.1-mini                            │
@@ -53,12 +52,10 @@ This deployment creates a Foundry environment with an **Azure API Management v2 
 ## Deployed Resources
 
 ### Networking
-- **Main Virtual Network** (`192.168.0.0/21`) with subnets for:
+- **Virtual Network** with subnets for:
   - Private Endpoints
+  - APIM (internal mode)
   - Agent services
-- **APIM Virtual Network** (`192.168.100.0/23`) with subnets for:
-  - APIM v2 Premium (VNet Injection)
-- **VNet Peering** between main VNet and APIM VNet
 - **Private DNS Zones** for:
   - Azure OpenAI (`privatelink.openai.azure.com`)
   - Key Vault, Storage, Cosmos DB, AI Search
@@ -69,9 +66,8 @@ This deployment creates a Foundry environment with an **Azure API Management v2 
 - **Foundry project(s)** with Capability Hosts (configurable count)
 - **AI Dependencies**: Storage, Cosmos DB, AI Search with private endpoints
 
-### AI Gateway (APIM v2 Premium)
-- **Azure API Management v2 Premium** in VNet Injection mode
-- Deployed in a dedicated VNet (`192.168.100.0/23`) peered with the main VNet
+### AI Gateway (APIM)
+- **Azure API Management** in internal (VNet-injected) mode
 - Pre-configured static model definitions:
   - `gpt-4.1-mini`
   - `gpt-5-mini`
@@ -83,13 +79,6 @@ This deployment creates a Foundry environment with an **Azure API Management v2 
 - **Application Insights** for APIM and Foundry telemetry
 
 ## Prerequisites
-
-Set the following environment variables before deployment:
-
-```bash
-export OPENAI_API_BASE="https://your-landing-zone-openai.openai.azure.com"
-export OPENAI_RESOURCE_ID="/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<openai-name>"
-```
 
 ### Optional Parameters
 - `OPENAI_LOCATION` - Location of the OpenAI resource (defaults to deployment location)
@@ -111,15 +100,13 @@ azd up
 | `FOUNDRY_NAME` | Name of the Foundry account |
 | `config_validation_result` | Validation status of the configuration |
 
-## Key Differences from Other Options
+## Key Differences from `option_ai-gateway`
 
-| Feature | `option_ai-gateway` | `option_ai-gateway-internal` | `option_ai-gateway-premium` |
-|---------|---------------------|------------------------------|------------------------------|
-| APIM SKU | v2 Standard | v2 Standard | **v2 Premium** |
-| APIM Mode | External (public IP) | Internal (VNet only) | **VNet Injection** |
-| Network | Single VNet | Single VNet | **Dedicated APIM VNet + Peering** |
-| OpenAI Access | Via public endpoint | Via private endpoint | Via private endpoint |
-| Network Security | Public accessible | Fully private | Fully private |
+| Feature | `option_ai-gateway` | `option_ai-gateway-internal` |
+|---------|---------------------|------------------------------|
+| APIM Mode | External (public IP) | Internal (VNet only) |
+| OpenAI Access | Via public endpoint | Via private endpoint |
+| Network Security | Public accessible | Fully private |
 
 ## Use Cases
 
