@@ -1,10 +1,6 @@
 // creates ai foundry and project with external AI resource
 param location string = resourceGroup().location
-@allowed([
-  'SystemAssigned'
-  'UserAssigned'
-])
-param identityType string = 'SystemAssigned'
+param projectsCount int = 1
 
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
 
@@ -45,12 +41,26 @@ module foundryWithModels '../modules/ai/ai-foundry.bicep' = {
     publicNetworkAccess: 'Disabled'
     deployments: [
       {
-        name: 'gpt-4.1-mini'
+        name: 'test-gpt-4.1-mini'
         properties: {
           model: {
             format: 'OpenAI'
             name: 'gpt-4.1-mini'
             version: '2025-04-14'
+          }
+        }
+        sku: {
+          name: 'GlobalStandard'
+          capacity: 20
+        }
+      }
+      {
+        name: 'test-gpt-5.2'
+        properties: {
+          model: {
+            format: 'OpenAI'
+            name: 'gpt-5.2'
+            version: '2025-12-11'
           }
         }
         sku: {
@@ -88,15 +98,6 @@ module logAnalytics '../modules/monitor/loganalytics.bicep' = {
   }
 }
 
-module project_identity '../modules/iam/identity.bicep' = if (identityType == 'UserAssigned') {
-  name: 'app-identity'
-  params: {
-    location: location
-    tags: tags
-    identityName: 'app-project-identity'
-  }
-}
-
 module foundry '../modules/ai/ai-foundry.bicep' = {
   name: 'foundry-deployment'
   params: {
@@ -108,50 +109,69 @@ module foundry '../modules/ai/ai-foundry.bicep' = {
   }
 }
 
-module aiProject '../modules/ai/ai-project.bicep' = {
-  name: 'ai-project'
-  params: {
-    location: location
-    tags: tags
-    foundry_name: foundry.outputs.FOUNDRY_NAME
-    project_name: 'ai-project1'
-    project_description: 'AI Project with existing, external AI resource'
-    display_name: 'AI Project with'
-    managedIdentityResourceId: identityType == 'UserAssigned' ? project_identity.outputs.MANAGED_IDENTITY_RESOURCE_ID : '' // Use System Assigned Identity
-    existingAiResourceId: foundryWithModels.outputs.FOUNDRY_RESOURCE_ID
-    existingAiKind: 'AIServices'
-    usingFoundryAiConnection: true // Use the AI Foundry connection for the project
-    createAccountCapabilityHost: false
-    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+module identities '../modules/iam/identity.bicep' = [
+  for i in range(1, projectsCount): {
+    name: 'ai-project-${i}-identity-${resourceToken}'
+    params: {
+      tags: tags
+      location: location
+      identityName: 'ai-project-${i}-identity-${resourceToken}'
+    }
   }
-}
+]
 
-module ai_role_assignment '../modules/iam/role-assignment-cognitiveServices.bicep' = {
-  name: take('ai-user-role-assignments-foundry-${resourceToken}', 64)
-  params: {
-    accountName: foundryWithModels.outputs.FOUNDRY_NAME
-    principalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
-    roleName: 'Azure AI User'
+@batchSize(1)
+module projects '../modules/ai/ai-project-with-caphost.bicep' = [
+  for i in range(1, projectsCount): {
+    name: 'ai-project-${i}-with-caphost-${resourceToken}'
+    params: {
+      tags: tags
+      location: location
+      projectId: i
+      project_description: 'AI Project ${i} ${resourceToken} with existing, external AI resource'
+      display_name: 'AI Project ${i} ${resourceToken}'
+      foundryName: foundry.outputs.FOUNDRY_NAME
+      aiDependencies: ai_dependencies.outputs.AI_DEPENDECIES
+      existingAiResourceId: foundryWithModels.outputs.FOUNDRY_RESOURCE_ID
+      existingAiResourceKind: 'AIServices'
+      managedIdentityResourceId: identities[i - 1].outputs.MANAGED_IDENTITY_RESOURCE_ID
+      appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    }
   }
-}
+]
 
-module cognitive_services_role_assignment '../modules/iam/role-assignment-cognitiveServices.bicep' = {
-  name: take('cog-user-role-assignments-foundry-${resourceToken}', 64)
-  params: {
-    accountName: foundryWithModels.outputs.FOUNDRY_NAME
-    principalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
-    roleName: 'Cognitive Services User'
+module ai_role_assignments '../modules/iam/role-assignment-cognitiveServices.bicep' = [
+  for i in range(1, projectsCount): {
+    name: take('ai-user-role-assignments-${i}-foundry-${resourceToken}', 64)
+    params: {
+      accountName: foundryWithModels.outputs.FOUNDRY_NAME
+      principalId: identities[i - 1].outputs.MANAGED_IDENTITY_PRINCIPAL_ID
+      roleName: 'Azure AI User'
+    }
   }
-}
+]
 
-module cognitive_contributor_services_role_assignment '../modules/iam/role-assignment-cognitiveServices.bicep' = {
-  name: take('cog-contributor-role-assignments-foundry-${resourceToken}', 64)
-  params: {
-    accountName: foundryWithModels.outputs.FOUNDRY_NAME
-    principalId: aiProject.outputs.FOUNDRY_PROJECT_PRINCIPAL_ID
-    roleName: 'Cognitive Services Contributor'
+module cognitive_services_role_assignment '../modules/iam/role-assignment-cognitiveServices.bicep' = [
+  for i in range(1, projectsCount): {
+    name: take('cog-user-role-assignments-foundry-${resourceToken}', 64)
+    params: {
+      accountName: foundryWithModels.outputs.FOUNDRY_NAME
+      principalId: identities[i - 1].outputs.MANAGED_IDENTITY_PRINCIPAL_ID
+      roleName: 'Cognitive Services User'
+    }
   }
-}
+]
+
+module cognitive_contributor_services_role_assignment '../modules/iam/role-assignment-cognitiveServices.bicep' = [
+  for i in range(1, projectsCount): {
+    name: take('cog-contributor-role-assignments-foundry-${resourceToken}', 64)
+    params: {
+      accountName: foundryWithModels.outputs.FOUNDRY_NAME
+      principalId: identities[i - 1].outputs.MANAGED_IDENTITY_PRINCIPAL_ID
+      roleName: 'Cognitive Services Contributor'
+    }
+  }
+]
 
 module cognitive_services_role_assignment_account '../modules/iam/role-assignment-cognitiveServices.bicep' = {
   name: take('cog-user-role-assignments-account-${resourceToken}', 64)
@@ -171,4 +191,4 @@ module cognitive_contributor_services_role_assignment_account '../modules/iam/ro
   }
 }
 
-output FOUNDRY_PROJECT_CONNECTION_STRING string = aiProject.outputs.FOUNDRY_PROJECT_CONNECTION_STRING
+output FOUNDRY_PROJECT_CONNECTION_STRING string = projects[0].outputs.FOUNDRY_PROJECT_CONNECTION_STRING

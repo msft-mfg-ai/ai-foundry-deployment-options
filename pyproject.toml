@@ -18,6 +18,7 @@ members = [
 ]
 exclude = [
     "agents_v2",
+    "agents_v2_maf",
     "subscription-manager",
     "options-infra/foundry-search/scripts",
     "options-infra/foundry-rag-search/scripts",

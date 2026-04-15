@@ -23,6 +23,12 @@ param keyVaultResourceId string?
 @description('Bunch of known issues with KeyVault integration, so disable by default')
 param keyVaultConnectionEnabled bool = false
 
+// Foundry is always of type AIServices
+@allowed([
+  'AIServices'
+  'OpenAI'
+])
+param kind string = 'AIServices'
 // --------------------------------------------------------------------------------------------------------------
 // Variables
 // --------------------------------------------------------------------------------------------------------------
@@ -65,12 +71,11 @@ resource existingAccount 'Microsoft.CognitiveServices/accounts@2025-04-01-previe
 }
 
 // --------------------------------------------------------------------------------------------------------------
-// Foundry is always of type AIServices
-resource account 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' = if (!useExistingService) {
+resource account 'Microsoft.CognitiveServices/accounts@2025-12-01' = if (!useExistingService) {
   name: name
   location: location
   tags: tags
-  kind: 'AIServices'
+  kind: kind
   identity: !empty(managedIdentityResourceId)
     ? {
         type: 'UserAssigned'

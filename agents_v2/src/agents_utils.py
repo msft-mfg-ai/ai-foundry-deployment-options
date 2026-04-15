@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass, field
-from azure.ai.projects.models import PromptAgentDefinition, Tool, AgentObject
+from azure.ai.projects.models import PromptAgentDefinition, Tool, AgentVersionDetails
 from azure.ai.projects.aio import AIProjectClient
 from openai import AsyncStream, AsyncOpenAI
 from openai.types.conversations import Conversation
@@ -49,7 +49,7 @@ class agents_utils:
         deployment_name: str = None,
         delete_before_create: bool = True,
         tools: list[Tool] = [],
-    ) -> AgentObject:
+    ) -> AgentVersionDetails:
         # default deployment name
         deployment_name = (
             deployment_name
@@ -81,24 +81,24 @@ class agents_utils:
             agent_names.remove(name)
 
         if name not in agent_names:
-            agent = await self.client.agents.create(
-                name=name,
-                definition=PromptAgentDefinition(
-                    model=model, instructions=instructions, tools=tools
-                ),
-            )
-            print(
-                f"Agent created (id: {agent.id}, name: {agent.name}, version: {agent.versions.latest.version} using model {agent.versions.latest.definition.model})"
-            )
-        else:
-            agent = await self.client.agents.update(
+            agent = await self.client.agents.create_version(
                 agent_name=name,
                 definition=PromptAgentDefinition(
                     model=model, instructions=instructions, tools=tools
                 ),
             )
             print(
-                f"Agent updated (id: {agent.id}, name: {agent.name}, version: {agent.versions.latest.version} using model {agent.versions.latest.definition.model})"
+                f"Agent created (id: {agent.id}, name: {agent.name}, version: {agent.version} using model {agent.definition.model})"
+            )
+        else:
+            agent = await self.client.agents.create_version(
+                agent_name=name,
+                definition=PromptAgentDefinition(
+                    model=model, instructions=instructions, tools=tools
+                ),
+            )
+            print(
+                f"Agent updated (id: {agent.id}, name: {agent.name}, version: {agent.version} using model {agent.definition.model})"
             )
         return agent
 
@@ -235,7 +235,7 @@ def process_approval(item, input_list=[]):
 async def create_response_with_retry(
     openai_client: AsyncOpenAI,
     conversation: Conversation,
-    agent: AgentObject = None,
+    agent: AgentVersionDetails = None,
     max_retries: int = 10,
     use_retry: bool = True,
 ) -> Response:
@@ -245,7 +245,7 @@ async def create_response_with_retry(
             response = await openai_client.responses.create(
                 conversation=conversation.id,
                 extra_body=(
-                    {"agent": {"name": agent.name, "type": "agent_reference"}}
+                    {"agent_reference": {"name": agent.name, "type": "agent_reference"}}
                     if agent
                     else None
                 ),
@@ -271,7 +271,7 @@ async def create_response_with_retry(
 async def stream_response_with_retry(
     openai_client: AsyncOpenAI,
     conversation: Conversation,
-    agent: AgentObject = None,
+    agent: AgentVersionDetails = None,
     max_retries: int = 10,
     use_retry: bool = True,
 ) -> ProcessedResponse:
@@ -281,7 +281,7 @@ async def stream_response_with_retry(
             stream = await openai_client.responses.create(
                 conversation=conversation.id,
                 extra_body=(
-                    {"agent": {"name": agent.name, "type": "agent_reference"}}
+                    {"agent_reference": {"name": agent.name, "type": "agent_reference"}}
                     if agent
                     else None
                 ),
