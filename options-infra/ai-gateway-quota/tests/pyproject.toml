@@ -1,0 +1,11 @@
+[project]
+name = "ai-gateway-quota-tests"
+version = "0.1.0"
+description = "Test harness for the AI Gateway with Priority Routing"
+requires-python = ">=3.12"
+dependencies = [
+    "msal>=1.28.0",
+    "pyjwt>=2.8.0",
+    "requests>=2.31.0",
+    "ipykernel>=6.29.0",
+]

@@ -1,204 +1,193 @@
-# Option: AI Gateway with Bearer Token Auth + Quota Tiers
+# AI Gateway with JWT Auth + Access Contracts + Priority Routing
 
-This deployment creates an **Azure API Management (APIM)** AI Gateway with **Entra ID app registrations** for client authentication. Client applications authenticate with **bearer tokens** (client credentials flow), are identified by the **`azp` claim**, and are subject to **per-caller token quotas** enforced via the `llm-token-limit` policy with tiered TPM limits and monthly token budgets (Gold / Silver / Bronze).
+This deployment creates an **Azure API Management (APIM)** AI Gateway with **JWT Bearer Token authentication** via Entra ID. Client applications are identified by JWT claims, matched to **access contracts** stored in blob storage, and subject to **per-model TPM quotas**, **monthly token budgets**, and **3-tier priority routing** (P1 → PTU-first with PAYG failover, P2/P3 → PAYG-only).
 
 ## Features
 
-- **JWT Bearer Token Auth** — `validate-azure-ad-token` against Entra ID
-- **Caller Identification** — `azp` claim maps to caller name and tier
-- **Tiered TPM Quotas** — Gold (200K), Silver (50K), Bronze (10K) tokens per minute
-- **Monthly Token Budgets** — Native enforcement via `llm-token-limit` with `token-quota-period=Monthly`
-- **Response Headers** — `x-ratelimit-remaining-tokens`, `x-ratelimit-limit-tokens`, `x-caller-tier`, `x-caller-name`
-- **Azure Portal Dashboard** — Quota overview, usage charts, rate limit events, burn-down
-- **Entra ID via Bicep** — App registrations using Microsoft Graph Bicep extension
+- **JWT Bearer Token Auth** — `validate-azure-ad-token` against Entra ID (no APIM subscription keys)
+- **Access Contracts** — Per-team configuration (models, TPM limits, PTU allocations, monthly budgets) stored in blob storage and cached 5 min
+- **3-Tier Priority Routing** — P1 → PTU first (PAYG failover on 429), P2/P3 → PAYG only
+- **Per-Model TPM Quotas** — Hard 429 enforcement via `llm-token-limit` with custom `counter-key`
+- **Monthly Token Budgets** — Native enforcement via `llm-token-limit` with `token-quota-period=Monthly` (non-P1 only)
+- **Two-API Loopback Architecture** — Priority API (external) + PTU Gate API (internal) for atomic PTU capacity enforcement
+- **Automatic Entra ID App Registration** — Dynamic creation per contract via Microsoft Graph Bicep extension
+- **Multi-Backend Routing** — Per-model PTU and PAYG pools with circuit breaker failover
+- **Event Hub Notifications** — Quota-exceeded events for downstream processing
+- **Azure Portal Dashboard** — KQL-based monitoring (token usage, rate limits, routing decisions)
+- **17 Observability Headers** — `x-caller-name`, `x-route-target`, `x-backend-type`, `x-ptu-utilization`, etc.
 
 ## Architecture Overview
 
 ```
-                    ┌──────────────────────────────────────────────────────────────────────────────────┐
-                    │                              This Deployment                                      │
-                    │                                                                                   │
-  Client App        │    ┌──────────────────────────────────────────────────────┐                       │
-  (Entra ID)        │    │           Entra ID                                   │                       │
-       │            │    │  Gateway App (audience)                              │                       │
-       │ 1. Get     │    │  Team Apps (client_id → azp claim)                  │                       │
-       ├──token────►│    │  Service Principals                                 │                       │
-       │            │    └──────────────────────────────────────────────────────┘                       │
-       │            │                    ▲ validate-azure-ad-token                                      │
-       │            │                    │                                                              │
-       │            │    ┌───────────────┴──────────────────────────────────────────────────────────┐   │
-       │            │    │            Azure API Management (AI Gateway)                             │   │
-       │ 2. Call    │    │                                                                          │   │
-       │ API with   │    │  1. validate-azure-ad-token   ──→  Verify JWT against Entra ID           │   │
-       │ Bearer     │    │  2. Extract azp claim          ──→  Identify caller application           │   │
-       └──token────►│    │  3. Lookup caller tier          ──→  Named Value: azp → {tier, name}      │   │
-                    │    │  4. Authorization check         ──→  Reject unknown callers (403)          │   │
-                    │    │  5. llm-token-limit             ──→  TPM quota + monthly token budget       │   │
-                    │    │  6. Forward to backend           ──→  Managed identity auth to Azure OpenAI │   │
-                    │    └───────────────────────────────────────────────┬──────────────────────────┘   │
-                    │                                                    │                              │
-                    │    ┌──────────────────────────────────────────────┼────────────────────────────┐  │
-                    │    │  Supporting Services                         │                            │  │
-                    │    │  Log Analytics │ App Insights │ Dashboard    │                            │  │
-                    │    └──────────────────────────────────────────────┼────────────────────────────┘  │
-                    └───────────────────────────────────────────────────┼────────────────────────────────┘
-                                                                       │
-                                                    (Public Internet)  │
-                                                                       ▼
-                                              ┌──────────────────────────────────────┐
-                                              │   External: Azure OpenAI             │
-                                              │   (Landing Zone / Shared Resource)   │
-                                              └──────────────────────────────────────┘
+  Client App                        APIM Gateway (Two-API Loopback)
+  (Entra ID)                       ┌─────────────────────────────────────────────────────────┐
+       │                           │                                                         │
+       │ 1. Get token              │   Priority API (external)                               │
+       │    (MSAL → Entra ID)      │   ┌──────────────────────────────────────────────────┐  │
+       │                           │   │ 1. validate-azure-ad-token                       │  │
+       │ 2. Call API with          │   │ 2. Identity resolution (JWT claims → contract)   │  │
+       │    Bearer token           │   │ 3. Per-model TPM check (llm-token-limit)         │  │
+       ├──────────────────────────►│   │ 4. Monthly quota check (non-P1 only)             │  │
+       │                           │   │ 5. Route by priority:                            │  │
+       │                           │   │    P1 → PTU Gate (loopback) → PAYG fallback      │  │
+       │                           │   │    P2/P3 → PAYG pool directly                    │  │
+       │                           │   └──────────────┬──────────────────┬────────────────┘  │
+       │                           │                  │                  │                    │
+       │                           │   PTU Gate API   │                  │                    │
+       │                           │   (internal)     │                  │                    │
+       │                           │   ┌──────────────▼───────────┐     │                    │
+       │                           │   │ llm-token-limit (PTU     │     │                    │
+       │                           │   │ capacity per model)      │     │                    │
+       │                           │   │ → forward to PTU pool    │     │                    │
+       │                           │   │ → 429 if PTU exhausted   │     │                    │
+       │                           │   └──────────────┬───────────┘     │                    │
+       │                           └──────────────────┼─────────────────┼────────────────────┘
+                                                      │                 │
+                                                      ▼                 ▼
+                                           ┌──────────────────┐ ┌──────────────────┐
+                                           │ {model}-ptu-pool │ │ {model}-payg-pool│
+                                           │  PTU backends    │ │  PAYG backends   │
+                                           │  (circuit break) │ │  (circuit break) │
+                                           └──────────────────┘ └──────────────────┘
+                                                      │                 │
+                                              ┌───────┴───────┐ ┌──────┴───────┐
+                                              │ Foundry PTU   │ │ Foundry PAYG │
+                                              │ (pre-paid)    │ │ (pay-per-use)│
+                                              └───────────────┘ └──────────────┘
+
+  Supporting Services: Log Analytics │ App Insights │ Event Hub │ Blob Storage (contracts) │ Dashboard
 ```
 
 ## Request Flow
 
-1. **Client application** obtains a bearer token from Entra ID (MSAL client credentials flow) with audience `https://cognitiveservices.azure.com`
-2. Client sends request to APIM with `Authorization: Bearer <token>`
-3. APIM **validates the JWT** against Entra ID (`validate-azure-ad-token` policy)
-4. **`azp` claim** is extracted — this is the client application's App ID
-5. Gateway **checks authorization**: looks up the `azp` in the caller-tier-mapping Named Value
-   - If the caller is not in the mapping → **403 Forbidden**
-6. Gateway **checks quota**: applies `llm-token-limit` with tier-specific TPM limits and monthly token budget
-   - If TPM quota exceeded → **429 Too Many Requests**
-   - If monthly token quota exceeded → **403 Quota Exceeded**
-7. Request is **forwarded to Azure OpenAI** using APIM's managed identity
+```
+Client → APIM Gateway
+  1. JWT Validation     — Validate token against Entra ID (audience: https://cognitiveservices.azure.com)
+  2. Identity Resolution — Extract azp/appid/xms_mirid/oid/sub claims → match to contract
+  3. Contract Lookup     — Load contracts JSON from blob (cached 5 min) → resolve team name, priority, model quotas
+  4. Model Authorization — Check requested model is in contract's allow-list, extract TPM/ptuTpm
+  5. Per-Model TPM       — llm-token-limit (counter-key = "caller:model", tokens-per-minute) → 429 if over
+  6. Monthly Quota       — llm-token-limit (counter-key = "caller", token-quota-period = Monthly) → 429 if over (non-P1 only)
+  7. Priority Routing    — Route to PTU or PAYG pool based on priority tier:
+       P1: Always PTU first (via PTU Gate loopback), failover to PAYG on 429
+       P2/P3: Always PAYG pool directly
+```
 
 ## JWT Audience: `https://cognitiveservices.azure.com`
 
 The gateway validates tokens with audience `https://cognitiveservices.azure.com` — the standard Azure Cognitive Services audience. This is intentional:
 
-- **Simpler for clients** — no need to discover or configure a custom gateway audience; any Azure AI SDK or tool that already targets Cognitive Services can use the gateway with no token changes.
-- **Still secure** — a Cognitive Services token alone grants **no access** to any Foundry instance. Access requires an RBAC role assignment (e.g., `Cognitive Services User`) on the specific Azure OpenAI resource. The team app registrations do **not** have this role; only APIM's managed identity does. Clients cannot bypass the gateway.
-- **Authorization via access contracts** — the gateway enforces per-team access through its own access contract system (identity matching, model allow-lists, TPM limits, monthly quotas), which is independent of the token audience.
+- **Simpler for clients** — any Azure AI SDK or tool that already targets Cognitive Services can use the gateway with no token changes.
+- **Still secure** — a Cognitive Services token alone grants **no access** to any Foundry instance. Access requires an RBAC role assignment on the specific resource. Only APIM's managed identity has `Cognitive Services User` on the backends; team apps do not.
+- **Authorization via access contracts** — the gateway enforces per-team access through identity matching, model allow-lists, TPM limits, and monthly quotas — independent of the token audience.
 
 > **Token generation**: use `https://cognitiveservices.azure.com/.default` as the MSAL scope.
 > The `generate_token.py --from-azd` flag does this automatically.
 
+## Access Contracts
+
+Access contracts replace the earlier Gold/Silver/Bronze tier system. Each contract defines a team's identity, priority, allowed models with per-model TPM limits, and monthly token budget. Contracts are defined in `main.bicepparam` and compiled to blob storage at deploy time (cached 5 min in APIM).
+
+### Contract Type
+
+```
+accessContractType:
+  name: string               # Team name (counter-key for quotas)
+  identities: [{              # JWT claim matchers (empty = auto-create Entra app)
+    value: string             #   Claim value (prefix match)
+    displayName: string       #   Human label
+    claimName: string         #   "azp" | "appid" | "xms_mirid" | "oid" | "sub"
+  }]
+  priority: 1 | 2 | 3         # 1=Production (PTU), 2/3=PAYG only
+  models: [{                  # Allow-list + quotas per model
+    name: string              #   Model deployment name (e.g., "gpt-4.1-mini")
+    tpm: int                  #   Hard TPM limit (429 enforcement)
+    ptuTpm: int?              #   Soft PTU allocation (P1 only, overflow → PAYG)
+  }]
+  monthlyQuota: int           # Monthly token budget (hard 429 for non-P1)
+  environment: string?        # Tag: "PROD" | "DEV" | "TEST"
+```
+
+### Example Contracts (from `main.bicepparam`)
+
+| Team | Priority | Models | TPM | PTU TPM | Monthly Quota |
+|------|----------|--------|-----|---------|---------------|
+| Team Alpha | P1 (Production) | gpt-4.1-mini | 1,000 | 100 | 7,000 |
+| | | gpt-oss-120b | 100 | — | |
+| Team Beta | P2 (Standard) | gpt-4.1-mini | 400 | 200 | 3,000 |
+| | | gpt-5.1-chat | 400 | — | |
+| Team Gamma | P3 (Economy) | gpt-4.1-mini | 300 | — | 1,000 |
+| | | gpt-4.1 | 100 | — | |
+
+P1 callers are **exempt from monthly quotas** — PTU is pre-paid, so PAYG overflow is expected and not budget-capped.
+
 ## Entra ID App Registrations
 
-The deployment automatically creates Entra ID app registrations via the [Microsoft Graph Bicep extension](https://learn.microsoft.com/en-us/graph/templates/bicep/quickstart-create-bicep-interactive-mode):
+The deployment dynamically creates Entra ID app registrations for contracts with empty `identities` arrays. This uses the [Microsoft Graph Bicep extension](https://learn.microsoft.com/en-us/graph/templates/bicep/quickstart-create-bicep-interactive-mode) (`extension microsoftGraphV1`) in `entra/entra-apps-dynamic.bicep`.
 
-| App | Purpose | Bicep Resource |
-|-----|---------|----------------|
-| **Gateway App** | Audience — APIM validates tokens against this | `entra/entra-apps.bicep` |
-| **Team Alpha** | Caller app — Gold tier (200K TPM) | `entra/entra-apps.bicep` |
-| **Team Beta** | Caller app — Silver tier (50K TPM) | `entra/entra-apps.bicep` |
-| **Team Gamma** | Caller app — Bronze tier (10K TPM) | `entra/entra-apps.bicep` |
+The deploying identity needs **`Application.ReadWrite.All`** permission. Client secrets are created post-deploy via `scripts/add_app_reg_secrets.sh` and stored in `azd env`.
 
-Client secrets are created post-deploy via `scripts/add_app_reg_secrets.sh` (following the [agents-workshop pattern](https://github.com/karpikpl/agents-workshop/blob/main/scripts/add_app_reg_secret.sh)) and stored in `azd env`.
+Teams with pre-existing Entra apps or managed identities can bring their own identities by populating the `identities` array in their contract — no app registration is created for them.
 
-## Quota Tiers
+## ⚠️ Critical: Consistent Deployment Names
 
-| Tier     | Tokens Per Minute (TPM) | Description               |
-|----------|------------------------|---------------------------|
-| **Gold**   | 200,000                | High-priority teams       |
-| **Silver** | 50,000                 | Economy teams             |
-| **Bronze** | 10,000                 | Low-priority / dev teams  |
+All Azure OpenAI / Foundry instances serving the same model **must** use the **same deployment name**, matching the `modelName` in the configuration. APIM backend pools forward the URL path unchanged — mismatched names cause intermittent 404s.
 
-Quota is tracked per caller (using the `azp` claim as the counter key), so each application gets its own independent quota within its tier.
-
-### Customizing Tiers
-
-Tier TPM limits and monthly quotas are defined in the `caller-tier-mapping` Named Value (sourced from `entra/entra-apps.bicep`). The policy reads TPM and monthly quota dynamically:
-
-```xml
-<llm-token-limit
-    counter-key="@((string)context.Variables["azp"])"
-    tokens-per-minute="@(int.Parse((string)context.Variables["caller-tpm"]))"
-    token-quota="@(long.Parse((string)context.Variables["caller-monthly-quota"]))"
-    token-quota-period="Monthly"
-    estimate-prompt-tokens="true" ... />
+```
+✅  PTU instance:    deployment "gpt-4.1-mini"
+✅  PAYG instance:   deployment "gpt-4.1-mini"
+❌  PTU instance:    deployment "gpt-4.1-mini-ptu"   ← BREAKS routing (404)
 ```
 
-## The `llm-token-limit` Policy
+See [Section 5 of PTU Design Risks](docs/ptu-design-risks.md#5-deployment-naming-convention--hard-requirement) for the full rationale and setup checklist.
 
-The [`llm-token-limit`](https://learn.microsoft.com/en-us/azure/api-management/llm-token-limit-policy) policy is a built-in Azure API Management policy for AI gateway scenarios. It enforces both per-minute token rate limits and period-based token budgets natively within APIM — no external infrastructure (Logic Apps, KQL alerts, or custom tables) is required.
+## Deploy
 
-### Key Attributes
+### Prerequisites
 
-| Attribute | Description |
-|-----------|-------------|
-| `tokens-per-minute` | Per-minute token rate limit. Requests that exceed this rate receive **429 Too Many Requests**. Accepts a policy expression for dynamic values. |
-| `token-quota` | Total token budget for the configured period. Requests after budget exhaustion receive **403 Quota Exceeded**. Accepts a policy expression. |
-| `token-quota-period` | Reset period for the budget counter: `Hourly`, `Daily`, `Weekly`, or `Monthly`. Counters reset automatically at the start of each period. |
-| `counter-key` | Unique key for tracking consumption per caller (this deployment uses the `azp` claim). Each unique key maintains independent TPM and quota counters. |
-| `estimate-prompt-tokens` | When `true`, estimates prompt tokens before the backend call, enabling pre-request enforcement. |
-| `remaining-tokens-header-name` | Response header reporting remaining TPM quota for the current minute. |
-| `remaining-quota-tokens-header-name` | Response header reporting remaining tokens in the current quota period. |
-| `tokens-consumed-header-name` | Response header reporting tokens consumed by the request. |
+- **Azure subscription** with Contributor access
+- **Application.ReadWrite.All** permission for Entra ID app registrations
+- Azure OpenAI / Foundry instances (PTU and/or PAYG) with model deployments
 
-### How It Differs from `azure-openai-token-limit`
-
-The `llm-token-limit` policy is the successor to `azure-openai-token-limit`. Key additions:
-
-- **`token-quota` + `token-quota-period`** — native period-based budget enforcement without any async pipeline
-- **Dynamic expressions** — `tokens-per-minute` and `token-quota` accept policy expressions, enabling per-caller values read from a Named Value at runtime
-
-📖 [Azure APIM `llm-token-limit` policy reference](https://learn.microsoft.com/en-us/azure/api-management/llm-token-limit-policy)
-
-## Prerequisites
-
-### 1. Azure OpenAI Resource
-
-```bash
-export OPENAI_API_BASE="https://your-openai.openai.azure.com/"
-export OPENAI_RESOURCE_ID="/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<name>"
-```
-
-### 2. Permissions
-
-The deploying user needs:
-- **Application.ReadWrite.All** (or `Application.ReadWrite.OwnedBy`) — for creating Entra ID app registrations via the Microsoft Graph Bicep extension
-- Contributor access to the target Azure subscription
-
-## Deployment
+### Quick Start
 
 ```bash
 cd options-infra/ai-gateway-quota
 
+# Set Foundry instance details (or use azd env set)
 export OPENAI_API_BASE="https://your-openai.openai.azure.com/"
-export OPENAI_RESOURCE_ID="/subscriptions/..."
+export OPENAI_RESOURCE_ID="/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<name>"
 
 azd up
 ```
 
 The deployment:
-1. Creates Entra ID app registrations (gateway + 3 team apps)
-2. Deploys APIM with the quota policy, backends, and monitoring
+1. Creates Entra ID app registrations dynamically per contract (empty `identities`)
+2. Deploys APIM with priority routing policy, backend pools, blob storage for contracts, and monitoring
 3. Post-provision hook creates client secrets and stores them in `azd env`
 
-## Testing
-
-### Install Python dependencies
-
-```bash
-cd scripts
-pip install -r requirements.txt
-```
+## Generate Token / Simulate Traffic
 
 ### Generate a token
 
 ```bash
-python generate_token.py --from-azd alpha --decode
+python scripts/generate_token.py --from-azd alpha --decode
 ```
 
-You can also specify credentials explicitly:
+Or specify credentials explicitly:
 
 ```bash
-python generate_token.py \
+python scripts/generate_token.py \
     --tenant-id <TENANT_ID> \
     --client-id <CLIENT_ID> \
     --client-secret <CLIENT_SECRET> \
     --decode
 ```
 
-> The `--audience` flag defaults to `https://cognitiveservices.azure.com`. Override only if your APIM policy uses a different audience.
-
-### Call the gateway directly
+### Call the gateway
 
 ```bash
-TOKEN=$(python generate_token.py --from-azd alpha)
+TOKEN=$(python scripts/generate_token.py --from-azd alpha)
 
 curl -s https://<apim-gateway>/inference/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-02-01 \
   -H "Authorization: Bearer $TOKEN" \
@@ -208,16 +197,9 @@ curl -s https://<apim-gateway>/inference/openai/deployments/gpt-4.1-mini/chat/co
 
 ### Simulate multi-team traffic
 
-1. Create config from `azd env` values:
-   ```bash
-   cp config_sample.json config.json
-   # Fill in values from: azd env get-values
-   ```
-
-2. Run the simulation:
-   ```bash
-   python simulate_traffic.py --config config.json --requests-per-team 10 --model gpt-4.1-mini
-   ```
+```bash
+python scripts/simulate_traffic.py --requests-per-team 10 --model gpt-4.1-mini
+```
 
 ## Monitoring
 
@@ -227,9 +209,8 @@ curl -s https://<apim-gateway>/inference/openai/deployments/gpt-4.1-mini/chat/co
 ApiManagementGatewayLogs
 | where ApiId == "inference-api"
 | extend callerName = tostring(parse_json(RequestHeaders)["x-caller-name"])
-| extend callerTier = tostring(parse_json(RequestHeaders)["x-caller-tier"])
-| extend callerAzp = tostring(parse_json(RequestHeaders)["x-caller-azp"])
-| summarize RequestCount=count(), AvgLatency=avg(TotalTime) by callerName, callerTier, ResponseCode
+| extend callerPriority = tostring(parse_json(RequestHeaders)["x-caller-priority"])
+| summarize RequestCount=count(), AvgLatency=avg(TotalTime) by callerName, callerPriority, ResponseCode
 | order by callerName asc
 ```
 
@@ -239,119 +220,50 @@ ApiManagementGatewayLogs
 ApiManagementGatewayLogs
 | where ResponseCode == 429
 | extend callerName = tostring(parse_json(RequestHeaders)["x-caller-name"])
-| extend callerTier = tostring(parse_json(RequestHeaders)["x-caller-tier"])
-| summarize RateLimitedCount=count() by callerName, callerTier, bin(Timestamp, 1m)
+| extend backendType = tostring(parse_json(ResponseHeaders)["x-backend-type"])
+| summarize RateLimitedCount=count() by callerName, backendType, bin(Timestamp, 1m)
 | order by Timestamp desc
 ```
 
-## Monthly Token Budgets
-
-In addition to per-minute TPM quotas, the gateway enforces **monthly token budgets** natively using the `llm-token-limit` APIM policy.
-
-### How It Works
-
-1. Monthly quota values (`monthlyQuota`) are defined per caller in the access contracts
-2. The `llm-token-limit` policy reads each caller's `monthlyQuota` at request time and applies it with `token-quota-period="Monthly"`
-3. **Monthly quota only applies to non-P1 callers** — P1 teams route to PTU (pre-paid), so PTU tokens don't count against their budget. Any PAYG overflow for P1 is expected and not budget-capped.
-4. APIM tracks token consumption natively — no external components (Logic App, KQL alerts, or custom tables) are required
-5. When a non-P1 caller exceeds their monthly budget, the policy returns **403** automatically
-6. Counters reset at the start of each calendar month
-
-### Configuring Monthly Budgets
-
-Monthly quotas are defined in `entra/entra-apps.bicep` as part of the `callerTierMapping` output:
-
-```bicep
-// Example: Team Alpha gets 10M tokens/month, Gold tier at 200K TPM
-{"<azp>": {"tier": "gold", "name": "Team Alpha", "tpm": 200000, "monthlyQuota": 10000000}}
-```
-
-Default budgets:
-| Team | Tier | Monthly Token Budget |
-|------|------|---------------------|
-| Team Alpha | Gold | 10,000,000 |
-| Team Beta | Silver | 5,000,000 |
-| Team Gamma | Bronze | 100 (test value) |
-
-To change a budget, update the `monthlyQuota` value in `entra/entra-apps.bicep` and redeploy.
-
 ### Response Headers
 
-#### Successful Responses (200)
-
-Every successful response includes these headers for observability:
-
-| Header | Description | Example Values |
-|--------|-------------|----------------|
-| `x-caller-name` | Contract name the caller was matched to | `Team Alpha`, `Team Beta`, `Team Gamma` |
-| `x-caller-identity` | The JWT claim value that matched the caller's contract identity | `bb90b0d2-...` (app ID), `unknown` if unmatched |
-| `x-caller-priority` | Caller's priority label from the contract | `production`, `economy` |
-| `x-route-target` | Backend pool the request was routed to | `ptu-gate`, `payg` |
-| `x-ratelimit-limit-tokens` | Per-model TPM limit from the contract | `500`, `400`, `300` |
-| `x-ratelimit-remaining-tokens` | Remaining tokens in the current per-minute window (set by `llm-token-limit`) | `484`, `0` |
-| `x-tokens-consumed` | Tokens consumed by this request (prompt estimate + completion) | `16`, `42` |
-| `x-quota-limit-tokens` | Monthly token quota from the contract (non-P1 callers only) | `5000`, `3000`, `1000` |
-| `x-quota-remaining-tokens` | Remaining tokens in the current monthly quota period (non-P1 callers only) | `4984`, `0` |
-| `x-ptu-utilization` | Global PTU utilization for the requested model (consumed / capacity, 60s window) | `0.0%`, `25.6%`, `100.0%` |
-| `x-ptu-consumed` | Per-team PTU tokens consumed in the current 60s window | `0`, `176`, `300` |
-| `x-ptu-limit` | Per-team PTU TPM allocation from the contract (`0` = no PTU access) | `300`, `200`, `0` |
-| `x-is-streaming` | Whether the request was a streaming (`stream: true`) request | `true`, `false` |
-| `x-backend-type` | Which backend type actually served the request | `ptu`, `payg` |
-
-#### Rate Limit / Quota Responses (429)
-
-When per-minute TPM or monthly quota is exceeded:
-
-| Header | Description | Example Values |
-|--------|-------------|----------------|
-| `x-ratelimit-remaining-tokens` | `0` when TPM exhausted | `0` |
-| `x-quota-remaining-tokens` | `0` when monthly quota exhausted | `0` |
-
-The response body follows the standard Azure OpenAI error format from the `llm-token-limit` policy.
-
-#### Authorization Errors (401 / 403)
-
-| Status | Cause | Body |
-|--------|-------|------|
-| **401** | Invalid or missing JWT token (`validate-azure-ad-token` failure) | `{"error": {"code": "...", "message": "..."}}` |
-| **403** | Caller not found in any contract (`caller_not_authorized`) | `{"error": {"code": "caller_not_authorized", "message": "..."}}` |
-| **403** | Model not in caller's contract (`model_not_authorized`) | `{"error": {"code": "model_not_authorized", "message": "... Allowed: gpt-4.1-mini, gpt-oss-120b"}}` |
-
-#### Error Responses (on-error handler)
-
-When the policy encounters an unhandled error, additional debug headers are included:
-
-| Header | Description | Example Values |
-|--------|-------------|----------------|
-| `x-error-reason` | APIM error reason code | `TokenValidationFailed`, `OperationNotFound` |
-| `x-error-message` | Detailed error message | `Unauthorized. A valid Entra ID bearer token is required.` |
-| `x-error-section` | Policy section where the error occurred | `inbound`, `backend`, `outbound` |
-| `x-error-source` | Policy element that caused the error | `validate-azure-ad-token`, `forward-request` |
-| `x-caller-id` | Best-effort caller identifier (may be `unknown` if JWT parsing failed) | `bb90b0d2-...`, `unknown` |
-| `x-route-target` | Backend pool name |
-
-#### Request Headers (forwarded to backend)
-
-These headers are set on the request before forwarding to the backend, useful for backend-side logging:
+Every successful response includes observability headers:
 
 | Header | Description |
 |--------|-------------|
-| `x-caller-id` | Best available caller identifier from JWT (`azp` > `appid` > `xms_mirid` > `oid`) |
-| `x-caller-identity` | Matched identity claim value |
-| `x-caller-name` | Contract name |
+| `x-caller-name` | Contract name the caller was matched to |
 | `x-caller-priority` | Priority label (`production` / `economy`) |
-| `x-route-target` | Backend pool name |
+| `x-route-target` | Backend pool the request was routed to (`ptu-gate` / `payg`) |
+| `x-backend-type` | Which backend type served the request (`ptu` / `payg`) |
+| `x-ratelimit-remaining-tokens` | Remaining tokens in the current per-minute window |
+| `x-quota-remaining-tokens` | Remaining tokens in the monthly quota (non-P1 only) |
+| `x-ptu-utilization` | Global PTU utilization for the model |
+| `x-ptu-consumed` / `x-ptu-limit` | Per-team PTU usage and allocation |
 
-## Dashboard
+## Deployment Topologies
 
-The deployment includes an Azure Portal dashboard with:
+| Topology | APIM SKU | HA/DR | Fully Private | Best For |
+|----------|----------|-------|---------------|----------|
+| **A: Single-Region** | Standard v2 | ❌ APIM is SPOF | ✅ Internal VNet (Premium v2) | MVP, cost-sensitive |
+| **B1: APIM Multi-Region** | Premium (classic or v2) | ✅ Auto failover | ✅ Fully private | Production, private networks |
+| **B2: Front Door + APIM** | Standard v2 | ✅ Global failover | ⚠️ Client→AFD public | Public-facing APIs |
+| **B3: App GW per Region** | Any private-capable | ✅ DNS failover | ✅ Fully private | Zero public exposure |
 
-- **Quota Overview** — Monthly usage per caller with tier and TPM limit
-- **Token Usage Over Time** — Hourly stacked column chart by caller
-- **Rate Limit Events** — 429 throttle counts per caller
-- **Error Breakdown** — 4xx/5xx errors by caller and status code
-- **Model Usage by Caller** — Token consumption per model/deployment
-- **Daily Usage** — Daily breakdown with tier info
-- **Monthly Burn-Down** — Cumulative token chart for budget tracking
+See [docs/architecture-plan.md](docs/architecture-plan.md) for detailed topology diagrams, SKU notes, and cost analysis.
 
-Find the dashboard in the Azure Portal under **Dashboards** → "AI Gateway - Quota Tiers Dashboard".
+## Documentation
+
+- **[Architecture Plan](docs/architecture-plan.md)** — Alternative approaches evaluated, comparison table, FinOps reference
+- **[PTU Design Risks](docs/ptu-design-risks.md)** — Deployment naming requirements, multi-region topology, resolved design risks
+- **[JWT Citadel Adaptation](docs/jwt-citadel-implementation.md)** — How this project adapts the Citadel access contracts pattern
+
+## Research Sources
+
+| Source | Link |
+|--------|------|
+| Citadel (AI Hub Gateway) | [`Azure-Samples/ai-hub-gateway-solution-accelerator`](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1) (citadel-v1 branch) |
+| AI-Gateway | `Azure-Samples/AI-Gateway` |
+| GenAI Playbook | [MS Learn: Maximize PTU Utilization](https://learn.microsoft.com/en-us/ai/playbook/solutions/genai-gateway/reference-architectures/maximise-ptu-utilization) |
+| ai-gw-v2 | [`Heenanl/ai-gw-v2`](https://github.com/Heenanl/ai-gw-v2) (usecaseonboard / jwtauth branches) |
+| SimpleL7Proxy | [`microsoft/SimpleL7Proxy`](https://github.com/microsoft/SimpleL7Proxy) |
+| ai-policy-engine | [`Azure-Samples/ai-policy-engine`](https://github.com/Azure-Samples/ai-policy-engine) — ASP.NET 10 + APIM reference for AI governance with per-tenant billing (Redis + CosmosDB), monthly quotas, RPM/TPM limits, and a React dashboard. Heavier infrastructure than this project but stronger on chargeback/billing. No explicit PTU/PAYG priority routing. |

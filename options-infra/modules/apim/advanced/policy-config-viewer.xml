@@ -2,17 +2,8 @@
     <inbound>
         <base />
 
-        <!-- Fetch contracts JSON from Blob Storage (same blob as the routing policy uses) -->
-        <send-request mode="new" response-variable-name="contracts-response" timeout="10" ignore-error="false">
-            <set-url>{contracts-blob-url}</set-url>
-            <set-method>GET</set-method>
-            <set-header name="x-ms-version" exists-action="override">
-                <value>2020-04-08</value>
-            </set-header>
-            <authentication-managed-identity resource="https://storage.azure.com/" />
-        </send-request>
-
-        <set-variable name="contracts-json" value="@(((IResponse)context.Variables[&quot;contracts-response&quot;]).Body.As&lt;string&gt;())" />
+        <!-- Injected by Bicep: blob fetch or named value read -->
+        {contracts-load-section}
 
         <!-- Render as styled HTML -->
         <return-response>
@@ -193,8 +184,8 @@
   &lt;/table&gt;
 
   &lt;footer&gt;
-    Generated at " + now + @" by APIM policy &amp;middot; Source: Blob Storage &amp;middot;
-    Cached 5 min &amp;middot; &lt;code&gt;GET /gateway/config&lt;/code&gt;
+    Generated at " + now + @" by APIM policy &amp;middot; Source: {contracts-source-label} &amp;middot;
+    &lt;code&gt;GET /gateway/config&lt;/code&gt;
   &lt;/footer&gt;
 &lt;/body&gt;
 &lt;/html&gt;";

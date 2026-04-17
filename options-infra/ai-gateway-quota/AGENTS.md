@@ -11,7 +11,7 @@
 **ai-gateway-quota** deploys an Azure API Management (APIM) gateway in front of multiple Azure OpenAI / AI Foundry instances. It provides:
 
 - **JWT Bearer Token authentication** via Entra ID (no APIM subscription keys)
-- **Per-team access contracts** with 3-tier priority routing (P1 → PTU-first, P2 → Standard, P3 → Economy/PAYG-only)
+- **Per-team access contracts** with 3-tier priority routing (P1 → PTU-first, P2/P3 → PAYG-only)
 - **Per-model TPM quotas** (hard 429 limits) and **monthly token budgets** (cost caps)
 - **Automatic Entra ID app registration** creation for teams (via Microsoft Graph Bicep extension)
 - **Multi-backend routing** across PTU and PAYG Foundry instances with circuit breaker failover
@@ -45,10 +45,10 @@ ai-gateway-quota/
 │   └── dashboard.json             # Compiled ARM template version
 │
 ├── docs/
-│   ├── README.md                  # Architecture quick-start
-│   ├── architecture-plan.md       # 5 deployment topologies, risk analysis
-│   ├── jwt-citadel-implementation.md  # Request flow, identity resolution, caching
-│   └── ptu-design-risks.md        # Deployment naming, race conditions, capacity
+│   ├── README.md                  # Index linking to other docs
+│   ├── architecture-plan.md       # Options comparison, FinOps reference, deployment topologies
+│   ├── jwt-citadel-implementation.md  # How this project adapts Citadel, design history
+│   └── ptu-design-risks.md        # Deployment naming (canonical), resolved design risks
 │
 ├── scripts/
 │   ├── generate_token.py          # MSAL token generation (--from-azd flag)
@@ -83,7 +83,7 @@ The main.bicep file references these shared modules. **Do not duplicate — reus
 | **Identity Fragment** | `apim/advanced/fragment-identity.xml` | Shared policy fragment (JWT validation + identity resolution) |
 | **PTU Gate Policy** | `apim/advanced/policy-ptu-gate.xml` | Loopback API for partial-PTU token counting |
 | **Config Viewer Policy** | `apim/advanced/policy-config-viewer.xml` | Debug endpoint to view resolved contracts |
-| **Token Estimation** | `apim/advanced/token-estimation-{inbound,outbound}.xml` | Token count estimation fragments |
+| **Token Estimation** | `apim/advanced/token-estimation-{inbound,outbound}.xml` | Token count estimation fragments (retained as reference/prototypes, not used in production) |
 | **Types** | `apim/advanced/types.bicep` | Canonical type definitions (imported by main.bicep) |
 | **APIM v2** | `apim/v2/apim.bicep` | APIM service instance (Standard v2) |
 | **Inference API** | `apim/v2/inference-api.bicep` | /inference/openai API definition |
@@ -104,9 +104,8 @@ Client → APIM Gateway
   5. Per-Model TPM       — llm-token-limit (counter-key = "caller:model", tokens-per-minute)  → 429 if over
   6. Monthly Quota       — llm-token-limit (counter-key = "caller", token-quota-period = Monthly) → 429 if over (non-P1 only)
   7. Priority Routing    — Route to PTU or PAYG pool based on priority tier:
-       P1: Always PTU first, failover to PAYG on 429
-       P2: PTU when utilization < 50%, otherwise PAYG
-       P3: Always PAYG
+       P1: Always PTU first (via PTU Gate loopback), failover to PAYG on 429
+       P2/P3: Always PAYG pool directly
 ```
 
 ### JWT Audience
@@ -299,9 +298,9 @@ When editing XML policy files in `modules/apim/advanced/`:
 
 | Priority | Feature | Notes |
 |----------|---------|-------|
-| High | Scale to 100+ clients | Named Value limits, external storage alternatives |
-| High | Per-consumer self-service config | APIM ops team manages contracts |
-| High | Virtual PTU quotas | Soft limits with PAYG overflow |
+| High | Scale to 100+ clients | Load test with 100+ contracts in blob storage |
+| High | Per-consumer self-service config | Self-service UI for APIM ops team |
+| High | Virtual PTU quotas | ✅ Implemented — `ptuTpm` with PAYG overflow |
 | Medium | Monthly quota notifications | 80%/90% threshold alerts (email, Teams, Azure Monitor) |
 | — | FinOps chargeback | Cost per team, PTU utilization reporting |
 
