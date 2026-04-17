@@ -1,5 +1,7 @@
 # PTU Priority Routing — Design Risks & Limitations
 
+> **Status: Design Research** — This document captures risks and limitations relevant to advanced PTU priority routing. See [architecture-plan.md](architecture-plan.md) for the full options analysis and [jwt-citadel-implementation.md](jwt-citadel-implementation.md) for the advanced implementation plan.
+
 ## Overview
 
 This document captures known risks, limitations, and open questions in the PTU priority routing design. These affect the **P2 (PTU when idle)** tier most significantly, and have implications for per-team PTU quota tracking.

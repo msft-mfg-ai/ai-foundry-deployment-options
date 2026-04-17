@@ -1,5 +1,7 @@
 # Azure API Management routing to PTU deployments with BCDR scenarios
 
+> **Note:** These documents are design and research artifacts for **PTU priority routing** — an advanced extension of the quota gateway pattern. They describe a more complex architecture (multi-team PTU sharing with dynamic priority-based spillover) than what the `ai-gateway-quota` option currently deploys. The deployed implementation provides tiered TPM + monthly quota via `llm-token-limit` with Bearer Token auth. See the [parent README](../README.md) for what is actually deployed.
+
 Designing a priority-based routing solution for Azure OpenAI PTU deployments using Azure API Management and Microsoft Foundry.
 
 ## Problem
@@ -12,10 +14,9 @@ When multiple internal teams share a PTU deployment with different priorities (p
 
 ## Documentation
 
-- **[Architecture Plan](docs/architecture-plan.md)** — Full analysis of 5 options, 5 deployment topologies, comparison tables, Citadel & SimpleL7Proxy deep-dives, and phased implementation approach
-- **[PTU Design Risks & Limitations](docs/ptu-design-risks.md)** — Deployment naming requirements, multi-region topology, token estimation, race conditions, and risk summary
-- **[Requested APIM Features](docs/requested-apim-features.md)** — Feature gaps in APIM that would simplify PTU priority routing (atomic counters, auto-discovery, model routing, etc.)
-- **[JWT Citadel Implementation](docs/jwt-citadel-implementation.md)** — Implementation details for the JWT-based priority routing policy
+- **[Architecture Plan](architecture-plan.md)** — Full analysis of 5 options, 5 deployment topologies, comparison tables, Citadel & SimpleL7Proxy deep-dives, and phased implementation approach
+- **[PTU Design Risks & Limitations](ptu-design-risks.md)** — Deployment naming requirements, multi-region topology, token estimation, race conditions, and risk summary
+- **[JWT Citadel Implementation](jwt-citadel-implementation.md)** — Advanced architecture plan: JWT-based access contracts with per-team PTU/PAYG dynamic routing (future state)
 
 ## ⚠️ Critical Requirement: Consistent Deployment Names
 
@@ -29,7 +30,7 @@ All Azure OpenAI / Foundry instances that serve the same model **must** use the 
 ❌  PTU instance (eastus):    deployment "gpt-4.1-mini-ptu"   ← BREAKS routing (404)
 ```
 
-APIM backend pools forward the URL path (`/openai/deployments/{name}/...`) unchanged to whichever backend is selected. Different names across backends in the same pool cause intermittent 404s. See [Section 5 of PTU Design Risks](docs/ptu-design-risks.md#5-deployment-naming-convention--hard-requirement) for the full rationale and setup checklist.
+APIM backend pools forward the URL path (`/openai/deployments/{name}/...`) unchanged to whichever backend is selected. Different names across backends in the same pool cause intermittent 404s. See [Section 5 of PTU Design Risks](ptu-design-risks.md#5-deployment-naming-convention--hard-requirement) for the full rationale and setup checklist.
 
 ## Quick Summary
 

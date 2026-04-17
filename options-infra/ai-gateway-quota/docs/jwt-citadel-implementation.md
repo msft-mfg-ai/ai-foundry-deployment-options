@@ -1,5 +1,9 @@
 # JWT-Based Citadel Access Contracts — Implementation Plan
 
+> **Status: Future Architecture / Design Proposal** — This document describes an advanced, future-state architecture for multi-team PTU sharing with dynamic priority-based routing. It is **not** the currently deployed policy. The `ai-gateway-quota` option currently implements a simpler model: per-caller tiered quotas (Gold/Silver/Bronze) with `llm-token-limit` and Entra ID bearer auth via APIM Named Values. See [`policy_quota.xml`](../policy_quota.xml) for the deployed policy.
+>
+> The model name `gpt-52-chat` used throughout this document is a placeholder. Replace with your actual deployment name (e.g., `gpt-4o`, `gpt-4.1-mini`) when implementing.
+
 ## Problem Statement
 
 We want to adopt [Citadel's Access Contracts](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1) pattern for governing AI model access across multiple internal teams, but with a critical constraint:
