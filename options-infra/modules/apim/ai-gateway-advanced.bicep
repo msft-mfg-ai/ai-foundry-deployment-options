@@ -451,29 +451,6 @@ resource configRefreshPolicy 'Microsoft.ApiManagement/service/apis/operations/po
   }
 }
 
-resource configJsonOperation 'Microsoft.ApiManagement/service/apis/operations@2024-06-01-preview' = {
-  parent: configViewerApi
-  name: 'get-config-json'
-  properties: {
-    displayName: 'Get Contracts JSON'
-    method: 'GET'
-    urlTemplate: '/config.json'
-    description: 'Returns all access contracts as raw JSON'
-  }
-}
-
-resource configJsonPolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2024-06-01-preview' = {
-  parent: configJsonOperation
-  name: 'policy'
-  dependsOn: [contractStorage, contractNamedValue]
-  properties: {
-    format: 'rawxml'
-    value: useStorageAccount
-      ? '<policies><inbound><base />${configViewerLoadBlob}<return-response><set-status code="200" reason="OK" /><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>@((string)context.Variables["contracts-json"])</set-body></return-response></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
-      : '<policies><inbound><base /><return-response><set-status code="200" reason="OK" /><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>{{access-contracts-json}}</set-body></return-response></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
-  }
-}
-
 // ============================================================================
 // -- Foundry Connections (per-project, identity-based) — optional
 // ============================================================================
