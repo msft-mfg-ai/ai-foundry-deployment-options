@@ -1,27 +1,29 @@
 # AI Gateway with JWT Auth + Access Contracts + Priority Routing
 
-This deployment creates an **Azure API Management (APIM)** AI Gateway with **JWT Bearer Token authentication** via Entra ID. Client applications are identified by JWT claims, matched to **access contracts** stored in blob storage, and subject to **per-model TPM quotas**, **monthly token budgets**, and **3-tier priority routing** (P1 → PTU-first with PAYG failover, P2/P3 → PAYG-only).
+This deployment creates an **Azure API Management (APIM)** AI Gateway with **JWT Bearer Token authentication** via Entra ID. Client applications are identified by JWT claims, matched to **access contracts** stored in blob storage, and subject to **per-model TPM quotas**, **monthly token budgets**, and **2-tier priority routing** (P1 → PTU-first with PAYG spillover, P2 → PAYG-only with quota enforcement).
 
 ## Features
 
 - **JWT Bearer Token Auth** — `validate-azure-ad-token` against Entra ID (no APIM subscription keys)
-- **Access Contracts** — Per-team configuration (models, TPM limits, PTU allocations, monthly budgets) stored in blob storage and cached 5 min
-- **3-Tier Priority Routing** — P1 → PTU first (PAYG failover on 429), P2/P3 → PAYG only
+- **Access Contracts** — Per-team configuration (models, TPM limits, PTU allocations, monthly budgets) stored in blob storage (Bicep) or APIM named values (Terraform), cached 5 min
+- **2-Tier Priority Routing** — P1 Production (PTU + PAYG spillover), P2 Standard (PAYG only, quota enforced)
+- **Loopback Pattern (inspired by Citadel access contracts)** — Priority API (external) + PTU Gate API (internal loopback) for atomic PTU counting; internal API key protects loopback APIs
+- **PTU + PAYG Spillover** — P1 requests try PTU first; on 429/503 the policy retries to the PAYG pool automatically
 - **Per-Model TPM Quotas** — Hard 429 enforcement via `llm-token-limit` with custom `counter-key`
-- **Monthly Token Budgets** — Native enforcement via `llm-token-limit` with `token-quota-period=Monthly` (non-P1 only)
-- **Two-API Loopback Architecture** — Priority API (external) + PTU Gate API (internal) for atomic PTU capacity enforcement
+- **Monthly Token Budgets** — Native enforcement via `llm-token-limit` with `token-quota-period=Monthly` (conditional — see [Quota Compromise](#quota-compromise))
+- **Route Tracing** — `x-route-trace` header records the full routing path through loopback, PTU, and PAYG pools
 - **Automatic Entra ID App Registration** — Dynamic creation per contract via Microsoft Graph Bicep extension
 - **Multi-Backend Routing** — Per-model PTU and PAYG pools with circuit breaker failover
 - **Event Hub Notifications** — Quota-exceeded events for downstream processing
 - **Azure Portal Dashboard** — KQL-based monitoring (token usage, rate limits, routing decisions)
-- **17 Observability Headers** — `x-caller-name`, `x-route-target`, `x-backend-type`, `x-ptu-utilization`, etc.
+- **Observability Headers** — `x-caller-name`, `x-backend-pool`, `x-route-trace`, `x-ptu-utilization`, `x-retry-count`, etc.
 
 ## Architecture Overview
 
 The gateway uses a **loopback pattern inspired by [Citadel](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1) access contracts** for atomic PTU counting. The Priority API (external-facing) handles JWT auth, contract resolution, and quota checks. For P1 callers it issues an internal loopback call to the PTU Gate API, which atomically checks PTU capacity via `llm-token-limit` and forwards to the PTU backend pool. If PTU returns 429 or 503, the Priority API retries to the PAYG pool. An **internal API key** protects all loopback APIs from external access.
 
 ```
-  Client App                        APIM Gateway (Two-API Loopback)
+  Client App                        APIM Gateway (Loopback Pattern)
   (Entra ID)                       ┌─────────────────────────────────────────────────────────┐
        │                           │                                                         │
        │ 1. Get token              │   Priority API (external)                               │
@@ -29,19 +31,19 @@ The gateway uses a **loopback pattern inspired by [Citadel](https://github.com/A
        │                           │   │ 1. validate-azure-ad-token                       │  │
        │ 2. Call API with          │   │ 2. Identity resolution (JWT claims → contract)   │  │
        │    Bearer token           │   │ 3. Per-model TPM check (llm-token-limit)         │  │
-       ├──────────────────────────►│   │ 4. Monthly quota check (non-P1 only)             │  │
+       ├──────────────────────────►│   │ 4. Monthly quota check (conditional — see below) │  │
        │                           │   │ 5. Route by priority:                            │  │
-       │                           │   │    P1 → PTU Gate (loopback) → PAYG fallback      │  │
-       │                           │   │    P2/P3 → PAYG pool directly                    │  │
+       │                           │   │    P1 → PTU Gate (loopback) → PAYG spillover     │  │
+       │                           │   │    P2 → PAYG pool directly                       │  │
        │                           │   └──────────────┬──────────────────┬────────────────┘  │
        │                           │                  │                  │                    │
-       │                           │   PTU Gate API   │                  │                    │
-       │                           │   (internal)     │                  │                    │
+       │                           │   PTU Gate API   │ (internal API    │                    │
+       │                           │   (loopback)     │  key protected)  │                    │
        │                           │   ┌──────────────▼───────────┐     │                    │
        │                           │   │ llm-token-limit (PTU     │     │                    │
        │                           │   │ capacity per model)      │     │                    │
        │                           │   │ → forward to PTU pool    │     │                    │
-       │                           │   │ → 429 if PTU exhausted   │     │                    │
+       │                           │   │ → 429/503 → retry PAYG   │     │                    │
        │                           │   └──────────────┬───────────┘     │                    │
        │                           └──────────────────┼─────────────────┼────────────────────┘
                                                       │                 │
@@ -54,10 +56,15 @@ The gateway uses a **loopback pattern inspired by [Citadel](https://github.com/A
                                                       │                 │
                                               ┌───────┴───────┐ ┌──────┴───────┐
                                               │ Foundry PTU   │ │ Foundry PAYG │
-                                              │ (pre-paid)    │ │ (pay-per-use)│
+                                              │ (dedicated)   │ │ (pay-per-use)│
                                               └───────────────┘ └──────────────┘
 
   Supporting Services: Log Analytics │ App Insights │ Event Hub │ Blob Storage (contracts) │ Dashboard
+```
+
+Route tracing is captured in the `x-route-trace` response header, e.g.:
+```
+x-route-trace: loopback:gpt41-ptu-pool[token-limit:ok->gpt41-ptu-pool->429]->429->gpt41-payg-pool
 ```
 
 ## Request Flow
@@ -69,11 +76,32 @@ Client → APIM Gateway
   3. Contract Lookup     — Load contracts JSON from blob (cached 5 min) → resolve team name, priority, model quotas
   4. Model Authorization — Check requested model is in contract's allow-list, extract TPM/ptuTpm
   5. Per-Model TPM       — llm-token-limit (counter-key = "caller:model", tokens-per-minute) → 429 if over
-  6. Monthly Quota       — llm-token-limit (counter-key = "caller", token-quota-period = Monthly) → 429 if over (non-P1 only)
+  6. Monthly Quota       — llm-token-limit (conditional — see Quota Compromise) → 429 if over
   7. Priority Routing    — Route to PTU or PAYG pool based on priority tier:
-       P1: Always PTU first (via PTU Gate loopback), failover to PAYG on 429
-       P2/P3: Always PAYG pool directly
+       P1 (Production): PTU first (via PTU Gate loopback), spillover to PAYG on 429/503
+       P2 (Standard):   PAYG pool directly, quota always enforced
 ```
+
+## Priority Tiers
+
+| Priority | Label | Routing | Quota Enforcement |
+|----------|-------|---------|-------------------|
+| **P1** | Production | PTU first → PAYG spillover on 429/503 | Conditional (see [Quota Compromise](#quota-compromise)) |
+| **P2** | Standard | PAYG only | Always enforced |
+
+## Quota Compromise
+
+Monthly quota enforcement interacts with PTU routing in a nuanced way:
+
+| Scenario | Quota Enforced? | Rationale |
+|----------|-----------------|-----------|
+| **P1 with 100% PTU allocation** | ❌ No | PTU is dedicated capacity (paid whether used or not) — there's nothing to budget-cap. |
+| **P1 with partial PTU** | ✅ Yes | The single quota counter captures both PTU and PAYG usage. The limit serves as a cap on total consumption, though it's not per-backend precise. |
+| **P2 (Standard)** | ✅ Yes | All traffic is PAYG — always quota-enforced. |
+
+> **Note on quota counting**: The monthly quota is counted **once** per request (in the Priority API's inbound section, before routing). It is not double-counted on retry. However, when PTU is hit, those tokens are effectively "free" (pre-paid), so the quota counter includes both PTU and PAYG tokens in a single total — it doesn't distinguish between the two backends.
+
+> **Alternative approach**: An alternative architecture would return PTU 429/503 errors directly to the client (no automatic retry) and let clients specify their preferred backend via a header. This would enable separate per-LLM quotas for PTU and PAYG independently. The current design prioritizes transparent failover at the cost of a combined quota counter.
 
 ## JWT Audience: `https://cognitiveservices.azure.com`
 
@@ -100,7 +128,7 @@ accessContractType:
     displayName: string       #   Human label
     claimName: string         #   "azp" | "appid" | "xms_mirid" | "oid" | "sub"
   }]
-  priority: 1 | 2 | 3         # 1=Production (PTU), 2/3=PAYG only
+  priority: 1 | 2              # 1=Production (PTU+PAYG), 2=Standard (PAYG only)
   models: [{                  # Allow-list + quotas per model
     name: string              #   Model deployment name (e.g., "gpt-4.1-mini")
     tpm: int                  #   Hard TPM limit (429 enforcement)
@@ -116,12 +144,10 @@ accessContractType:
 |------|----------|--------|-----|---------|---------------|
 | Team Alpha | P1 (Production) | gpt-4.1-mini | 1,000 | 100 | 7,000 |
 | | | gpt-oss-120b | 100 | — | |
-| Team Beta | P2 (Standard) | gpt-4.1-mini | 400 | 200 | 3,000 |
+| Team Beta | P2 (Standard) | gpt-4.1-mini | 400 | — | 3,000 |
 | | | gpt-5.1-chat | 400 | — | |
-| Team Gamma | P3 (Economy) | gpt-4.1-mini | 300 | — | 1,000 |
-| | | gpt-4.1 | 100 | — | |
 
-P1 callers are **exempt from monthly quotas** — PTU is pre-paid, so PAYG overflow is expected and not budget-capped.
+P1 callers with 100% PTU allocation are **exempt from monthly quotas** — PTU is dedicated capacity (paid whether used or not), so there's nothing to budget-cap. P1 callers with partial PTU are still quota-enforced (see [Quota Compromise](#quota-compromise)).
 
 ## Entra ID App Registrations
 
@@ -143,6 +169,32 @@ All Azure OpenAI / Foundry instances serving the same model **must** use the **s
 
 See [Section 5 of PTU Design Risks](docs/ptu-design-risks.md#5-deployment-naming-convention--hard-requirement) for the full rationale and setup checklist.
 
+## Known Limitations
+
+- **`x-quota-remaining-tokens` is an unreliable estimate on APIM StandardV2.** The value bounces erratically between requests due to platform-level counter behavior, not policy logic. The internal counter tracks correctly — enforcement (403) fires at the right time, but the reported remaining value is noisy. Per [Microsoft docs](https://learn.microsoft.com/en-us/azure/api-management/azure-openai-token-limit-policy): *"The value is an estimate for informational purposes."*
+
+- **Combined PTU + PAYG quota counter.** For P1 callers with partial PTU, the monthly quota counts total tokens across both backends. Since PTU tokens are pre-paid, this means the quota limit is a cap on total consumption rather than a precise measure of PAYG cost. See [Quota Compromise](#quota-compromise).
+
+## Config Endpoints
+
+The `config-viewer-api` exposes three **publicly accessible** endpoints (no authentication required):
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/gateway/config` | GET | Styled HTML dashboard showing all team contracts |
+| `/gateway/config.json` | GET | Raw JSON of all access contracts |
+| `/gateway/config/refresh` | POST | Clears blob cache (blob mode) or no-op (named value mode) |
+
+```bash
+# View contracts as JSON
+curl -s https://<apim-gateway>/gateway/config.json | jq .
+
+# View HTML dashboard in browser
+open https://<apim-gateway>/gateway/config
+```
+
+> **⚠️ No authentication** — These endpoints are intentionally public for operational convenience. They expose team names, Entra app IDs, priority tiers, and quota limits. No secrets are exposed (app IDs are not secret). If your security posture requires restricting access, add `subscriptionRequired: true` to the `config-viewer-api` resource or add an internal key check to the policy.
+
 ## Deploy
 
 ### Prerequisites
@@ -151,7 +203,14 @@ See [Section 5 of PTU Design Risks](docs/ptu-design-risks.md#5-deployment-naming
 - **Application.ReadWrite.All** permission for Entra ID app registrations
 - Azure OpenAI / Foundry instances (PTU and/or PAYG) with model deployments
 
-### Quick Start
+### Deployment Options
+
+| Method | Directory | Tooling | Notes |
+|--------|-----------|---------|-------|
+| **Bicep** (primary) | Root | `azd up` | Main deployment — uses `azd` and `.env` for configuration |
+| **Terraform** | `tf/` | `terraform apply` | Shares policy XMLs from `modules/apim/advanced/`; uses APIM named values instead of blob storage for contracts |
+
+### Quick Start (Bicep)
 
 ```bash
 cd options-infra/ai-gateway-quota
@@ -234,13 +293,14 @@ Every successful response includes observability headers:
 | Header | Description |
 |--------|-------------|
 | `x-caller-name` | Contract name the caller was matched to |
-| `x-caller-priority` | Priority label (`production` / `economy`) |
-| `x-route-target` | Backend pool the request was routed to (`ptu-gate` / `payg`) |
-| `x-backend-type` | Which backend type served the request (`ptu` / `payg`) |
+| `x-caller-priority` | Priority label (`production` / `standard`) |
+| `x-backend-pool` | Which backend pool served the request (e.g., `gpt41-ptu-pool`, `gpt41-payg-pool`) |
+| `x-retry-count` | Number of retries (0 if first attempt succeeded) |
+| `x-route-trace` | Full routing path (e.g., `loopback:gpt41-ptu-pool[token-limit:ok->gpt41-ptu-pool->429]->429->gpt41-payg-pool`) |
+| `x-ptu-consumed` | PTU tokens consumed by this request |
+| `x-ptu-utilization` | Global PTU utilization percentage for the model |
+| `x-quota-remaining-tokens` | Remaining tokens in the monthly quota (estimate — see [Known Limitations](#known-limitations)) |
 | `x-ratelimit-remaining-tokens` | Remaining tokens in the current per-minute window |
-| `x-quota-remaining-tokens` | Remaining tokens in the monthly quota (non-P1 only) |
-| `x-ptu-utilization` | Global PTU utilization for the model |
-| `x-ptu-consumed` / `x-ptu-limit` | Per-team PTU usage and allocation |
 
 ## Deployment Topologies
 
@@ -257,7 +317,9 @@ See [docs/architecture-plan.md](docs/architecture-plan.md) for detailed topology
 
 - **[Architecture Plan](docs/architecture-plan.md)** — Alternative approaches evaluated, comparison table, FinOps reference
 - **[PTU Design Risks](docs/ptu-design-risks.md)** — Deployment naming requirements, multi-region topology, resolved design risks
-- **[JWT Citadel Adaptation](docs/jwt-citadel-implementation.md)** — How this project adapts the Citadel access contracts pattern
+- **[Citadel-Inspired Implementation](docs/jwt-citadel-implementation.md)** — How this project adapts the Citadel access contracts pattern
+- **[TPM Calculation](docs/tpm-calculation.md)** — How tokens-per-minute limits are calculated and enforced
+- **[PTU Deployment Sizing](docs/ptu-deployment-sizing.md)** — Guidance for sizing PTU deployments and capacity planning
 
 ## Research Sources
 
