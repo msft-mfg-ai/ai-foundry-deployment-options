@@ -1,7 +1,7 @@
 // ============================================================================
 // Contract Config Storage
 // ============================================================================
-// Compiles access contracts into a JSON blob and stores it in Azure Blob Storage.
+// Stores pre-compiled access contracts JSON as a blob in Azure Blob Storage.
 // APIM fetches this blob on each request (with short caching) to load contract config.
 //
 // Why Blob Storage?
@@ -13,20 +13,15 @@
 // Uses AVM storage-account module for consistent resource creation.
 // ============================================================================
 
-import { accessContractType } from 'types.bicep'
-
 param location string
 param tags object = {}
 param resourceSuffix string
 
-@description('The compiled access contracts to store')
-param contracts accessContractType[]
+@description('Pre-compiled contracts JSON string (from parent module)')
+param contractMapJson string
 
 @description('APIM managed identity principal ID — granted Storage Blob Data Reader')
 param apimPrincipalId string
-
-@description('Per-model PTU capacity map (model → total TPM). From backend module.')
-param ptuCapacityPerModel object = {}
 
 // -- Storage Account (AVM) ----------------------------------------------------
 var storageAccountName = take('stcontracts${resourceSuffix}', 24)
@@ -72,59 +67,6 @@ module storageAccount 'br/public:avm/res/storage/storage-account:0.32.0' = {
   }
 }
 
-// -- Compile Contracts to JSON ------------------------------------------------
-// Two structures are stored in the blob:
-//   1. "contracts": { contractName → config } — the contract definitions
-//   2. "identities": [ { prefix, contractName } ] — sorted longest-first for prefix matching
-//
-// The policy iterates the identities array to find the first prefix match,
-// then looks up the contract by name. This supports multiple identity types
-// (appId, xms_mirid, oid) and prefix matching.
-var contractEntries = reduce(
-  contracts,
-  {},
-  (cur, contract) =>
-    union(cur, {
-      '${contract.name}': {
-        name: contract.name
-        priority: contract.priority
-        monthlyQuota: contract.monthlyQuota
-        environment: contract.?environment ?? 'UNKNOWN'
-        identities: contract.identities
-        models: reduce(
-          contract.models,
-          {},
-          (mcur, m) =>
-            union(mcur, {
-              '${m.name}': {
-                tpm: m.tpm
-                ptuTpm: m.?ptuTpm ?? 0
-              }
-            })
-        )
-      }
-    })
-)
-
-// Flatten identities into a single lookup array: [ { value, claimName, contract } ]
-// The policy will iterate this to find a prefix match against the caller's JWT claims.
-var identityEntries = flatten(map(
-  contracts,
-  contract =>
-    map(contract.identities, id => {
-      value: id.value
-      claimName: id.claimName
-      displayName: id.displayName
-      contract: contract.name
-    })
-))
-
-var contractMap = {
-  contracts: contractEntries
-  identities: identityEntries
-  ptuCapacity: ptuCapacityPerModel
-}
-
 // -- Deploy contract config as a blob -----------------------------------------
 // Uses deploymentScript to upload the JSON blob (Bicep can't create blobs natively)
 resource uploadScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
@@ -142,12 +84,12 @@ resource uploadScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
     azCliVersion: '2.63.0'
     retentionInterval: 'PT1H'
     timeout: 'PT5M'
-    forceUpdateTag: uniqueString(string(contractMap))
+    forceUpdateTag: uniqueString(contractMapJson)
     environmentVariables: [
       { name: 'STORAGE_ACCOUNT', value: storageAccount.outputs.name }
       { name: 'CONTAINER_NAME', value: 'contracts' }
       { name: 'BLOB_NAME', value: 'access-contracts.json' }
-      { name: 'CONTRACT_JSON', value: string(contractMap) }
+      { name: 'CONTRACT_JSON', value: contractMapJson }
     ]
     scriptContent: '''
       echo "$CONTRACT_JSON" | az storage blob upload \
@@ -176,4 +118,3 @@ output containerName string = 'contracts'
 output blobName string = 'access-contracts.json'
 #disable-next-line outputs-should-not-contain-secrets
 output blobUrl string = '${storageAccount.outputs.primaryBlobEndpoint}contracts/access-contracts.json'
-output contractMapJson string = string(contractMap)

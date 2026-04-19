@@ -90,7 +90,6 @@ export OPENAI_RESOURCE_ID="/subscriptions/<sub-id>/resourceGroups/<rg>/providers
 
 ### Optional Parameters
 - `OPENAI_LOCATION` - Location of the OpenAI resource (defaults to deployment location)
-- `EXISTING_FOUNDRY_NAME` - Use an existing Foundry account instead of creating new
 - `PROJECTS_COUNT` - Number of Foundry projects to create (default: 1)
 
 ## Deployment

@@ -27,6 +27,15 @@ hooks:
         & ./scripts/add_app_reg_secrets.ps1
 
         Write-Host ""
+        Write-Host "Generating .env file from deployment outputs..."
+        $envFile = Join-Path $PSScriptRoot ".env"
+        "# Generated from azd env on $(Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ' -AsUTC)" | Set-Content $envFile
+        "# Re-run scripts/generate-env.sh to refresh" | Add-Content $envFile
+        "" | Add-Content $envFile
+        azd env get-values | Add-Content $envFile
+        Write-Host "Generated $envFile"
+
+        Write-Host ""
         Write-Host "Deployment complete!"
         Write-Host "APIM Gateway URL: ${env:APIM_GATEWAY_URL}"
         Write-Host "API URL:          ${env:APIM_API_URL}"
@@ -50,6 +59,11 @@ hooks:
         echo "🔑 Creating client secrets for team app registrations..."
         chmod +x ./scripts/add_app_reg_secrets.sh
         ./scripts/add_app_reg_secrets.sh
+
+        echo ""
+        echo "📄 Generating .env file from deployment outputs..."
+        chmod +x ./scripts/generate-env.sh
+        ./scripts/generate-env.sh
 
         echo ""
         echo "✅ Deployment complete!"

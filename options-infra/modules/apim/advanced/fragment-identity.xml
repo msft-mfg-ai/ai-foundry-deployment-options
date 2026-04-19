@@ -9,8 +9,8 @@
 <!--   caller-id            — Best available identity claim value     -->
 <!--   caller-name          — Contract name (e.g., "Team Alpha")      -->
 <!--   matched-identity     — Display name of matched identity        -->
-<!--   priority             — Routing priority (1=prod, 3=economy)    -->
-<!--   priority-label       — Human label (production/economy)        -->
+<!--   priority             — Routing priority (1=prod, 2=standard)   -->
+<!--   priority-label       — Human label (production/standard)       -->
 <!--   caller-monthly-quota — Monthly token budget                    -->
 <!--   caller-environment   — Environment tag (PROD/DEV/TEST)         -->
 <!--   contract-models      — Model config JToken from contract       -->
@@ -52,22 +52,9 @@
     return &quot;unknown&quot;;
 }" />
 
-<!-- STEP 3: Load contract config from blob (cached 5 min)            -->
-<cache-lookup-value key="contracts-blob-cache" variable-name="contracts-json" />
-<choose>
-    <when condition="@(!context.Variables.ContainsKey(&quot;contracts-json&quot;))">
-        <send-request mode="new" response-variable-name="contracts-response" timeout="10" ignore-error="false">
-            <set-url>{contracts-blob-url}</set-url>
-            <set-method>GET</set-method>
-            <set-header name="x-ms-version" exists-action="override">
-                <value>2020-04-08</value>
-            </set-header>
-            <authentication-managed-identity resource="https://storage.azure.com/" />
-        </send-request>
-        <set-variable name="contracts-json" value="@(((IResponse)context.Variables[&quot;contracts-response&quot;]).Body.As&lt;string&gt;())" />
-        <cache-store-value key="contracts-blob-cache" value="@((string)context.Variables[&quot;contracts-json&quot;])" duration="300" />
-    </when>
-</choose>
+<!-- STEP 3: Load contract config                                      -->
+<!-- Injected by Bicep: blob fetch (with cache) or named value read    -->
+{contracts-load-section}
 
 <!-- Parse caller's contract using identity prefix matching -->
 <set-variable name="contracts-parsed" value="@(Newtonsoft.Json.Linq.JObject.Parse((string)context.Variables[&quot;contracts-json&quot;]))" />
@@ -159,7 +146,7 @@
 }" />
 <set-variable name="priority" value="@{
     var c = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;contract-obj&quot;];
-    var v = c[&quot;priority&quot;]; return v != null ? v.Value&lt;int&gt;() : 3;
+    var v = c[&quot;priority&quot;]; return v != null ? v.Value&lt;int&gt;() : 2;
 }" />
 <set-variable name="caller-monthly-quota" value="@{
     var c = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;contract-obj&quot;];
@@ -173,7 +160,7 @@
 
 <set-variable name="priority-label" value="@{
     var p = (int)context.Variables[&quot;priority&quot;];
-    return p == 1 ? &quot;production&quot; : &quot;economy&quot;;
+    return p == 1 ? &quot;production&quot; : &quot;standard&quot;;
 }" />
 
 <!-- STEP 5: Extract requested model from URL path or request body    -->

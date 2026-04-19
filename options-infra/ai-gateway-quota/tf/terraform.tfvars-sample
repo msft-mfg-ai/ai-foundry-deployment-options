@@ -1,0 +1,64 @@
+subscription_id      = "YOUR_SUBSCRIPTION_ID"
+region               = "norwayeast"
+region_code          = "nwe"
+random_string        = "abc1"
+apim_publisher_email = "admin@example.com"
+tenant_id            = "YOUR_TENANT_ID"
+
+foundry_instances = [
+  {
+    name        = "foundry-eastus2-ptu"
+    resource_id = "/subscriptions/YOUR_SUB/resourceGroups/rg-ai/providers/Microsoft.CognitiveServices/accounts/foundry-eastus-ptu"
+    endpoint    = "https://foundry-eastus-ptu.openai.azure.com/"
+    location    = "eastus2"
+    is_ptu      = true
+    deployments = [
+      { model_name = "gpt-4.1-mini", ptu_capacity_tpm = 2000 }
+    ]
+  },
+  {
+    name        = "foundry-eastus2-paygo"
+    resource_id = "/subscriptions/YOUR_SUB/resourceGroups/rg-ai/providers/Microsoft.CognitiveServices/accounts/foundry-eastus"
+    endpoint    = "https://foundry-eastus.openai.azure.com/"
+    location    = "eastus2"
+    is_ptu      = false
+    deployments = [
+      { model_name = "gpt-4.1-mini" },
+      { model_name = "gpt-4.1" }
+    ]
+  }
+]
+
+access_contracts = [
+  {
+    name = "Team Alpha"
+    identities = [
+      { value = "YOUR_APP_CLIENT_ID", display_name = "Team Alpha App", claim_name = "azp" }
+    ]
+    priority      = 1
+    models = [
+      { name = "gpt-4.1-mini", tpm = 1000, ptu_tpm = 100 },
+      { name = "gpt-4.1", tpm = 500 }
+    ]
+    monthly_quota = 7000
+    environment   = "PROD"
+  },
+  {
+    name = "Team Beta"
+    identities = [
+      { value = "ANOTHER_APP_CLIENT_ID", display_name = "Team Beta App", claim_name = "azp" }
+    ]
+    priority      = 2
+    models = [
+      { name = "gpt-4.1-mini", tpm = 300 }
+    ]
+    monthly_quota = 1000
+    environment   = "DEV"
+  }
+]
+
+tags = {
+  environment     = "lab"
+  product         = "ai-gateway-quota"
+  SecurityControl = "Ignore"
+}

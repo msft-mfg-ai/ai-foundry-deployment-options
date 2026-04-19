@@ -84,7 +84,6 @@ Get your API key from [OpenRouter](https://openrouter.ai/keys).
 ### Optional Parameters
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `EXISTING_FOUNDRY_NAME` | Use an existing Foundry account | Create new |
 | `PROJECTS_COUNT` | Number of Foundry projects to create | 1 |
 
 ## Deployment
