@@ -12,56 +12,72 @@
         <include-fragment fragment-id="identity-and-authorization" />
 
         <!-- ================================================================ -->
-        <!-- STEP 7a: Enforce PER-MODEL TPM (hard limit)                      -->
+        <!-- STEP 7a: Enforce PER-MODEL TPM (hard limit, total across PTU+PAYG) -->
+        <!--                                                                  -->
+        <!-- This is the TOTAL tokens-per-minute budget for this model,       -->
+        <!-- combining both PTU and PAYG usage. For Production callers with   -->
+        <!-- PTU, the first ptu_tpm tokens route through PTU; the remainder  -->
+        <!-- spills to PAYG — but both count against this single TPM cap.    -->
         <!--                                                                  -->
         <!-- counter-key = contractName:model — all identities in a contract  -->
         <!-- share the same per-model TPM counter.                            -->
         <!-- llm-token-limit handles token estimation internally.             -->
+        <!-- https://learn.microsoft.com/en-us/azure/api-management/llm-token-limit-policy -->
         <!-- ================================================================ -->
         <llm-token-limit
             counter-key="@((string)context.Variables[&quot;caller-name&quot;] + &quot;:&quot; + (string)context.Variables[&quot;requestedModel&quot;])"
             tokens-per-minute="@((int)context.Variables[&quot;model-tpm&quot;])"
-            estimate-prompt-tokens="true"
+            estimate-prompt-tokens="false"
             remaining-tokens-header-name="x-ratelimit-remaining-tokens"
             tokens-consumed-header-name="x-tokens-consumed" />
 
         <!-- ================================================================ -->
-        <!-- STEP 7b: Enforce MONTHLY QUOTA for PAYG callers only (cost cap)  -->
+        <!-- STEP 7b: Enforce MONTHLY QUOTA (cost cap)                        -->
         <!--                                                                  -->
-        <!-- PTU is pre-paid — counting PTU tokens against a monthly budget   -->
-        <!-- would penalize teams for using capacity they already paid for.   -->
-        <!-- Monthly quota only applies to non-P1 callers (always PAYG).      -->
-        <!-- P1 callers route to PTU first; any PAYG overflow is expected     -->
-        <!-- and not budget-capped.                                           -->
+        <!-- Applies to:                                                      -->
+        <!--   • Standard callers (priority != 1) — always PAYG, always cost  -->
+        <!--   • Production callers with partial PTU (ptu_tpm < tpm) — PAYG   -->
+        <!--     spill-over is possible, so quota must be enforced.           -->
+        <!--                                                                  -->
+        <!-- Skipped for:                                                     -->
+        <!--   • Production callers with 100% PTU (ptu_tpm == tpm) — all      -->
+        <!--     traffic is pre-paid PTU, no PAYG cost possible.              -->
+        <!--                                                                  -->
+        <!-- Trade-off: for partial-PTU Production callers, PTU tokens also   -->
+        <!-- count against the monthly quota. This slightly over-counts but   -->
+        <!-- avoids the complexity of a separate PAYG gate loopback. The      -->
+        <!-- alternative (exact PAYG-only counting) would require an extra    -->
+        <!-- loopback API with its own llm-token-limit, since the policy      -->
+        <!-- can only count tokens in inbound (before knowing which backend   -->
+        <!-- will serve the request).                                         -->
         <!--                                                                  -->
         <!-- counter-key = contractName — shared across identities + models.  -->
-        <!-- tokens-per-minute set very high (real rate limit is 7a).         -->
         <!-- ================================================================ -->
         <choose>
-            <when condition="@((int)context.Variables[&quot;priority&quot;] != 1)">
+            <when condition="@((int)context.Variables[&quot;priority&quot;] != 1 || (int)context.Variables[&quot;model-ptu-tpm&quot;] != (int)context.Variables[&quot;model-tpm&quot;])">
                 <llm-token-limit
                     counter-key="@((string)context.Variables[&quot;caller-name&quot;])"
-                    tokens-per-minute="10000000"
                     token-quota="@((long)context.Variables[&quot;caller-monthly-quota&quot;])"
                     token-quota-period="Monthly"
-                    estimate-prompt-tokens="true"
-                    remaining-quota-tokens-header-name="x-quota-remaining-tokens" />
+                    estimate-prompt-tokens="false"
+                    remaining-quota-tokens-header-name="x-quota-remaining-tokens"
+                    tokens-consumed-header-name="x-quota-tokens-consumed" />
             </when>
         </choose>
 
         <!-- ================================================================ -->
         <!-- STEP 8: Routing                                                  -->
         <!--                                                                  -->
-        <!-- Case A — P1, ptuTpm == tpm (100% PTU):                           -->
+        <!-- Case A — Production, ptuTpm == tpm (100% PTU):                    -->
         <!--   → direct to PTU pool. STEP 7a already enforces the full TPM    -->
         <!--     limit atomically — no need for a second llm-token-limit.     -->
         <!--     On 429 from backend (PTU capacity full): retry with PAYG.    -->
         <!--                                                                  -->
-        <!-- Case B — P1, 0 < ptuTpm < tpm (partial PTU):                     -->
+        <!-- Case B — Production, 0 < ptuTpm < tpm (partial PTU):             -->
         <!--   → loopback to PTU gate API (separate llm-token-limit counter   -->
         <!--     just for the PTU portion). On 429: retry with PAYG pool.     -->
         <!--                                                                  -->
-        <!-- Case C — Everything else (P1 without PTU, P3):                   -->
+        <!-- Case C — Standard (or Production without PTU):                   -->
         <!--   → direct to PAYG-only pool.                                    -->
         <!-- ================================================================ -->
 
@@ -72,16 +88,19 @@
 
         <!-- Routing decision -->
         <choose>
-            <!-- Case A: P1 + 100% PTU → direct to PTU pool (7a is the gate) -->
+            <!-- Case A: Production + 100% PTU → direct to PTU pool           -->
             <when condition="@((int)context.Variables[&quot;priority&quot;] == 1 &amp;&amp; (int)context.Variables[&quot;model-ptu-tpm&quot;] == (int)context.Variables[&quot;model-tpm&quot;])">
                 <set-variable name="route-target" value="ptu" />
                 <set-backend-service backend-id="@((string)context.Variables[&quot;ptu-pool-id&quot;])" />
             </when>
 
-            <!-- Case B: P1 + partial PTU → loopback to PTU gate API          -->
+            <!-- Case B: Production + partial PTU → loopback to PTU gate API   -->
             <when condition="@((int)context.Variables[&quot;priority&quot;] == 1 &amp;&amp; (int)context.Variables[&quot;model-ptu-tpm&quot;] > 0)">
                 <set-variable name="route-target" value="ptu-gate" />
                 <!-- Pass routing info to PTU gate via internal headers -->
+                <set-header name="x-internal-key" exists-action="override">
+                    <value>{internal-api-key}</value>
+                </set-header>
                 <set-header name="x-ptu-counter-key" exists-action="override">
                     <value>@((string)context.Variables["caller-name"] + ":" + (string)context.Variables["requestedModel"])</value>
                 </set-header>
@@ -143,24 +162,45 @@
         </set-header>
 
         <!-- Emit token metrics with caller + routing dimensions (generic LLM) -->
+        <!-- Max 5 custom dimensions for emit-token-metric; richer data available via response headers in Log Analytics -->
         <llm-emit-token-metric namespace="llm">
             <dimension name="Caller ID" value="@((string)context.Variables[&quot;caller-id&quot;])" />
             <dimension name="Caller Name" value="@((string)context.Variables[&quot;caller-name&quot;])" />
             <dimension name="Priority" value="@((string)context.Variables[&quot;priority-label&quot;])" />
             <dimension name="Route Target" value="@((string)context.Variables[&quot;route-target&quot;])" />
             <dimension name="Model" value="@((string)context.Variables[&quot;requestedModel&quot;])" />
-            <dimension name="API ID" value="@(context.Api.Id)" />
         </llm-emit-token-metric>
+        <set-variable name="retry-count" value="@(0)" />
+        <!-- Initialize route trace with the first hop -->
+        <set-variable name="route-trace" value="@{
+            var route = (string)context.Variables[&quot;route-target&quot;];
+            var ptu = (string)context.Variables[&quot;ptu-pool-id&quot;];
+            var payg = (string)context.Variables[&quot;payg-pool-id&quot;];
+            if (route == &quot;ptu&quot;) { return ptu; }
+            if (route == &quot;ptu-gate&quot;) { return &quot;loopback:&quot; + ptu; }
+            return payg;
+        }" />
     </inbound>
 
     <backend>
         <!-- Forward to the backend chosen in inbound.                                -->
-        <!-- Case A (ptu): direct PTU, retry with PAYG on 429.                       -->
-        <!-- Case B (ptu-gate): loopback, retry with PAYG on 429.                    -->
+        <!-- Case A (ptu): direct PTU, retry with PAYG on 429/503.                    -->
+        <!-- Case B (ptu-gate): loopback, retry with PAYG on 429/503.                 -->
         <!-- Case C (payg): direct PAYG; retry is a no-op.                            -->
-        <retry condition="@(context.Response != null &amp;&amp; context.Response.StatusCode == 429)" count="2" interval="0" first-fast-retry="true">
+        <!-- PTU backends return 429 for rate limits and 503 for capacity exhaustion.  -->
+        <retry condition="@(context.Response != null &amp;&amp; (context.Response.StatusCode == 429 || context.Response.StatusCode == 503))" count="2" interval="0" first-fast-retry="true">
             <choose>
-                <when condition="@(context.Response != null &amp;&amp; context.Response.StatusCode == 429)">
+                <when condition="@(context.Response != null &amp;&amp; (context.Response.StatusCode == 429 || context.Response.StatusCode == 503))">
+                    <set-variable name="retry-count" value="@((int)context.Variables[&quot;retry-count&quot;] + 1)" />
+                    <set-variable name="route-trace" value="@{
+                        var trace = (string)context.Variables[&quot;route-trace&quot;];
+                        var gateTrace = context.Response.Headers.GetValueOrDefault(&quot;x-ptu-gate-trace&quot;, &quot;&quot;);
+                        if (!string.IsNullOrEmpty(gateTrace)) {
+                            trace += &quot;[&quot; + gateTrace + &quot;]&quot;;
+                        }
+                        trace += &quot;->&quot; + context.Response.StatusCode.ToString() + &quot;->&quot; + (string)context.Variables[&quot;payg-pool-id&quot;];
+                        return trace;
+                    }" />
                     <set-variable name="route-target" value="payg-overflow" />
                     <set-backend-service backend-id="@((string)context.Variables[&quot;payg-pool-id&quot;])" />
                 </when>
@@ -195,6 +235,15 @@
         <set-header name="x-quota-limit-tokens" exists-action="override">
             <value>@(((long)context.Variables["caller-monthly-quota"]).ToString())</value>
         </set-header>
+        <!-- Production callers with 100% PTU skip monthly quota (Step 7b), so the header is never set.
+             Default to the full quota so observability headers are always present. -->
+        <choose>
+            <when condition="@(!context.Response.Headers.ContainsKey(&quot;x-quota-remaining-tokens&quot;))">
+                <set-header name="x-quota-remaining-tokens" exists-action="override">
+                    <value>@(((long)context.Variables["caller-monthly-quota"]).ToString())</value>
+                </set-header>
+            </when>
+        </choose>
         <set-header name="x-caller-name" exists-action="override">
             <value>@((string)context.Variables["caller-name"])</value>
         </set-header>
@@ -210,8 +259,54 @@
         <set-header name="x-ptu-limit" exists-action="override">
             <value>@(((int)context.Variables["model-ptu-tpm"]).ToString())</value>
         </set-header>
+        <set-header name="x-ptu-consumed" exists-action="override">
+            <value>@{
+                var ptuTpm = (int)context.Variables["model-ptu-tpm"];
+                if (ptuTpm == 0) { return "0"; }
+                var raw = context.Response.Headers.GetValueOrDefault("x-ptu-remaining-tokens", "");
+                if (string.IsNullOrEmpty(raw)) { return "0"; }
+                int remaining = 0;
+                int.TryParse(raw, out remaining);
+                return (ptuTpm - remaining).ToString();
+            }</value>
+        </set-header>
+        <set-header name="x-ptu-utilization" exists-action="override">
+            <value>@{
+                var ptuTpm = (int)context.Variables["model-ptu-tpm"];
+                if (ptuTpm == 0) { return "0%"; }
+                var raw = context.Response.Headers.GetValueOrDefault("x-ptu-remaining-tokens", "");
+                if (string.IsNullOrEmpty(raw)) { return "0%"; }
+                int remaining = 0;
+                int.TryParse(raw, out remaining);
+                var used = ptuTpm - remaining;
+                return ((int)(((double)used / ptuTpm) * 100)).ToString() + "%";
+            }</value>
+        </set-header>
         <set-header name="x-backend-type" exists-action="override">
             <value>@((string)context.Variables["backend-type"])</value>
+        </set-header>
+        <set-header name="x-backend-pool" exists-action="override">
+            <value>@{
+                var route = (string)context.Variables["route-target"];
+                var ptu = (string)context.Variables["ptu-pool-id"];
+                var payg = (string)context.Variables["payg-pool-id"];
+                if (route == "ptu") { return ptu; }
+                if (route == "ptu-gate") { return "loopback:" + ptu; }
+                return payg;
+            }</value>
+        </set-header>
+        <set-header name="x-retry-count" exists-action="override">
+            <value>@(((int)context.Variables["retry-count"]).ToString())</value>
+        </set-header>
+        <set-header name="x-route-trace" exists-action="override">
+            <value>@{
+                var trace = (string)context.Variables["route-trace"];
+                var gateTrace = context.Response.Headers.GetValueOrDefault("x-ptu-gate-trace", "");
+                if (!string.IsNullOrEmpty(gateTrace)) {
+                    trace += "[" + gateTrace + "]";
+                }
+                return trace;
+            }</value>
         </set-header>
     </outbound>
 
@@ -221,7 +316,7 @@
         <!-- EVENT HUB: Emit quota-exceeded event when monthly quota is hit   -->
         <!-- ================================================================ -->
         <choose>
-            <when condition="@((context.LastError?.Message ?? &quot;&quot;).Contains(&quot;quota&quot;))">
+            <when condition="@((context.LastError?.Message ?? &quot;&quot;).Contains(&quot;Quota&quot;))">
                 <log-to-eventhub logger-id="{eventhub-logger-id}">@{
                     var team   = (string)context.Variables.GetValueOrDefault("caller-name", "unknown");
                     var model  = (string)context.Variables.GetValueOrDefault("requestedModel", "unknown");
@@ -243,7 +338,7 @@
                 var reason = context.LastError?.Reason ?? "";
                 if (source == "validate-azure-ad-token" || source == "validate-jwt") { return 401; }
                 if (source == "llm-token-limit") {
-                    return reason.Contains("quota") ? 403 : 429;
+                    return reason.Contains("Quota") ? 403 : 429;
                 }
                 if (context.Response != null) { return context.Response.StatusCode; }
                 return 500;
@@ -286,6 +381,28 @@
             </set-header>
             <set-header name="x-ptu-limit" exists-action="override">
                 <value>@(context.Variables.ContainsKey("model-ptu-tpm") ? ((int)context.Variables["model-ptu-tpm"]).ToString() : "0")</value>
+            </set-header>
+            <set-header name="x-ratelimit-remaining-tokens" exists-action="override">
+                <value>0</value>
+            </set-header>
+            <set-header name="x-quota-remaining-tokens" exists-action="override">
+                <value>0</value>
+            </set-header>
+            <set-header name="x-backend-pool" exists-action="override">
+                <value>@{
+                    var route = (string)context.Variables.GetValueOrDefault("route-target", "unknown");
+                    if (!context.Variables.ContainsKey("ptu-pool-id")) { return route; }
+                    if (route == "ptu") { return (string)context.Variables["ptu-pool-id"]; }
+                    if (route == "payg" || route == "payg-overflow") { return (string)context.Variables["payg-pool-id"]; }
+                    if (route == "ptu-gate") { return "loopback:" + (string)context.Variables["ptu-pool-id"]; }
+                    return route;
+                }</value>
+            </set-header>
+            <set-header name="x-retry-count" exists-action="override">
+                <value>@(context.Variables.ContainsKey("retry-count") ? ((int)context.Variables["retry-count"]).ToString() : "0")</value>
+            </set-header>
+            <set-header name="x-route-trace" exists-action="override">
+                <value>@(context.Variables.ContainsKey("route-trace") ? (string)context.Variables["route-trace"] : "unknown")</value>
             </set-header>
             <set-body>@{
                 var source  = context.LastError?.Source ?? "";

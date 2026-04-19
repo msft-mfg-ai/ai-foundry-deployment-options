@@ -1,0 +1,8 @@
+.env
+.env.secrets
+.env.local
+tf/.terraform/
+tf/.terraform.lock.hcl
+tf/terraform.tfstate*
+tf/terraform.tfvars
+tf/.venv/

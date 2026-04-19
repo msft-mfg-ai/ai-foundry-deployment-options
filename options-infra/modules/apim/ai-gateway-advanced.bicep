@@ -66,6 +66,8 @@ param staticModels ModelType[] = []
 
 // -- Derived ------------------------------------------------------------------
 
+var internalApiKey = uniqueString(resourceGroup().id, 'internal-api-key')
+
 var createFoundryConnections = !empty(aiFoundryName)
 var connectionPerProject = createFoundryConnections && !empty(aiFoundryProjectNames)
 
@@ -268,15 +270,19 @@ resource identityFragment 'Microsoft.ApiManagement/service/policyFragments@2024-
 // -- Priority Routing Policy (Main API)
 // ============================================================================
 var mainPolicyXml = replace(
-  replace(loadTextContent('advanced/policy-priority.xml'), '{loopback-backend-id}', 'ptu-gate-loopback'),
-  '{eventhub-logger-id}',
-  eventHubEnabled ? 'quota-eventhub-logger' : ''
+  replace(
+    replace(loadTextContent('advanced/policy-priority.xml'), '{loopback-backend-id}', 'ptu-gate-loopback'),
+    '{eventhub-logger-id}',
+    eventHubEnabled ? 'quota-eventhub-logger' : ''
+  ),
+  '{internal-api-key}',
+  internalApiKey
 )
 
 // ============================================================================
 // -- PTU Gate Policy (Internal Loopback API)
 // ============================================================================
-var ptuGatePolicyXml = loadTextContent('advanced/policy-ptu-gate.xml')
+var ptuGatePolicyXml = replace(loadTextContent('advanced/policy-ptu-gate.xml'), '{internal-api-key}', internalApiKey)
 
 // ============================================================================
 // -- PTU Gate Loopback Backend
@@ -442,6 +448,29 @@ resource configRefreshPolicy 'Microsoft.ApiManagement/service/apis/operations/po
     value: useStorageAccount
       ? '<policies><inbound><base /><cache-remove-value key="contracts-blob-cache" /><return-response><set-status code="200" reason="OK" /><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>{"status": "ok", "message": "Contract cache cleared. Next request will reload from blob storage."}</set-body></return-response></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
       : '<policies><inbound><base /><return-response><set-status code="200" reason="OK" /><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>{"status": "ok", "message": "Contracts are stored as APIM Named Value — no cache to clear. Redeploy to update contracts."}</set-body></return-response></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
+  }
+}
+
+resource configJsonOperation 'Microsoft.ApiManagement/service/apis/operations@2024-06-01-preview' = {
+  parent: configViewerApi
+  name: 'get-config-json'
+  properties: {
+    displayName: 'Get Contracts JSON'
+    method: 'GET'
+    urlTemplate: '/config.json'
+    description: 'Returns all access contracts as raw JSON'
+  }
+}
+
+resource configJsonPolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2024-06-01-preview' = {
+  parent: configJsonOperation
+  name: 'policy'
+  dependsOn: [contractStorage, contractNamedValue]
+  properties: {
+    format: 'rawxml'
+    value: useStorageAccount
+      ? '<policies><inbound><base />${configViewerLoadBlob}<return-response><set-status code="200" reason="OK" /><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>@((string)context.Variables["contracts-json"])</set-body></return-response></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
+      : '<policies><inbound><base /><return-response><set-status code="200" reason="OK" /><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>{{access-contracts-json}}</set-body></return-response></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
   }
 }
 

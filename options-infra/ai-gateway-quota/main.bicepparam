@@ -118,7 +118,7 @@ param accessContracts = [
   {
     name: 'Team Gamma2'
     identities: [] // auto-create Entra app
-    priority: 3
+    priority: 2
     models: [
       { name: 'gpt-4.1-mini', tpm: 300 }
       { name: 'gpt-4.1', tpm: 100 }

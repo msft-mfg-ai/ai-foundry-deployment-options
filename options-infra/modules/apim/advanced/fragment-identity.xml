@@ -9,8 +9,8 @@
 <!--   caller-id            — Best available identity claim value     -->
 <!--   caller-name          — Contract name (e.g., "Team Alpha")      -->
 <!--   matched-identity     — Display name of matched identity        -->
-<!--   priority             — Routing priority (1=prod, 3=economy)    -->
-<!--   priority-label       — Human label (production/economy)        -->
+<!--   priority             — Routing priority (1=prod, 2=standard)   -->
+<!--   priority-label       — Human label (production/standard)       -->
 <!--   caller-monthly-quota — Monthly token budget                    -->
 <!--   caller-environment   — Environment tag (PROD/DEV/TEST)         -->
 <!--   contract-models      — Model config JToken from contract       -->
@@ -146,7 +146,7 @@
 }" />
 <set-variable name="priority" value="@{
     var c = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;contract-obj&quot;];
-    var v = c[&quot;priority&quot;]; return v != null ? v.Value&lt;int&gt;() : 3;
+    var v = c[&quot;priority&quot;]; return v != null ? v.Value&lt;int&gt;() : 2;
 }" />
 <set-variable name="caller-monthly-quota" value="@{
     var c = (Newtonsoft.Json.Linq.JObject)context.Variables[&quot;contract-obj&quot;];
@@ -160,7 +160,7 @@
 
 <set-variable name="priority-label" value="@{
     var p = (int)context.Variables[&quot;priority&quot;];
-    return p == 1 ? &quot;production&quot; : &quot;economy&quot;;
+    return p == 1 ? &quot;production&quot; : &quot;standard&quot;;
 }" />
 
 <!-- STEP 5: Extract requested model from URL path or request body    -->
