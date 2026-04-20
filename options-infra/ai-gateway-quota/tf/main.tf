@@ -277,7 +277,7 @@ resource "azurerm_api_management_api_diagnostic" "inference_azuremonitor" {
     body_bytes     = 8192
   }
   backend_response {
-    headers_to_log = local.gateway_request_headers
+    headers_to_log = local.gateway_response_headers
     body_bytes     = 0
   }
 }
@@ -309,7 +309,7 @@ resource "azurerm_api_management_api_diagnostic" "inference_appinsights" {
     body_bytes     = 8192
   }
   backend_response {
-    headers_to_log = local.gateway_request_headers
+    headers_to_log = local.gateway_response_headers
     body_bytes     = 0
   }
 }
@@ -570,7 +570,7 @@ locals {
 resource "azurerm_portal_dashboard" "apim_token_dashboard" {
   name                = "apim-token-dashboard-${azurerm_resource_group.rg.name}"
   resource_group_name = azurerm_resource_group.rg.name
-  location            = var.location
+  location            = var.region
 
   tags = {
     "hidden-title" = "APIM Token Usage Dashboard"
