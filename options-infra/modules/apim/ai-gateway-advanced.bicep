@@ -353,7 +353,7 @@ module inferenceApi 'v2/inference-api.bicep' = {
     ptuGateLoopbackBackend
     contractStorage
     contractNamedValue
-    eventHubEnabled ? [eventHubLogger] : null
+    ...(eventHubEnabled ? [eventHubLogger] : [])
   ]
   params: {
     policyXml: mainPolicyXml

@@ -3,59 +3,50 @@ variable "subscription_id" {
   type        = string
 }
 
-variable "region" {
-  description = "Azure region"
-  type        = string
-  default     = "norwayeast"
-}
-
-variable "region_code" {
-  description = "Short region code for naming"
-  type        = string
-  default     = "nwe"
-}
-
-variable "random_string" {
-  description = "Random string for unique naming"
-  type        = string
-}
-
-variable "resource_group_name" {
-  description = "Override resource group name (empty = auto-generated)"
-  type        = string
-  default     = ""
-}
-
-variable "tags" {
-  description = "Tags to apply to all resources"
-  type        = map(string)
-  default = {
-    environment = "lab"
-    product     = "ai-gateway-quota"
-  }
-}
-
-variable "apim_sku" {
-  description = "APIM SKU name (e.g. StandardV2_1, BasicV2_1)"
-  type        = string
-  default     = "StandardV2_1"
-}
-
-variable "apim_publisher_name" {
-  description = "APIM publisher name"
-  type        = string
-  default     = "AI Gateway"
-}
-
-variable "apim_publisher_email" {
-  description = "APIM publisher email"
-  type        = string
-}
-
 variable "tenant_id" {
   description = "Entra ID tenant ID for JWT validation"
   type        = string
 }
+
+variable "region" {
+  description = "Azure region (used for dashboard placement)"
+  type        = string
+  default     = "norwayeast"
+}
+
+# ============================================================================
+# Existing infrastructure references
+# ============================================================================
+
+variable "apim_name" {
+  description = "Name of the existing API Management instance"
+  type        = string
+}
+
+variable "apim_resource_group_name" {
+  description = "Resource group containing the existing APIM instance"
+  type        = string
+}
+
+variable "log_analytics_workspace_id" {
+  description = "Resource ID of the existing Log Analytics workspace"
+  type        = string
+}
+
+variable "application_insights_id" {
+  description = "Resource ID of the existing Application Insights instance"
+  type        = string
+}
+
+variable "application_insights_instrumentation_key" {
+  description = "Instrumentation key for the existing Application Insights instance"
+  type        = string
+  sensitive   = true
+}
+
+# ============================================================================
+# Foundry Instances
+# ============================================================================
 
 variable "foundry_instances" {
   description = "Existing Foundry/OpenAI instances to register as backends"
@@ -78,6 +69,10 @@ variable "foundry_instances" {
   }
 }
 
+# ============================================================================
+# Access Contracts
+# ============================================================================
+
 variable "access_contracts" {
   description = <<-EOT
     Access contracts defining team identities, priorities, and quotas.
@@ -97,9 +92,9 @@ variable "access_contracts" {
     }))
     priority = number
     models = list(object({
-      name    = string              # Model deployment name (e.g. "gpt-4.1-mini")
-      tpm     = number              # Total tokens-per-minute budget (PTU + PAYG combined)
-      ptu_tpm = optional(number, 0) # PTU soft cap within tpm — first ptu_tpm tokens route to PTU, remainder spills to PAYG
+      name    = string
+      tpm     = number
+      ptu_tpm = optional(number, 0)
     }))
     monthly_quota = number
     environment   = optional(string, "UNKNOWN")
@@ -114,20 +109,11 @@ variable "access_contracts" {
   }
 }
 
-variable "subnet_id_apim_integration" {
-  description = "Subnet ID for APIM VNet integration (optional)"
-  type        = string
-  default     = null
-}
-
-variable "subnet_id_private_endpoints" {
-  description = "Subnet ID for private endpoints (optional)"
-  type        = string
-  default     = null
-}
-
-variable "resource_group_name_dns" {
-  description = "Resource group containing private DNS zones"
-  type        = string
-  default     = ""
+variable "tags" {
+  description = "Tags to apply to resources created by this module"
+  type        = map(string)
+  default = {
+    environment = "lab"
+    product     = "ai-gateway-quota"
+  }
 }
