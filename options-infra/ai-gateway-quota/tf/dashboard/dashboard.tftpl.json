@@ -1,0 +1,808 @@
+{
+  "lenses": {
+    "0": {
+      "order": 0,
+      "parts": {
+        "0": {
+          "position": {
+            "x": 0,
+            "y": 0,
+            "colSpan": 12,
+            "rowSpan": 2
+          },
+          "metadata": {
+            "type": "Extension/HubsExtension/PartType/MarkdownPart",
+            "inputs": [],
+            "settings": {
+              "content": {
+                "content": "# \ud83e\udd16 APIM Token Usage Dashboard\n\nMonitor LLM token consumption by caller. Data sourced from `ApiManagementGatewayLlmLog` (actual token counts, even for streaming) joined with `ApiManagementGatewayLogs` (caller identity via x-caller-name header).",
+                "title": "APIM Token Usage Dashboard",
+                "subtitle": "",
+                "markdownSource": 1
+              }
+            }
+          }
+        },
+        "1": {
+          "position": {
+            "x": 0,
+            "y": 2,
+            "colSpan": 6,
+            "rowSpan": 2
+          },
+          "metadata": {
+            "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+            "inputs": [
+              {
+                "name": "resourceTypeMode",
+                "isOptional": true
+              },
+              {
+                "name": "ComponentId",
+                "isOptional": true
+              },
+              {
+                "name": "Scope",
+                "value": {
+                  "resourceIds": [
+                    "${law_id}"
+                  ]
+                },
+                "isOptional": true
+              },
+              {
+                "name": "Version",
+                "value": "2.0",
+                "isOptional": true
+              },
+              {
+                "name": "TimeRange",
+                "value": "P1D",
+                "isOptional": true
+              },
+              {
+                "name": "DashboardId",
+                "isOptional": true
+              },
+              {
+                "name": "PartId",
+                "value": "today-stats",
+                "isOptional": true
+              },
+              {
+                "name": "PartTitle",
+                "value": "\ud83d\udcca Today's Usage",
+                "isOptional": true
+              },
+              {
+                "name": "PartSubTitle",
+                "value": "ApiManagementGatewayLlmLog",
+                "isOptional": true
+              },
+              {
+                "name": "Query",
+                "value": "ApiManagementGatewayLlmLog\n| where isnotempty(DeploymentName)\n| where TimeGenerated >= startofday(now())\n| summarize\n    TodayPromptTokens = sum(PromptTokens),\n    TodayCompletionTokens = sum(CompletionTokens),\n    TodayTotalTokens = sum(TotalTokens),\n    TodayRequests = dcount(CorrelationId)",
+                "isOptional": true
+              },
+              {
+                "name": "ControlType",
+                "value": "AnalyticsGrid",
+                "isOptional": true
+              },
+              {
+                "name": "DraftRequestParameters",
+                "isOptional": true
+              },
+              {
+                "name": "SpecificChart",
+                "isOptional": true
+              },
+              {
+                "name": "Dimensions",
+                "isOptional": true
+              },
+              {
+                "name": "LegendOptions",
+                "isOptional": true
+              },
+              {
+                "name": "IsQueryContainTimeRange",
+                "isOptional": true
+              }
+            ],
+            "settings": {}
+          }
+        },
+        "2": {
+          "position": {
+            "x": 6,
+            "y": 2,
+            "colSpan": 6,
+            "rowSpan": 2
+          },
+          "metadata": {
+            "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+            "inputs": [
+              {
+                "name": "Scope",
+                "value": {
+                  "resourceIds": [
+                    "${law_id}"
+                  ]
+                },
+                "isOptional": true
+              },
+              {
+                "name": "Version",
+                "value": "2.0",
+                "isOptional": true
+              },
+              {
+                "name": "TimeRange",
+                "value": "P30D",
+                "isOptional": true
+              },
+              {
+                "name": "PartId",
+                "value": "month-stats",
+                "isOptional": true
+              },
+              {
+                "name": "PartTitle",
+                "value": "\ud83d\udcc5 This Month",
+                "isOptional": true
+              },
+              {
+                "name": "PartSubTitle",
+                "value": "ApiManagementGatewayLlmLog",
+                "isOptional": true
+              },
+              {
+                "name": "Query",
+                "value": "let llmLogs = ApiManagementGatewayLlmLog\n| where isnotempty(DeploymentName)\n| where TimeGenerated >= startofmonth(now());\nlet callers = ApiManagementGatewayLogs\n| where TimeGenerated >= startofmonth(now())\n| where BackendRequestHeaders has \"x-caller-name\"\n| extend CallerName = extract(@'\"x-caller-name\":\"([^\"]+)\"', 1, tostring(BackendRequestHeaders))\n| summarize CallerName = any(CallerName) by CorrelationId;\nllmLogs\n| join kind=leftouter callers on CorrelationId\n| summarize\n    MonthTotalTokens = sum(TotalTokens),\n    MonthRequests = dcount(CorrelationId),\n    UniqueCallers = dcount(CallerName)",
+                "isOptional": true
+              },
+              {
+                "name": "ControlType",
+                "value": "AnalyticsGrid",
+                "isOptional": true
+              },
+              {
+                "name": "resourceTypeMode",
+                "isOptional": true
+              },
+              {
+                "name": "ComponentId",
+                "isOptional": true
+              },
+              {
+                "name": "DashboardId",
+                "isOptional": true
+              },
+              {
+                "name": "DraftRequestParameters",
+                "isOptional": true
+              },
+              {
+                "name": "SpecificChart",
+                "isOptional": true
+              },
+              {
+                "name": "Dimensions",
+                "isOptional": true
+              },
+              {
+                "name": "LegendOptions",
+                "isOptional": true
+              },
+              {
+                "name": "IsQueryContainTimeRange",
+                "isOptional": true
+              }
+            ],
+            "settings": {}
+          }
+        },
+        "3": {
+          "position": {
+            "x": 0,
+            "y": 4,
+            "colSpan": 17,
+            "rowSpan": 5
+          },
+          "metadata": {
+            "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+            "inputs": [
+              {
+                "name": "Scope",
+                "value": {
+                  "resourceIds": [
+                    "${law_id}"
+                  ]
+                },
+                "isOptional": true
+              },
+              {
+                "name": "Version",
+                "value": "2.0",
+                "isOptional": true
+              },
+              {
+                "name": "TimeRange",
+                "value": "P7D",
+                "isOptional": true
+              },
+              {
+                "name": "PartId",
+                "value": "usage-over-time",
+                "isOptional": true
+              },
+              {
+                "name": "PartTitle",
+                "value": "\ud83d\udcc8 Token Usage Over Time by Project",
+                "isOptional": true
+              },
+              {
+                "name": "PartSubTitle",
+                "value": "Hourly token consumption by project/subscription",
+                "isOptional": true
+              },
+              {
+                "name": "Query",
+                "value": "let llmLogs = ApiManagementGatewayLlmLog\n| where isnotempty(DeploymentName)\n| project TimeGenerated, TotalTokens, CorrelationId;\nlet callers = ApiManagementGatewayLogs\n| where BackendRequestHeaders has \"x-caller-name\"\n| extend CallerName = extract(@'\"x-caller-name\":\"([^\"]+)\"', 1, tostring(BackendRequestHeaders))\n| summarize CallerName = any(CallerName) by CorrelationId;\nllmLogs\n| join kind=leftouter callers on CorrelationId\n| extend CallerName = coalesce(CallerName, \"Unknown\")\n| summarize TotalTokens = sum(TotalTokens) by bin(TimeGenerated, 1h), CallerName\n| order by TimeGenerated asc",
+                "isOptional": true
+              },
+              {
+                "name": "ControlType",
+                "value": "AnalyticsGrid",
+                "isOptional": true
+              },
+              {
+                "name": "resourceTypeMode",
+                "isOptional": true
+              },
+              {
+                "name": "ComponentId",
+                "isOptional": true
+              },
+              {
+                "name": "DashboardId",
+                "isOptional": true
+              },
+              {
+                "name": "DraftRequestParameters",
+                "isOptional": true
+              },
+              {
+                "name": "SpecificChart",
+                "isOptional": true
+              },
+              {
+                "name": "Dimensions",
+                "isOptional": true
+              },
+              {
+                "name": "LegendOptions",
+                "isOptional": true
+              },
+              {
+                "name": "IsQueryContainTimeRange",
+                "isOptional": true
+              }
+            ],
+            "settings": {
+              "content": {
+                "ControlType": "FrameControlChart",
+                "SpecificChart": "StackedColumn",
+                "Dimensions": {
+                  "xAxis": {
+                    "name": "TimeGenerated",
+                    "type": "datetime"
+                  },
+                  "yAxis": [
+                    {
+                      "name": "TotalTokens",
+                      "type": "long"
+                    }
+                  ],
+                  "splitBy": [
+                    {
+                      "name": "CallerName",
+                      "type": "string"
+                    }
+                  ],
+                  "aggregation": "Sum"
+                },
+                "LegendOptions": {
+                  "isEnabled": true,
+                  "position": "Bottom"
+                }
+              }
+            }
+          }
+        },
+        "4": {
+          "position": {
+            "x": 0,
+            "y": 10,
+            "colSpan": 8,
+            "rowSpan": 3
+          },
+          "metadata": {
+            "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+            "inputs": [
+              {
+                "name": "Scope",
+                "value": {
+                  "resourceIds": [
+                    "${law_id}"
+                  ]
+                },
+                "isOptional": true
+              },
+              {
+                "name": "Version",
+                "value": "2.0",
+                "isOptional": true
+              },
+              {
+                "name": "TimeRange",
+                "value": "P30D",
+                "isOptional": true
+              },
+              {
+                "name": "PartId",
+                "value": "top-consumers",
+                "isOptional": true
+              },
+              {
+                "name": "PartTitle",
+                "value": "\ud83c\udfc6 Top Token Consumers by Project",
+                "isOptional": true
+              },
+              {
+                "name": "PartSubTitle",
+                "value": "Last 30 days",
+                "isOptional": true
+              },
+              {
+                "name": "Query",
+                "value": "let llmLogs = ApiManagementGatewayLlmLog\n| where isnotempty(DeploymentName)\n| where TimeGenerated >= ago(30d);\nlet callers = ApiManagementGatewayLogs\n| where TimeGenerated >= ago(30d)\n| where BackendRequestHeaders has \"x-caller-name\"\n| extend CallerName = extract(@'\"x-caller-name\":\"([^\"]+)\"', 1, tostring(BackendRequestHeaders))\n| summarize CallerName = any(CallerName) by CorrelationId;\nlet totalTokens = toscalar(llmLogs | summarize sum(TotalTokens));\nllmLogs\n| join kind=leftouter callers on CorrelationId\n| extend CallerName = coalesce(CallerName, \"Unknown\")\n| summarize TotalTokens = sum(TotalTokens), Requests = dcount(CorrelationId) by CallerName\n| top 10 by TotalTokens desc\n| extend Percentage = round(TotalTokens * 100.0 / totalTokens, 1)",
+                "isOptional": true
+              },
+              {
+                "name": "ControlType",
+                "value": "AnalyticsGrid",
+                "isOptional": true
+              },
+              {
+                "name": "resourceTypeMode",
+                "isOptional": true
+              },
+              {
+                "name": "ComponentId",
+                "isOptional": true
+              },
+              {
+                "name": "DashboardId",
+                "isOptional": true
+              },
+              {
+                "name": "DraftRequestParameters",
+                "isOptional": true
+              },
+              {
+                "name": "SpecificChart",
+                "isOptional": true
+              },
+              {
+                "name": "Dimensions",
+                "isOptional": true
+              },
+              {
+                "name": "LegendOptions",
+                "isOptional": true
+              },
+              {
+                "name": "IsQueryContainTimeRange",
+                "isOptional": true
+              }
+            ],
+            "settings": {}
+          }
+        },
+        "5": {
+          "position": {
+            "x": 8,
+            "y": 10,
+            "colSpan": 9,
+            "rowSpan": 3
+          },
+          "metadata": {
+            "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+            "inputs": [
+              {
+                "name": "Scope",
+                "value": {
+                  "resourceIds": [
+                    "${law_id}"
+                  ]
+                },
+                "isOptional": true
+              },
+              {
+                "name": "Version",
+                "value": "2.0",
+                "isOptional": true
+              },
+              {
+                "name": "TimeRange",
+                "value": "P30D",
+                "isOptional": true
+              },
+              {
+                "name": "PartId",
+                "value": "daily-summary",
+                "isOptional": true
+              },
+              {
+                "name": "PartTitle",
+                "value": "\ud83d\udcca Daily Usage by Project",
+                "isOptional": true
+              },
+              {
+                "name": "PartSubTitle",
+                "value": "Prompt, Completion, and Total tokens per day by project",
+                "isOptional": true
+              },
+              {
+                "name": "Query",
+                "value": "let llmLogs = ApiManagementGatewayLlmLog\n| where isnotempty(DeploymentName)\n| project TimeGenerated, PromptTokens, CompletionTokens, TotalTokens, CorrelationId;\nlet callers = ApiManagementGatewayLogs\n| where BackendRequestHeaders has \"x-caller-name\"\n| extend CallerName = extract(@'\"x-caller-name\":\"([^\"]+)\"', 1, tostring(BackendRequestHeaders))\n| summarize CallerName = any(CallerName) by CorrelationId;\nllmLogs\n| join kind=leftouter callers on CorrelationId\n| extend CallerName = coalesce(CallerName, \"Unknown\")\n| summarize\n    PromptTokens = sum(PromptTokens),\n    CompletionTokens = sum(CompletionTokens),\n    TotalTokens = sum(TotalTokens),\n    Requests = dcount(CorrelationId)\nby bin(TimeGenerated, 1d), CallerName\n| order by TimeGenerated desc",
+                "isOptional": true
+              },
+              {
+                "name": "ControlType",
+                "value": "AnalyticsGrid",
+                "isOptional": true
+              },
+              {
+                "name": "resourceTypeMode",
+                "isOptional": true
+              },
+              {
+                "name": "ComponentId",
+                "isOptional": true
+              },
+              {
+                "name": "DashboardId",
+                "isOptional": true
+              },
+              {
+                "name": "DraftRequestParameters",
+                "isOptional": true
+              },
+              {
+                "name": "SpecificChart",
+                "isOptional": true
+              },
+              {
+                "name": "Dimensions",
+                "isOptional": true
+              },
+              {
+                "name": "LegendOptions",
+                "isOptional": true
+              },
+              {
+                "name": "IsQueryContainTimeRange",
+                "isOptional": true
+              }
+            ],
+            "settings": {}
+          }
+        },
+        "6": {
+          "position": {
+            "x": 0,
+            "y": 13,
+            "colSpan": 12,
+            "rowSpan": 3
+          },
+          "metadata": {
+            "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+            "inputs": [
+              {
+                "name": "Scope",
+                "value": {
+                  "resourceIds": [
+                    "${law_id}"
+                  ]
+                },
+                "isOptional": true
+              },
+              {
+                "name": "Version",
+                "value": "2.0",
+                "isOptional": true
+              },
+              {
+                "name": "TimeRange",
+                "value": "P30D",
+                "isOptional": true
+              },
+              {
+                "name": "PartId",
+                "value": "model-usage",
+                "isOptional": true
+              },
+              {
+                "name": "PartTitle",
+                "value": "\ud83e\udde0 Usage by Model",
+                "isOptional": true
+              },
+              {
+                "name": "PartSubTitle",
+                "value": "Token consumption per deployment",
+                "isOptional": true
+              },
+              {
+                "name": "Query",
+                "value": "ApiManagementGatewayLlmLog\n| where isnotempty(DeploymentName)\n| summarize\n    PromptTokens = sum(PromptTokens),\n    CompletionTokens = sum(CompletionTokens),\n    TotalTokens = sum(TotalTokens),\n    Requests = dcount(CorrelationId)\nby DeploymentName, ModelName\n| order by TotalTokens desc",
+                "isOptional": true
+              },
+              {
+                "name": "ControlType",
+                "value": "AnalyticsGrid",
+                "isOptional": true
+              },
+              {
+                "name": "resourceTypeMode",
+                "isOptional": true
+              },
+              {
+                "name": "ComponentId",
+                "isOptional": true
+              },
+              {
+                "name": "DashboardId",
+                "isOptional": true
+              },
+              {
+                "name": "DraftRequestParameters",
+                "isOptional": true
+              },
+              {
+                "name": "SpecificChart",
+                "isOptional": true
+              },
+              {
+                "name": "Dimensions",
+                "isOptional": true
+              },
+              {
+                "name": "LegendOptions",
+                "isOptional": true
+              },
+              {
+                "name": "IsQueryContainTimeRange",
+                "isOptional": true
+              }
+            ],
+            "settings": {}
+          }
+        },
+        "7": {
+          "position": {
+            "x": 0,
+            "y": 16,
+            "colSpan": 12,
+            "rowSpan": 4
+          },
+          "metadata": {
+            "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+            "inputs": [
+              {
+                "name": "Scope",
+                "value": {
+                  "resourceIds": [
+                    "${law_id}"
+                  ]
+                },
+                "isOptional": true
+              },
+              {
+                "name": "Version",
+                "value": "2.0",
+                "isOptional": true
+              },
+              {
+                "name": "TimeRange",
+                "value": "P30D",
+                "isOptional": true
+              },
+              {
+                "name": "PartId",
+                "value": "model-usage-by-project",
+                "isOptional": true
+              },
+              {
+                "name": "PartTitle",
+                "value": "\ud83d\udd17 Models Used by Project",
+                "isOptional": true
+              },
+              {
+                "name": "PartSubTitle",
+                "value": "Which deployments/models each project is consuming",
+                "isOptional": true
+              },
+              {
+                "name": "Query",
+                "value": "let llmLogs = ApiManagementGatewayLlmLog\n| where isnotempty(DeploymentName)\n| project TimeGenerated, DeploymentName, ModelName, PromptTokens, CompletionTokens, TotalTokens, CorrelationId;\nlet callers = ApiManagementGatewayLogs\n| where BackendRequestHeaders has \"x-caller-name\"\n| extend CallerName = extract(@'\"x-caller-name\":\"([^\"]+)\"', 1, tostring(BackendRequestHeaders))\n| summarize CallerName = any(CallerName) by CorrelationId;\nllmLogs\n| join kind=leftouter callers on CorrelationId\n| extend CallerName = coalesce(CallerName, \"Unknown\")\n| summarize\n    PromptTokens = sum(PromptTokens),\n    CompletionTokens = sum(CompletionTokens),\n    TotalTokens = sum(TotalTokens),\n    Requests = dcount(CorrelationId)\nby CallerName, DeploymentName\n| order by CallerName, TotalTokens desc",
+                "isOptional": true
+              },
+              {
+                "name": "ControlType",
+                "value": "AnalyticsGrid",
+                "isOptional": true
+              },
+              {
+                "name": "resourceTypeMode",
+                "isOptional": true
+              },
+              {
+                "name": "ComponentId",
+                "isOptional": true
+              },
+              {
+                "name": "DashboardId",
+                "isOptional": true
+              },
+              {
+                "name": "DraftRequestParameters",
+                "isOptional": true
+              },
+              {
+                "name": "SpecificChart",
+                "isOptional": true
+              },
+              {
+                "name": "Dimensions",
+                "isOptional": true
+              },
+              {
+                "name": "LegendOptions",
+                "isOptional": true
+              },
+              {
+                "name": "IsQueryContainTimeRange",
+                "isOptional": true
+              }
+            ],
+            "settings": {}
+          }
+        },
+        "8": {
+          "position": {
+            "x": 0,
+            "y": 20,
+            "colSpan": 12,
+            "rowSpan": 5
+          },
+          "metadata": {
+            "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+            "inputs": [
+              {
+                "name": "Scope",
+                "value": {
+                  "resourceIds": [
+                    "${law_id}"
+                  ]
+                },
+                "isOptional": true
+              },
+              {
+                "name": "Version",
+                "value": "2.0",
+                "isOptional": true
+              },
+              {
+                "name": "TimeRange",
+                "value": "P30D",
+                "isOptional": true
+              },
+              {
+                "name": "PartId",
+                "value": "total-tokens-project",
+                "isOptional": true
+              },
+              {
+                "name": "PartTitle",
+                "value": "\ud83d\udcb0 Total Tokens by Project",
+                "isOptional": true
+              },
+              {
+                "name": "PartSubTitle",
+                "value": "All-time token usage by project",
+                "isOptional": true
+              },
+              {
+                "name": "Query",
+                "value": "let llmLogs = ApiManagementGatewayLlmLog\n| where isnotempty(DeploymentName)\n| project PromptTokens, CompletionTokens, TotalTokens, CorrelationId;\nlet callers = ApiManagementGatewayLogs\n| where BackendRequestHeaders has \"x-caller-name\"\n| extend CallerName = extract(@'\"x-caller-name\":\"([^\"]+)\"', 1, tostring(BackendRequestHeaders))\n| summarize CallerName = any(CallerName) by CorrelationId;\nllmLogs\n| join kind=leftouter callers on CorrelationId\n| extend CallerName = coalesce(CallerName, \"Unknown\")\n| summarize\n    PromptTokens = sum(PromptTokens),\n    CompletionTokens = sum(CompletionTokens),\n    TotalTokens = sum(TotalTokens),\n    Requests = dcount(CorrelationId)\nby CallerName\n| order by TotalTokens desc",
+                "isOptional": true
+              },
+              {
+                "name": "ControlType",
+                "value": "AnalyticsGrid",
+                "isOptional": true
+              },
+              {
+                "name": "resourceTypeMode",
+                "isOptional": true
+              },
+              {
+                "name": "ComponentId",
+                "isOptional": true
+              },
+              {
+                "name": "DashboardId",
+                "isOptional": true
+              },
+              {
+                "name": "DraftRequestParameters",
+                "isOptional": true
+              },
+              {
+                "name": "SpecificChart",
+                "isOptional": true
+              },
+              {
+                "name": "Dimensions",
+                "isOptional": true
+              },
+              {
+                "name": "LegendOptions",
+                "isOptional": true
+              },
+              {
+                "name": "IsQueryContainTimeRange",
+                "isOptional": true
+              }
+            ],
+            "settings": {}
+          }
+        }
+      }
+    }
+  },
+  "metadata": {
+    "model": {
+      "timeRange": {
+        "value": {
+          "relative": {
+            "duration": 24,
+            "timeUnit": 1
+          }
+        },
+        "type": "MsPortalFx.Composition.Configuration.ValueTypes.TimeRange"
+      },
+      "filterLocale": {
+        "value": "en-us"
+      },
+      "filters": {
+        "value": {
+          "MsPortalFx_TimeRange": {
+            "model": {
+              "format": "utc",
+              "granularity": "auto",
+              "relative": "7d"
+            },
+            "displayCache": {
+              "name": "UTC Time",
+              "value": "Past 7 days"
+            }
+          }
+        }
+      }
+    }
+  }
+}

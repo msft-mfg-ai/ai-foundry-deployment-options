@@ -1,9 +1,36 @@
-subscription_id      = "YOUR_SUBSCRIPTION_ID"
-region               = "norwayeast"
-region_code          = "nwe"
-random_string        = "abc1"
-apim_publisher_email = "admin@example.com"
-tenant_id            = "YOUR_TENANT_ID"
+# ============================================================================
+# AI Gateway Quota — Terraform overlay for existing APIM
+# ============================================================================
+# Prerequisites:
+#   - An existing Azure API Management instance
+#   - An existing Log Analytics workspace
+#   - An existing Application Insights instance
+#   - One or more Azure AI Foundry / OpenAI instances
+#   - Entra ID app registrations for each team (for JWT-based identity)
+# ============================================================================
+
+subscription_id = "YOUR_SUBSCRIPTION_ID"
+tenant_id       = "YOUR_TENANT_ID"
+region          = "norwayeast"
+
+# ============================================================================
+# Existing infrastructure references
+# ============================================================================
+
+apim_name                = "your-apim-name"
+apim_resource_group_name = "your-resource-group"
+
+log_analytics_workspace_id              = "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.OperationalInsights/workspaces/YOUR_LAW"
+application_insights_id                 = "/subscriptions/YOUR_SUB/resourceGroups/YOUR_RG/providers/Microsoft.Insights/components/YOUR_APPINSIGHTS"
+application_insights_instrumentation_key = "YOUR_INSTRUMENTATION_KEY"
+
+# ============================================================================
+# Foundry Instances — existing backends to register with APIM
+# ============================================================================
+# Each instance is PTU-only or paygo-only (do NOT mix).
+# Deployment names MUST match modelName.
+# Circuit breaker trips on 429 → future requests go to next priority tier.
+# ============================================================================
 
 foundry_instances = [
   {
@@ -29,15 +56,33 @@ foundry_instances = [
   }
 ]
 
+# ============================================================================
+# Access Contracts — team identities, priorities, and quotas
+# ============================================================================
+# Priority: 1=Production (PTU routing enabled), 2=Standard (PAYG only)
+#
+# Identity claim_name options:
+#   "azp"        — app registration client ID (v2 token)
+#   "appid"      — app registration client ID (v1 token)
+#   "xms_mirid"  — managed identity resource ID (prefix match)
+#   "oid"        — any Entra identity by object ID
+#   "sub"        — user scoped to a specific app
+#
+# models[].tpm:     TOTAL tokens-per-minute for this model (PTU + PAYG combined)
+# models[].ptu_tpm: PTU soft cap within tpm (first ptu_tpm tokens → PTU, rest → PAYG)
+#                   Set 0 for PAYG-only. Set equal to tpm for 100% PTU.
+# monthly_quota:    monthly cost cap across all models (tokens)
+# ============================================================================
+
 access_contracts = [
   {
     name = "Team Alpha"
     identities = [
       { value = "YOUR_APP_CLIENT_ID", display_name = "Team Alpha App", claim_name = "azp" }
     ]
-    priority      = 1
+    priority = 1
     models = [
-      { name = "gpt-4.1-mini", tpm = 1000, ptu_tpm = 100 },
+      { name = "gpt-4.1-mini", tpm = 1000, ptu_tpm = 500 },
       { name = "gpt-4.1", tpm = 500 }
     ]
     monthly_quota = 7000
@@ -48,7 +93,7 @@ access_contracts = [
     identities = [
       { value = "ANOTHER_APP_CLIENT_ID", display_name = "Team Beta App", claim_name = "azp" }
     ]
-    priority      = 2
+    priority = 2
     models = [
       { name = "gpt-4.1-mini", tpm = 300 }
     ]
