@@ -82,8 +82,8 @@ access_contracts = [
     ]
     priority = 1
     models = [
-      { name = "gpt-4.1-mini", tpm = 1000, ptu_tpm = 500 },
-      { name = "gpt-4.1", tpm = 500 }
+      { name = "gpt-4.1", tpm = 5000, ptu_tpm = 2000 },
+      { name = "gpt-4.1-mini", tpm = 5000, ptu_tpm = 500 }
     ]
     monthly_quota = 7000
     environment   = "PROD"

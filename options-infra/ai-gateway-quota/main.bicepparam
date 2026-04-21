@@ -94,18 +94,19 @@ var currentUser = readEnvironmentVariable('CURRENT_USER_OBJECT_ID', '') != ''
 
 param accessContracts = [
   {
-    name: 'Team Alpha2'
+    name: 'Team Alpha'
     identities: union(teamAlpha, currentUser)
     priority: 1
     models: [
-      { name: 'gpt-4.1-mini', tpm: 1000, ptuTpm: 100 }
+      { name: 'gpt-4.1', tpm: 5000, ptuTpm: 2000 }
+      { name: 'gpt-4.1-mini', tpm: 5000, ptuTpm: 500 }
       { name: 'gpt-oss-120b', tpm: 100 }
     ]
     monthlyQuota: 7000
     environment: 'PROD'
   }
   {
-    name: 'Team Beta2'
+    name: 'Team Beta'
     identities: [] // auto-create Entra app
     priority: 2
     models: [
@@ -116,7 +117,7 @@ param accessContracts = [
     environment: 'DEV'
   }
   {
-    name: 'Team Gamma2'
+    name: 'Team Gamma'
     identities: [] // auto-create Entra app
     priority: 2
     models: [
