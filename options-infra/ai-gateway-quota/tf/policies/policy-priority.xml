@@ -174,14 +174,18 @@
         <!-- Backend naming convention encodes the type.                      -->
         <!-- ================================================================ -->
         <set-variable name="backend-type" value="@{
-            // After pool resolution / circuit-breaker failover, Backend.Url
-            // reflects the actual endpoint, while Backend.Id still shows the
-            // pool name (e.g. &quot;gpt41-ptu-pool&quot;).  Check URL first.
-            var url = context.Backend?.Url?.ToString() ?? &quot;&quot;;
-            if (!string.IsNullOrEmpty(url))
-                return url.Contains(&quot;ptu&quot;) ? &quot;ptu&quot; : &quot;payg&quot;;
-            var backendId = context.Backend?.Id ?? &quot;&quot;;
-            return backendId.Contains(&quot;ptu&quot;) ? &quot;ptu&quot; : &quot;payg&quot;;
+            // Detect actual backend after pool resolution / circuit-breaker failover.
+            // Backend.Id and Backend.Url both return pool-level values, so inspect
+            // the upstream response headers instead.
+            // PTU deployments return very low x-ratelimit-limit-requests (1-10);
+            // PAYG deployments return high values (1000+).
+            var rlHeader = context.Response.Headers.GetValueOrDefault(&quot;x-ratelimit-limit-requests&quot;, &quot;&quot;);
+            int rl = 0;
+            int.TryParse(rlHeader, out rl);
+            if (rl > 0) {
+                return rl <= 50 ? &quot;ptu&quot; : &quot;payg&quot;;
+            }
+            return (string)context.Variables.GetValueOrDefault(&quot;route-target&quot;, &quot;payg&quot;);
         }" />
 
         <!-- ================================================================ -->
