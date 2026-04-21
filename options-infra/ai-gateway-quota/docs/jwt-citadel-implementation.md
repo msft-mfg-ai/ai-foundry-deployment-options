@@ -1,6 +1,7 @@
 # JWT-Based Citadel Access Contracts — Design History
 
-> This document summarizes the original design plan and how the production system diverged.
+> **Note (July 2025):** The loopback/PTU Gate pattern described here has been replaced with APIM's native circuit breaker + priority-based mixed pools. See the main [README](../README.md) for current architecture.
+> This document is kept for historical context — it summarizes the original design plan and how the production system diverged.
 > For the current architecture, see the main [README](../README.md) and [AGENTS.md](../AGENTS.md).
 
 ## What Was Planned vs What Was Built

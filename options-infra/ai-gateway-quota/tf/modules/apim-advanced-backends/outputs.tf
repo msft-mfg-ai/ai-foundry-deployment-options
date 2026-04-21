@@ -2,8 +2,8 @@ output "backend_names" {
   value = [for k, v in azapi_resource.backend : v.name]
 }
 
-output "ptu_pool_names" {
-  value = [for k, v in azapi_resource.ptu_pool : v.name]
+output "mixed_pool_names" {
+  value = [for k, v in azapi_resource.mixed_pool : v.name]
 }
 
 output "payg_pool_names" {

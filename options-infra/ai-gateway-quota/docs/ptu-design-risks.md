@@ -1,6 +1,6 @@
 # PTU Priority Routing — Design Risks & Limitations
 
-> **Last updated:** March 2026 — reflects implementation of the two-API loopback architecture.
+> **Last updated:** July 2025 — architecture updated to use APIM native circuit breaker + priority-based mixed pools. The loopback/PTU Gate pattern described below has been replaced. See main [README](../README.md).
 > Sections marked with ✅ Resolved are kept for historical context.
 
 ## Overview

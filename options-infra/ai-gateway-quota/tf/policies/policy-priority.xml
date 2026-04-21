@@ -68,54 +68,33 @@
         <!-- ================================================================ -->
         <!-- STEP 8: Routing                                                  -->
         <!--                                                                  -->
-        <!-- Case A — Production, ptuTpm == tpm (100% PTU):                    -->
-        <!--   → direct to PTU pool. STEP 7a already enforces the full TPM    -->
-        <!--     limit atomically — no need for a second llm-token-limit.     -->
-        <!--     On 429 from backend (PTU capacity full): retry with PAYG.    -->
+        <!-- Case A — Production (priority == 1, has PTU allocation):         -->
+        <!--   → mixed pool (PTU at priority 1, PAYG at priority 2).          -->
+        <!--     Circuit breaker on PTU backends handles failover to PAYG     -->
+        <!--     automatically when PTU returns 429/503.                      -->
         <!--                                                                  -->
-        <!-- Case B — Production, 0 < ptuTpm < tpm (partial PTU):             -->
-        <!--   → loopback to PTU gate API (separate llm-token-limit counter   -->
-        <!--     just for the PTU portion). On 429: retry with PAYG pool.     -->
-        <!--                                                                  -->
-        <!-- Case C — Standard (or Production without PTU):                   -->
-        <!--   → direct to PAYG-only pool.                                    -->
+        <!-- Case B — Standard (or Production without PTU):                   -->
+        <!--   → PAYG-only pool. Standard callers should not consume PTU.     -->
         <!-- ================================================================ -->
 
         <!-- Build pool IDs from model name -->
         <set-variable name="model-clean" value="@(((string)context.Variables[&quot;requestedModel&quot;]).Replace(&quot;.&quot;, &quot;&quot;).Replace(&quot;-&quot;, &quot;&quot;))" />
-        <set-variable name="ptu-pool-id" value="@((string)context.Variables[&quot;model-clean&quot;] + &quot;-ptu-pool&quot;)" />
+        <set-variable name="mixed-pool-id" value="@((string)context.Variables[&quot;model-clean&quot;] + &quot;-pool&quot;)" />
         <set-variable name="payg-pool-id" value="@((string)context.Variables[&quot;model-clean&quot;] + &quot;-payg-pool&quot;)" />
 
         <!-- Routing decision -->
         <choose>
-            <!-- Case A: Production + 100% PTU → direct to PTU pool           -->
-            <when condition="@((int)context.Variables[&quot;priority&quot;] == 1 &amp;&amp; (int)context.Variables[&quot;model-ptu-tpm&quot;] == (int)context.Variables[&quot;model-tpm&quot;])">
-                <set-variable name="route-target" value="ptu" />
-                <set-backend-service backend-id="@((string)context.Variables[&quot;ptu-pool-id&quot;])" />
-            </when>
-
-            <!-- Case B: Production + partial PTU → loopback to PTU gate API   -->
+            <!-- Case A: Production with PTU allocation → mixed pool (circuit breaker failover) -->
             <when condition="@((int)context.Variables[&quot;priority&quot;] == 1 &amp;&amp; (int)context.Variables[&quot;model-ptu-tpm&quot;] > 0)">
-                <set-variable name="route-target" value="ptu-gate" />
-                <!-- Pass routing info to PTU gate via internal headers -->
-                <set-header name="x-internal-key" exists-action="override">
-                    <value>{internal-api-key}</value>
-                </set-header>
-                <set-header name="x-ptu-counter-key" exists-action="override">
-                    <value>@((string)context.Variables["caller-name"] + ":" + (string)context.Variables["requestedModel"])</value>
-                </set-header>
-                <set-header name="x-ptu-tpm" exists-action="override">
-                    <value>@(((int)context.Variables["model-ptu-tpm"]).ToString())</value>
-                </set-header>
-                <set-header name="x-ptu-pool-id" exists-action="override">
-                    <value>@((string)context.Variables["ptu-pool-id"])</value>
-                </set-header>
-                <set-backend-service backend-id="{loopback-backend-id}" />
+                <set-variable name="route-target" value="mixed" />
+                <set-variable name="backend-pool" value="@((string)context.Variables[&quot;mixed-pool-id&quot;])" />
+                <set-backend-service backend-id="@((string)context.Variables[&quot;mixed-pool-id&quot;])" />
             </when>
 
-            <!-- Case C: Everything else → PAYG pool directly -->
+            <!-- Case B: Everything else → PAYG pool directly -->
             <otherwise>
                 <set-variable name="route-target" value="payg" />
+                <set-variable name="backend-pool" value="@((string)context.Variables[&quot;payg-pool-id&quot;])" />
                 <set-backend-service backend-id="@((string)context.Variables[&quot;payg-pool-id&quot;])" />
             </otherwise>
         </choose>
@@ -138,6 +117,11 @@
         <set-header name="x-route-target" exists-action="override">
             <value>@((string)context.Variables["route-target"])</value>
         </set-header>
+
+        <!-- Extract Foundry-specific headers for observability -->
+        <set-variable name="foundry-agent-id" value="@(context.Request.Headers.GetValueOrDefault(&quot;x-ms-foundry-agent-id&quot;, &quot;&quot;))" />
+        <set-variable name="foundry-project-name" value="@(context.Request.Headers.GetValueOrDefault(&quot;openai-project&quot;, &quot;&quot;))" />
+        <set-variable name="foundry-project-id" value="@(context.Request.Headers.GetValueOrDefault(&quot;x-ms-foundry-project-id&quot;, &quot;&quot;))" />
 
         <!-- CORS for Azure AI Foundry portal -->
         <cors allow-credentials="true">
@@ -170,60 +154,28 @@
             <dimension name="Model" value="@((string)context.Variables[&quot;requestedModel&quot;])" />
             <dimension name="API ID" value="@(context.Api.Id)" />
         </llm-emit-token-metric>
-        <set-variable name="retry-count" value="@(0)" />
-        <!-- Initialize route trace with the first hop -->
-        <set-variable name="route-trace" value="@{
-            var route = (string)context.Variables[&quot;route-target&quot;];
-            var ptu = (string)context.Variables[&quot;ptu-pool-id&quot;];
-            var payg = (string)context.Variables[&quot;payg-pool-id&quot;];
-            if (route == &quot;ptu&quot;) { return ptu; }
-            if (route == &quot;ptu-gate&quot;) { return &quot;loopback:&quot; + ptu; }
-            return payg;
-        }" />
     </inbound>
 
     <backend>
-        <!-- Forward to the backend chosen in inbound.                                -->
-        <!-- Case A (ptu): direct PTU, retry with PAYG on 429/503.                    -->
-        <!-- Case B (ptu-gate): loopback, retry with PAYG on 429/503.                 -->
-        <!-- Case C (payg): direct PAYG; retry is a no-op.                            -->
-        <!-- PTU backends return 429 for rate limits and 503 for capacity exhaustion.  -->
-        <retry condition="@(context.Response != null &amp;&amp; (context.Response.StatusCode == 429 || context.Response.StatusCode == 503))" count="2" interval="0" first-fast-retry="true">
-            <choose>
-                <when condition="@(context.Response != null &amp;&amp; (context.Response.StatusCode == 429 || context.Response.StatusCode == 503))">
-                    <set-variable name="retry-count" value="@((int)context.Variables[&quot;retry-count&quot;] + 1)" />
-                    <set-variable name="route-trace" value="@{
-                        var trace = (string)context.Variables[&quot;route-trace&quot;];
-                        var gateTrace = context.Response.Headers.GetValueOrDefault(&quot;x-ptu-gate-trace&quot;, &quot;&quot;);
-                        if (!string.IsNullOrEmpty(gateTrace)) {
-                            trace += &quot;[&quot; + gateTrace + &quot;]&quot;;
-                        }
-                        trace += &quot;->&quot; + context.Response.StatusCode.ToString() + &quot;->&quot; + (string)context.Variables[&quot;payg-pool-id&quot;];
-                        return trace;
-                    }" />
-                    <set-variable name="route-target" value="payg-overflow" />
-                    <set-backend-service backend-id="@((string)context.Variables[&quot;payg-pool-id&quot;])" />
-                </when>
-            </choose>
-            <forward-request buffer-request-body="true" />
-        </retry>
+        <!-- Forward to the backend pool chosen in inbound.                         -->
+        <!-- Mixed pool: circuit breaker handles PTU→PAYG failover automatically.   -->
+        <!-- PAYG pool: direct to PAYG backends.                                    -->
+        <forward-request buffer-request-body="true" />
     </backend>
 
     <outbound>
         <base />
 
         <!-- ================================================================ -->
-        <!-- Detect backend type from route-target variable                   -->
+        <!-- Detect backend type from context.Backend.Id                      -->
         <!--                                                                  -->
-        <!-- route-target is set in inbound and updated by retry:             -->
-        <!--   "ptu"            → direct PTU (100% PTU allocation)           -->
-        <!--   "ptu-gate"       → served by PTU (via loopback, partial PTU)  -->
-        <!--   "payg-overflow"  → started on PTU, fell back to PAYG          -->
-        <!--   "payg"           → direct PAYG                                -->
+        <!-- context.Backend.Id returns the specific backend entity that      -->
+        <!-- served the request (e.g., "foundry-eastus-ptu-backend").         -->
+        <!-- Backend naming convention encodes the type.                      -->
         <!-- ================================================================ -->
         <set-variable name="backend-type" value="@{
-            var route = (string)context.Variables[&quot;route-target&quot;];
-            return (route == &quot;ptu&quot; || route == &quot;ptu-gate&quot;) ? &quot;ptu&quot; : &quot;payg&quot;;
+            var backendId = context.Backend?.Id ?? &quot;&quot;;
+            return backendId.Contains(&quot;ptu&quot;) ? &quot;ptu&quot; : &quot;payg&quot;;
         }" />
 
         <!-- ================================================================ -->
@@ -259,54 +211,25 @@
         <set-header name="x-ptu-limit" exists-action="override">
             <value>@(((int)context.Variables["model-ptu-tpm"]).ToString())</value>
         </set-header>
-        <set-header name="x-ptu-consumed" exists-action="override">
-            <value>@{
-                var ptuTpm = (int)context.Variables["model-ptu-tpm"];
-                if (ptuTpm == 0) { return "0"; }
-                var raw = context.Response.Headers.GetValueOrDefault("x-ptu-remaining-tokens", "");
-                if (string.IsNullOrEmpty(raw)) { return "0"; }
-                int remaining = 0;
-                int.TryParse(raw, out remaining);
-                return (ptuTpm - remaining).ToString();
-            }</value>
-        </set-header>
-        <set-header name="x-ptu-utilization" exists-action="override">
-            <value>@{
-                var ptuTpm = (int)context.Variables["model-ptu-tpm"];
-                if (ptuTpm == 0) { return "0%"; }
-                var raw = context.Response.Headers.GetValueOrDefault("x-ptu-remaining-tokens", "");
-                if (string.IsNullOrEmpty(raw)) { return "0%"; }
-                int remaining = 0;
-                int.TryParse(raw, out remaining);
-                var used = ptuTpm - remaining;
-                return ((int)(((double)used / ptuTpm) * 100)).ToString() + "%";
-            }</value>
-        </set-header>
         <set-header name="x-backend-type" exists-action="override">
             <value>@((string)context.Variables["backend-type"])</value>
         </set-header>
+        <set-header name="x-backend-id" exists-action="override">
+            <value>@(context.Backend?.Id ?? "unknown")</value>
+        </set-header>
         <set-header name="x-backend-pool" exists-action="override">
-            <value>@{
-                var route = (string)context.Variables["route-target"];
-                var ptu = (string)context.Variables["ptu-pool-id"];
-                var payg = (string)context.Variables["payg-pool-id"];
-                if (route == "ptu") { return ptu; }
-                if (route == "ptu-gate") { return "loopback:" + ptu; }
-                return payg;
-            }</value>
+            <value>@((string)context.Variables["backend-pool"])</value>
         </set-header>
-        <set-header name="x-retry-count" exists-action="override">
-            <value>@(((int)context.Variables["retry-count"]).ToString())</value>
+
+        <!-- Foundry-specific headers (logged via API diagnostics → App Insights) -->
+        <set-header name="x-foundry-agent-id" exists-action="override">
+            <value>@((string)context.Variables["foundry-agent-id"])</value>
         </set-header>
-        <set-header name="x-route-trace" exists-action="override">
-            <value>@{
-                var trace = (string)context.Variables["route-trace"];
-                var gateTrace = context.Response.Headers.GetValueOrDefault("x-ptu-gate-trace", "");
-                if (!string.IsNullOrEmpty(gateTrace)) {
-                    trace += "[" + gateTrace + "]";
-                }
-                return trace;
-            }</value>
+        <set-header name="x-foundry-project-name" exists-action="override">
+            <value>@((string)context.Variables["foundry-project-name"])</value>
+        </set-header>
+        <set-header name="x-foundry-project-id" exists-action="override">
+            <value>@((string)context.Variables["foundry-project-id"])</value>
         </set-header>
     </outbound>
 
@@ -373,17 +296,7 @@
                 <value>0</value>
             </set-header>
             <set-header name="x-backend-pool" exists-action="override">
-                <value>@{
-                    var route = (string)context.Variables.GetValueOrDefault("route-target", "unknown");
-                    if (!context.Variables.ContainsKey("ptu-pool-id")) { return route; }
-                    if (route == "ptu") { return (string)context.Variables["ptu-pool-id"]; }
-                    if (route == "payg" || route == "payg-overflow") { return (string)context.Variables["payg-pool-id"]; }
-                    if (route == "ptu-gate") { return "loopback:" + (string)context.Variables["ptu-pool-id"]; }
-                    return route;
-                }</value>
-            </set-header>
-            <set-header name="x-retry-count" exists-action="override">
-                <value>@(context.Variables.ContainsKey("retry-count") ? ((int)context.Variables["retry-count"]).ToString() : "0")</value>
+                <value>@((string)context.Variables.GetValueOrDefault("backend-pool", "unknown"))</value>
             </set-header>
             <set-body>@{
                 var source  = context.LastError?.Source ?? "";

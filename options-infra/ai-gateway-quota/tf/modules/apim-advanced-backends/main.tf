@@ -36,7 +36,7 @@ locals {
     for model in local.unique_models : model => [
       for d in local.all_deployments : {
         id       = "${d.instance_name}-backend"
-        priority = d.priority != null ? d.priority : 2
+        priority = d.priority != null ? d.priority : 1
         weight   = d.weight
       } if d.model_name == model && !d.is_ptu
     ]
@@ -54,6 +54,7 @@ locals {
 }
 
 # Create individual backends (one per instance)
+# Circuit breaker on PTU backends: trips on 429/503, respects Retry-After header
 resource "azapi_resource" "backend" {
   for_each = local.unique_instances
 
@@ -69,20 +70,19 @@ resource "azapi_resource" "backend" {
         protocol    = "http"
         url         = "${trimsuffix(each.value.endpoint, "/")}/openai"
       },
-      var.configure_circuit_breaker ? {
+      var.configure_circuit_breaker && each.value.is_ptu ? {
         circuitBreaker = {
           rules = [
             {
               failureCondition = {
                 count    = 1
                 interval = "PT10S"
-                errorReasons = ["The backend service is throttling"]
                 statusCodeRanges = [
                   { min = 429, max = 429 },
-                  { min = 500, max = 503 }
+                  { min = 503, max = 503 }
                 ]
               }
-              name             = "breakThrottling"
+              name             = "breakOnThrottle"
               tripDuration     = "PT10S"
               acceptRetryAfter = true
             }
@@ -93,12 +93,16 @@ resource "azapi_resource" "backend" {
   }
 }
 
-# Create PTU pools (one per model that has PTU backends)
-resource "azapi_resource" "ptu_pool" {
-  for_each = { for model, backends in local.ptu_backends_by_model : model => backends if length(backends) > 0 }
+# Mixed pool (PTU at priority 1, PAYG at priority 2) — used by Production callers.
+# Circuit breaker on PTU backends handles failover to PAYG automatically.
+resource "azapi_resource" "mixed_pool" {
+  for_each = {
+    for model in local.unique_models : model => model
+    if length(local.ptu_backends_by_model[model]) > 0 && length(local.payg_backends_by_model[model]) > 0
+  }
 
   type                      = "Microsoft.ApiManagement/service/backends@2024-05-01"
-  name                      = "${local.model_clean[each.key]}-ptu-pool"
+  name                      = "${local.model_clean[each.key]}-pool"
   parent_id                 = var.apim_id
   schema_validation_enabled = true
 
@@ -106,22 +110,27 @@ resource "azapi_resource" "ptu_pool" {
 
   body = {
     properties = {
-      description = "PTU pool for model ${each.key}"
+      description = "Mixed pool for ${each.key} — PTU (priority 1) + PAYG (priority 2) with circuit breaker failover"
       type        = "Pool"
       pool = {
-        services = [
-          for b in each.value : {
+        services = concat(
+          [for b in local.ptu_backends_by_model[each.key] : {
             id       = "${var.apim_id}/backends/${b.id}"
-            priority = b.priority
+            priority = 1
             weight   = b.weight
-          }
-        ]
+          }],
+          [for b in local.payg_backends_by_model[each.key] : {
+            id       = "${var.apim_id}/backends/${b.id}"
+            priority = 2
+            weight   = b.weight
+          }]
+        )
       }
     }
   }
 }
 
-# Create PAYG pools (one per model that has PAYG backends)
+# PAYG-only pool — used by Standard callers (shouldn't consume PTU capacity)
 resource "azapi_resource" "payg_pool" {
   for_each = { for model, backends in local.payg_backends_by_model : model => backends if length(backends) > 0 }
 
@@ -134,7 +143,7 @@ resource "azapi_resource" "payg_pool" {
 
   body = {
     properties = {
-      description = "PAYG pool for model ${each.key}"
+      description = "PAYG-only pool for ${each.key} — Standard callers and fallback"
       type        = "Pool"
       pool = {
         services = [

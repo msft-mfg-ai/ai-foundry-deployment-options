@@ -12,12 +12,6 @@ data "azurerm_api_management" "existing" {
 }
 
 # ============================================================================
-# Internal API Key (random, stored in state)
-# ============================================================================
-
-resource "random_uuid" "internal_api_key" {}
-
-# ============================================================================
 # APIM Diagnostic Settings → Log Analytics
 # ============================================================================
 
@@ -101,65 +95,6 @@ resource "azapi_resource" "identity_fragment" {
 }
 
 # ============================================================================
-# PTU Gate API (Internal Loopback)
-# ============================================================================
-
-resource "azurerm_api_management_api" "ptu_gate" {
-  name                  = "ptu-gate-api"
-  api_management_name   = data.azurerm_api_management.existing.name
-  resource_group_name   = data.azurerm_resource_group.existing.name
-  revision              = "1"
-  display_name          = "PTU Gate (Internal)"
-  path                  = "ptu-gate/openai"
-  protocols             = ["https"]
-  subscription_required = false
-  api_type              = "http"
-}
-
-resource "azurerm_api_management_api_operation" "ptu_gate_catch_all" {
-  operation_id        = "catch-all-post"
-  api_name            = azurerm_api_management_api.ptu_gate.name
-  api_management_name = data.azurerm_api_management.existing.name
-  resource_group_name = data.azurerm_resource_group.existing.name
-  display_name        = "Forward POST (catch-all)"
-  method              = "POST"
-  url_template        = "/*"
-  description         = "Catches all POST requests for PTU gate processing"
-}
-
-resource "azurerm_api_management_api_policy" "ptu_gate_policy" {
-  api_name            = azurerm_api_management_api.ptu_gate.name
-  api_management_name = data.azurerm_api_management.existing.name
-  resource_group_name = data.azurerm_resource_group.existing.name
-  xml_content = replace(
-    file("${path.module}/policies/policy-ptu-gate.xml"),
-    "{internal-api-key}",
-    random_uuid.internal_api_key.result
-  )
-
-  depends_on = [module.advanced_backends]
-}
-
-# PTU Gate Loopback Backend
-resource "azapi_resource" "ptu_gate_loopback" {
-  type                      = "Microsoft.ApiManagement/service/backends@2024-05-01"
-  name                      = "ptu-gate-loopback"
-  parent_id                 = data.azurerm_api_management.existing.id
-  schema_validation_enabled = true
-
-  depends_on = [azurerm_api_management_api.ptu_gate]
-
-  body = {
-    properties = {
-      description = "Loopback to PTU gate API for atomic PTU token counting via llm-token-limit"
-      url         = "${data.azurerm_api_management.existing.gateway_url}/ptu-gate/openai"
-      protocol    = "http"
-      type        = "single"
-    }
-  }
-}
-
-# ============================================================================
 # Inference API (Main — Priority Routing)
 # ============================================================================
 
@@ -185,20 +120,11 @@ resource "azurerm_api_management_api_policy" "inference_policy" {
   api_management_name = data.azurerm_api_management.existing.name
   resource_group_name = data.azurerm_resource_group.existing.name
 
-  xml_content = replace(
-    replace(
-      file("${path.module}/policies/policy-priority.xml"),
-      "{loopback-backend-id}",
-      "ptu-gate-loopback"
-    ),
-    "{internal-api-key}",
-    random_uuid.internal_api_key.result
-  )
+  xml_content = file("${path.module}/policies/policy-priority.xml")
 
   depends_on = [
     module.advanced_backends,
     azapi_resource.identity_fragment,
-    azapi_resource.ptu_gate_loopback,
     azurerm_api_management_named_value.access_contracts
   ]
 }
@@ -225,6 +151,9 @@ resource "azurerm_api_management_api_diagnostic" "inference_diag" {
       "x-caller-name",
       "x-contract-name",
       "x-priority",
+      "x-ms-foundry-agent-id",
+      "x-ms-foundry-project-id",
+      "openai-project",
     ]
   }
 
@@ -234,6 +163,8 @@ resource "azurerm_api_management_api_diagnostic" "inference_diag" {
       "x-caller-name",
       "x-contract-name",
       "x-backend-pool",
+      "x-backend-type",
+      "x-backend-id",
       "x-model-name",
       "x-priority",
       "x-ptu-enabled",
@@ -241,6 +172,9 @@ resource "azurerm_api_management_api_diagnostic" "inference_diag" {
       "x-monthly-remaining",
       "x-ratelimit-remaining-tokens",
       "x-ratelimit-remaining-requests",
+      "x-foundry-agent-id",
+      "x-foundry-project-name",
+      "x-foundry-project-id",
     ]
   }
 
@@ -253,39 +187,6 @@ resource "azurerm_api_management_api_diagnostic" "inference_diag" {
 
   backend_response {
     body_bytes = 0
-    headers_to_log = []
-  }
-}
-
-resource "azurerm_api_management_api_diagnostic" "ptu_gate_diag" {
-  identifier               = "applicationinsights"
-  api_name                 = azurerm_api_management_api.ptu_gate.name
-  api_management_name      = data.azurerm_api_management.existing.name
-  resource_group_name      = data.azurerm_resource_group.existing.name
-  api_management_logger_id = azapi_resource.appinsights_logger.id
-
-  sampling_percentage = 100
-  always_log_errors   = true
-  log_client_ip       = true
-  verbosity           = "information"
-
-  frontend_request {
-    body_bytes     = 0
-    headers_to_log = []
-  }
-
-  frontend_response {
-    body_bytes     = 0
-    headers_to_log = []
-  }
-
-  backend_request {
-    body_bytes     = 0
-    headers_to_log = []
-  }
-
-  backend_response {
-    body_bytes     = 0
     headers_to_log = []
   }
 }

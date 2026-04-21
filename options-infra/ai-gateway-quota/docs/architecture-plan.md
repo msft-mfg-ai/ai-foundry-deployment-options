@@ -1,16 +1,15 @@
 # Priority Queue for PTU OpenAI with APIM + Foundry
 
-> ## Implementation Outcome (March 2026)
+> ## Implementation Outcome (July 2025)
 >
-> After evaluating all 5 options below, the production implementation is a **hybrid of Option 3 (Custom APIM Policy)** with key simplifications:
+> After evaluating all 5 options below, the production implementation uses **APIM's native circuit breaker + priority-based backend pools**:
 >
-> - **Two-API loopback architecture** — A Priority API (external) handles identity, per-team TPM, and routing. A PTU Gate API (internal loopback) enforces PTU capacity via `llm-token-limit`. This replaces cache-based PTU counters with atomic token limits.
-> - **P2 removed** — Only P1 (production → PTU preference) and P3 (economy → PAYG only). The "PTU when idle" tier was eliminated — PTU utilization tracking added too much complexity for the benefit.
-> - **`llm-token-limit` everywhere** — Custom token estimation (`token-estimation-*.xml`) and cache-based counters deleted. `llm-token-limit` with custom `counter-key` (a shipped APIM feature) handles all quota enforcement.
-> - **Policy fragments** — Identity/contract logic in `fragment-identity.xml` (~80 lines) shared across both APIs via `<include-fragment>` (another shipped APIM feature).
-> - **Monthly quota: PAYG-only** — PTU is pre-paid, so monthly token quotas only apply to non-P1 callers.
-> - **Pools fully separated** — PTU-only (`{model}-ptu-pool`) and PAYG-only (`{model}-payg-pool`), no mixed pools.
-> - **~250 lines total policy** across Priority API + PTU Gate + fragment (down from the projected 500+).
+> - **Mixed pools per model** — PTU backends at priority 1, PAYG backends at priority 2. Circuit breaker on PTU backends (trips on 429/503, respects Retry-After) handles failover automatically.
+> - **No loopback** — The earlier two-API loopback pattern (PTU Gate) was replaced with native circuit breaker failover. Simpler architecture, fewer moving parts.
+> - **P2 removed** — Only P1 (production → mixed pool) and P3 (economy → PAYG only). The "PTU when idle" tier was eliminated.
+> - **`llm-token-limit` everywhere** — Custom token estimation and cache-based counters deleted. `llm-token-limit` with custom `counter-key` handles all quota enforcement.
+> - **Policy fragments** — Identity/contract logic in `fragment-identity.xml` shared across APIs via `<include-fragment>`.
+> - **Foundry headers** — `x-foundry-agent-id`, `x-foundry-project-name`, `x-foundry-project-id` for agent tracing.
 >
 > The analysis below remains valuable for understanding the trade-offs and why alternatives were not chosen.
 

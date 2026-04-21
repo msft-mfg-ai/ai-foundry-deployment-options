@@ -1,70 +1,56 @@
 # AI Gateway with JWT Auth + Access Contracts + Priority Routing
 
-This deployment creates an **Azure API Management (APIM)** AI Gateway with **JWT Bearer Token authentication** via Entra ID. Client applications are identified by JWT claims, matched to **access contracts** stored in blob storage, and subject to **per-model TPM quotas**, **monthly token budgets**, and **2-tier priority routing** (P1 → PTU-first with PAYG spillover, P2 → PAYG-only with quota enforcement).
+This deployment creates an **Azure API Management (APIM)** AI Gateway with **JWT Bearer Token authentication** via Entra ID. Client applications are identified by JWT claims, matched to **access contracts** stored in blob storage, and subject to **per-model TPM quotas**, **monthly token budgets**, and **2-tier priority routing** (P1 → mixed PTU+PAYG pool with circuit breaker failover, P2 → PAYG-only with quota enforcement).
 
 ## Features
 
 - **JWT Bearer Token Auth** — `validate-azure-ad-token` against Entra ID (no APIM subscription keys)
 - **Access Contracts** — Per-team configuration (models, TPM limits, PTU allocations, monthly budgets) stored in blob storage (Bicep) or APIM named values (Terraform), cached 5 min
-- **2-Tier Priority Routing** — P1 Production (PTU + PAYG spillover), P2 Standard (PAYG only, quota enforced)
-- **Loopback Pattern (inspired by Citadel access contracts)** — Priority API (external) + PTU Gate API (internal loopback) for atomic PTU counting; internal API key protects loopback APIs
-- **PTU + PAYG Spillover** — P1 requests try PTU first; on 429/503 the policy retries to the PAYG pool automatically
+- **2-Tier Priority Routing** — P1 Production (mixed PTU+PAYG pool with circuit breaker), P2 Standard (PAYG only, quota enforced)
+- **Circuit Breaker Failover** — PTU backends have circuit breaker rules; when tripped (429/503), APIM automatically routes to PAYG backends in the same pool
 - **Per-Model TPM Quotas** — Hard 429 enforcement via `llm-token-limit` with custom `counter-key`
 - **Monthly Token Budgets** — Native enforcement via `llm-token-limit` with `token-quota-period=Monthly` (conditional — see [Quota Compromise](#quota-compromise))
-- **Route Tracing** — `x-route-trace` header records the full routing path through loopback, PTU, and PAYG pools
 - **Automatic Entra ID App Registration** — Dynamic creation per contract via Microsoft Graph Bicep extension
-- **Multi-Backend Routing** — Per-model PTU and PAYG pools with circuit breaker failover
+- **Multi-Backend Routing** — Per-model mixed (PTU+PAYG) and PAYG-only pools with circuit breaker failover
 - **Event Hub Notifications** — Quota-exceeded events for downstream processing
 - **Azure Portal Dashboard** — KQL-based monitoring (token usage, rate limits, routing decisions)
-- **Observability Headers** — `x-caller-name`, `x-backend-pool`, `x-route-trace`, `x-ptu-utilization`, `x-retry-count`, etc.
+- **Foundry Headers** — `x-foundry-agent-id`, `x-foundry-project-name`, `x-foundry-project-id` for Foundry agent tracing
+- **Observability Headers** — `x-caller-name`, `x-backend-pool`, `x-backend-type`, `x-backend-id`, etc.
 
 ## Architecture Overview
 
-The gateway uses a **loopback pattern inspired by [Citadel](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1) access contracts** for atomic PTU counting. The Priority API (external-facing) handles JWT auth, contract resolution, and quota checks. For P1 callers it issues an internal loopback call to the PTU Gate API, which atomically checks PTU capacity via `llm-token-limit` and forwards to the PTU backend pool. If PTU returns 429 or 503, the Priority API retries to the PAYG pool. An **internal API key** protects all loopback APIs from external access.
+The gateway uses **APIM's native circuit breaker and priority-based backend pools** for PTU→PAYG failover. The Inference API (external-facing) handles JWT auth, contract resolution, and quota checks. For P1 (Production) callers, it routes to a **mixed pool** where PTU backends are at priority 1 and PAYG backends are at priority 2. When PTU backends return 429/503, the circuit breaker trips and APIM automatically fails over to PAYG backends. P2 (Standard) callers route directly to a PAYG-only pool to avoid consuming PTU capacity.
 
 ```
-  Client App                        APIM Gateway (Loopback Pattern)
-  (Entra ID)                       ┌─────────────────────────────────────────────────────────┐
-       │                           │                                                         │
-       │ 1. Get token              │   Priority API (external)                               │
-       │    (MSAL → Entra ID)      │   ┌──────────────────────────────────────────────────┐  │
-       │                           │   │ 1. validate-azure-ad-token                       │  │
-       │ 2. Call API with          │   │ 2. Identity resolution (JWT claims → contract)   │  │
-       │    Bearer token           │   │ 3. Per-model TPM check (llm-token-limit)         │  │
-       ├──────────────────────────►│   │ 4. Monthly quota check (conditional — see below) │  │
-       │                           │   │ 5. Route by priority:                            │  │
-       │                           │   │    P1 → PTU Gate (loopback) → PAYG spillover     │  │
-       │                           │   │    P2 → PAYG pool directly                       │  │
-       │                           │   └──────────────┬──────────────────┬────────────────┘  │
-       │                           │                  │                  │                    │
-       │                           │   PTU Gate API   │ (internal API    │                    │
-       │                           │   (loopback)     │  key protected)  │                    │
-       │                           │   ┌──────────────▼───────────┐     │                    │
-       │                           │   │ llm-token-limit (PTU     │     │                    │
-       │                           │   │ capacity per model)      │     │                    │
-       │                           │   │ → forward to PTU pool    │     │                    │
-       │                           │   │ → 429/503 → retry PAYG   │     │                    │
-       │                           │   └──────────────┬───────────┘     │                    │
-       │                           └──────────────────┼─────────────────┼────────────────────┘
-                                                      │                 │
-                                                      ▼                 ▼
-                                           ┌──────────────────┐ ┌──────────────────┐
-                                           │ {model}-ptu-pool │ │ {model}-payg-pool│
-                                           │  PTU backends    │ │  PAYG backends   │
-                                           │  (circuit break) │ │  (circuit break) │
-                                           └──────────────────┘ └──────────────────┘
-                                                      │                 │
-                                              ┌───────┴───────┐ ┌──────┴───────┐
-                                              │ Foundry PTU   │ │ Foundry PAYG │
-                                              │ (dedicated)   │ │ (pay-per-use)│
-                                              └───────────────┘ └──────────────┘
+  Client App                        APIM Gateway (Circuit Breaker Pattern)
+  (Entra ID)                       ┌──────────────────────────────────────────────────────────┐
+       │                           │                                                          │
+       │ 1. Get token              │   Inference API (external)                               │
+       │    (MSAL → Entra ID)      │   ┌───────────────────────────────────────────────────┐  │
+       │                           │   │ 1. validate-azure-ad-token                        │  │
+       │ 2. Call API with          │   │ 2. Identity resolution (JWT claims → contract)    │  │
+       │    Bearer token           │   │ 3. Per-model TPM check (llm-token-limit)          │  │
+       ├──────────────────────────►│   │ 4. Monthly quota check (conditional)              │  │
+       │                           │   │ 5. Route by priority:                             │  │
+       │                           │   │    P1 → Mixed pool (PTU pri 1, PAYG pri 2)        │  │
+       │                           │   │    P2 → PAYG-only pool                            │  │
+       │                           │   └──────────────┬──────────────────┬─────────────────┘  │
+       │                           └──────────────────┼──────────────────┼──────────────────────┘
+                                                      │                  │
+                                                      ▼                  ▼
+                                           ┌───────────────────┐ ┌──────────────────┐
+                                           │ {model}-pool      │ │ {model}-payg-pool│
+                                           │  PTU (pri 1)      │ │  PAYG backends   │
+                                           │  PAYG (pri 2)     │ │  (Standard only) │
+                                           │  circuit breaker   │ └──────────────────┘
+                                           └───────────────────┘
+                                             │               │
+                                      ┌──────┴──────┐ ┌─────┴──────┐
+                                      │ Foundry PTU │ │Foundry PAYG│
+                                      │ (dedicated) │ │(pay-per-use│
+                                      └─────────────┘ └────────────┘
 
   Supporting Services: Log Analytics │ App Insights │ Event Hub │ Blob Storage (contracts) │ Dashboard
-```
-
-Route tracing is captured in the `x-route-trace` response header, e.g.:
-```
-x-route-trace: loopback:gpt41-ptu-pool[token-limit:ok->gpt41-ptu-pool->429]->429->gpt41-payg-pool
 ```
 
 ## Request Flow
@@ -77,16 +63,16 @@ Client → APIM Gateway
   4. Model Authorization — Check requested model is in contract's allow-list, extract TPM/ptuTpm
   5. Per-Model TPM       — llm-token-limit (counter-key = "caller:model", tokens-per-minute) → 429 if over
   6. Monthly Quota       — llm-token-limit (conditional — see Quota Compromise) → 429 if over
-  7. Priority Routing    — Route to PTU or PAYG pool based on priority tier:
-       P1 (Production): PTU first (via PTU Gate loopback), spillover to PAYG on 429/503
-       P2 (Standard):   PAYG pool directly, quota always enforced
+  7. Priority Routing    — Route to backend pool based on priority tier:
+       P1 (Production): Mixed pool (PTU pri 1, PAYG pri 2) — circuit breaker handles failover
+       P2 (Standard):   PAYG-only pool, quota always enforced
 ```
 
 ## Priority Tiers
 
 | Priority | Label | Routing | Quota Enforcement |
 |----------|-------|---------|-------------------|
-| **P1** | Production | PTU first → PAYG spillover on 429/503 | Conditional (see [Quota Compromise](#quota-compromise)) |
+| **P1** | Production | Mixed pool (PTU pri 1, PAYG pri 2) — circuit breaker failover | Conditional (see [Quota Compromise](#quota-compromise)) |
 | **P2** | Standard | PAYG only | Always enforced |
 
 ## Quota Compromise
@@ -294,13 +280,16 @@ Every successful response includes observability headers:
 |--------|-------------|
 | `x-caller-name` | Contract name the caller was matched to |
 | `x-caller-priority` | Priority label (`production` / `standard`) |
-| `x-backend-pool` | Which backend pool served the request (e.g., `gpt41-ptu-pool`, `gpt41-payg-pool`) |
-| `x-retry-count` | Number of retries (0 if first attempt succeeded) |
-| `x-route-trace` | Full routing path (e.g., `loopback:gpt41-ptu-pool[token-limit:ok->gpt41-ptu-pool->429]->429->gpt41-payg-pool`) |
-| `x-ptu-consumed` | PTU tokens consumed by this request |
-| `x-ptu-utilization` | Global PTU utilization percentage for the model |
+| `x-backend-pool` | Which backend pool served the request (e.g., `gpt41-pool`, `gpt41-payg-pool`) |
+| `x-backend-type` | Backend type derived from `context.Backend.Id` (`ptu` or `payg`) |
+| `x-backend-id` | Specific backend entity that served the request (from `context.Backend.Id`) |
+| `x-route-target` | Routing decision (`mixed` or `payg`) |
+| `x-ptu-limit` | PTU TPM allocation for this model from the contract |
 | `x-quota-remaining-tokens` | Remaining tokens in the monthly quota (estimate — see [Known Limitations](#known-limitations)) |
 | `x-ratelimit-remaining-tokens` | Remaining tokens in the current per-minute window |
+| `x-foundry-agent-id` | Foundry agent ID (from `x-ms-foundry-agent-id` request header) |
+| `x-foundry-project-name` | Foundry project name (from `openai-project` request header) |
+| `x-foundry-project-id` | Foundry project ID (from `x-ms-foundry-project-id` request header) |
 
 ## Deployment Topologies
 
