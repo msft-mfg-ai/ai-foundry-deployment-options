@@ -79,7 +79,7 @@
 
         <!-- Build pool IDs from model name -->
         <set-variable name="model-clean" value="@(((string)context.Variables[&quot;requestedModel&quot;]).Replace(&quot;.&quot;, &quot;&quot;).Replace(&quot;-&quot;, &quot;&quot;))" />
-        <set-variable name="ptu-pool-id" value="@((string)context.Variables[&quot;model-clean&quot;] + &quot;-pool&quot;)" />
+        <set-variable name="ptu-pool-id" value="@((string)context.Variables[&quot;model-clean&quot;] + &quot;-ptu-pool&quot;)" />
         <set-variable name="payg-pool-id" value="@((string)context.Variables[&quot;model-clean&quot;] + &quot;-payg-pool&quot;)" />
 
         <!-- Routing decision -->
