@@ -93,16 +93,16 @@ resource "azapi_resource" "backend" {
   }
 }
 
-# Mixed pool (PTU at priority 1, PAYG at priority 2) — used by Production callers.
+# PTU pool (PTU at priority 1, PAYG at priority 2) — used by Production callers.
 # Circuit breaker on PTU backends handles failover to PAYG automatically.
-resource "azapi_resource" "mixed_pool" {
+resource "azapi_resource" "ptu_pool" {
   for_each = {
     for model in local.unique_models : model => model
     if length(local.ptu_backends_by_model[model]) > 0 && length(local.payg_backends_by_model[model]) > 0
   }
 
   type                      = "Microsoft.ApiManagement/service/backends@2024-05-01"
-  name                      = "${local.model_clean[each.key]}-pool"
+  name                      = "${local.model_clean[each.key]}-ptu-pool"
   parent_id                 = var.apim_id
   schema_validation_enabled = true
 
@@ -110,7 +110,7 @@ resource "azapi_resource" "mixed_pool" {
 
   body = {
     properties = {
-      description = "Mixed pool for ${each.key} — PTU (priority 1) + PAYG (priority 2) with circuit breaker failover"
+      description = "PTU pool for ${each.key} — PTU (priority 1) + PAYG (priority 2) with circuit breaker failover"
       type        = "Pool"
       pool = {
         services = concat(

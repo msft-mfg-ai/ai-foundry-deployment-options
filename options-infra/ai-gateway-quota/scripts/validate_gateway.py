@@ -177,7 +177,7 @@ def main():
             )
             test(
                 f"{team_name}: x-route-target header",
-                route in ["mixed", "payg"],
+                route in ["ptu", "payg"],
                 f'value="{route}"',
             )
             test(
@@ -186,11 +186,11 @@ def main():
                 f'value="{remaining}"',
             )
 
-            # P1 should route to mixed pool (for models with PTU)
+            # P1 should route to PTU pool (for models with PTU)
             if cfg["priority"] == 1 and model == "gpt-4.1-mini":
                 test(
-                    f"{team_name}: P1 routes to mixed pool",
-                    route == "mixed",
+                    f"{team_name}: P1 routes to PTU pool",
+                    route == "ptu",
                     f'route="{route}"',
                 )
             # P3 should always be PAYG

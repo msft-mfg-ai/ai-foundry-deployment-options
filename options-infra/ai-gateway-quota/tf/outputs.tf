@@ -23,7 +23,7 @@ output "resource_group_name" {
 }
 
 output "pool_names" {
-  value = concat(module.advanced_backends.mixed_pool_names, module.advanced_backends.payg_pool_names)
+  value = concat(module.advanced_backends.ptu_pool_names, module.advanced_backends.payg_pool_names)
 }
 
 output "has_ptu_deployments" {

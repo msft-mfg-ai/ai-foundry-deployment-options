@@ -79,16 +79,16 @@
 
         <!-- Build pool IDs from model name -->
         <set-variable name="model-clean" value="@(((string)context.Variables[&quot;requestedModel&quot;]).Replace(&quot;.&quot;, &quot;&quot;).Replace(&quot;-&quot;, &quot;&quot;))" />
-        <set-variable name="mixed-pool-id" value="@((string)context.Variables[&quot;model-clean&quot;] + &quot;-pool&quot;)" />
+        <set-variable name="ptu-pool-id" value="@((string)context.Variables[&quot;model-clean&quot;] + &quot;-pool&quot;)" />
         <set-variable name="payg-pool-id" value="@((string)context.Variables[&quot;model-clean&quot;] + &quot;-payg-pool&quot;)" />
 
         <!-- Routing decision -->
         <choose>
             <!-- Case A: Production with PTU allocation → mixed pool (circuit breaker failover) -->
             <when condition="@((int)context.Variables[&quot;priority&quot;] == 1 &amp;&amp; (int)context.Variables[&quot;model-ptu-tpm&quot;] > 0)">
-                <set-variable name="route-target" value="mixed" />
-                <set-variable name="backend-pool" value="@((string)context.Variables[&quot;mixed-pool-id&quot;])" />
-                <set-backend-service backend-id="@((string)context.Variables[&quot;mixed-pool-id&quot;])" />
+                <set-variable name="route-target" value="ptu" />
+                <set-variable name="backend-pool" value="@((string)context.Variables[&quot;ptu-pool-id&quot;])" />
+                <set-backend-service backend-id="@((string)context.Variables[&quot;ptu-pool-id&quot;])" />
             </when>
 
             <!-- Case B: Everything else → PAYG pool directly -->

@@ -110,10 +110,10 @@ var paygoCountPerModel = reduce(uniqueModels, {}, (acc, model) => union(acc, {
 resource mixedPools 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' = [
   for (model, i) in uniqueModels: if (ptuCountPerModel[model] > 0 && paygoCountPerModel[model] > 0) {
     parent: apimService
-    name: '${replace(replace(model, '.', ''), '-', '')}-pool'
+    name: '${replace(replace(model, '.', ''), '-', '')}-ptu-pool'
     dependsOn: [backends]
     properties: {
-      description: 'Mixed pool for ${model} — ${ptuCountPerModel[model]} PTU (pri 1) + ${paygoCountPerModel[model]} PAYG (pri 2) with circuit breaker failover'
+      description: 'PTU pool for ${model} — ${ptuCountPerModel[model]} PTU (pri 1) + ${paygoCountPerModel[model]} PAYG (pri 2) with circuit breaker failover'
       type: 'Pool'
       pool: {
         services: concat(
@@ -159,7 +159,7 @@ resource paygoOnlyPools 'Microsoft.ApiManagement/service/backends@2024-06-01-pre
 output backendNames array = [for (instance, i) in foundryInstances: backends[i].name]
 output poolNames array = [for (model, i) in uniqueModels: {
   model: model
-  mixedPool: '${replace(replace(model, '.', ''), '-', '')}-pool'
+  mixedPool: '${replace(replace(model, '.', ''), '-', '')}-ptu-pool'
   paygoPool: '${replace(replace(model, '.', ''), '-', '')}-payg-pool'
   hasPtu: length(filter(allDeployments, d => d.modelName == model && d.isPtu)) > 0
   hasPaygo: paygoCountPerModel[model] > 0
