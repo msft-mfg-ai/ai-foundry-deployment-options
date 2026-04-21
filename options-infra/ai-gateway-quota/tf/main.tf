@@ -298,7 +298,13 @@ resource "azurerm_api_management_api_operation_policy" "config_json_policy" {
 
 # ============================================================================
 # Role Assignments: APIM → Cognitive Services User
+# Uses ARM-compatible guid (UUIDv5) so TF and Bicep produce identical names
 # ============================================================================
+
+locals {
+  _cs_user_role_def_id = "/subscriptions/${var.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/a97b65f3-24c7-4388-baec-2e87135dc908"
+  _apim_principal_id   = data.azurerm_api_management.existing.identity[0].principal_id
+}
 
 resource "azurerm_role_assignment" "apim_to_foundry" {
   for_each = {
@@ -306,9 +312,11 @@ resource "azurerm_role_assignment" "apim_to_foundry" {
     if !startswith(inst.resource_id, "/subscriptions/00000000")
   }
 
+  # Match Bicep's guid(principalId, roleDefinitionId, account.id) — ARM namespace UUIDv5
+  name                 = uuidv5("11fb06fb-712d-4ddd-98c7-e71bbd588830", "${local._apim_principal_id}-${local._cs_user_role_def_id}-${each.value}")
   scope                = each.value
   role_definition_name = "Cognitive Services User"
-  principal_id         = data.azurerm_api_management.existing.identity[0].principal_id
+  principal_id         = local._apim_principal_id
 }
 
 # ============================================================================
