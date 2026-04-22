@@ -40,7 +40,8 @@ foundry_instances = [
     location    = "eastus2"
     is_ptu      = true
     deployments = [
-      { model_name = "gpt-4.1-mini", ptu_capacity_tpm = 2000 }
+      { model_name = "gpt-4.1-mini", ptu_capacity_tpm = 2000 },
+      { model_name = "gpt-4.1", ptu_capacity_tpm = 1000 }
     ]
   },
   {

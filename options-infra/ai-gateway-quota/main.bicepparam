@@ -25,6 +25,7 @@ param foundryInstances = [
     isPtu: true
     deployments: [
       { modelName: 'gpt-4.1-mini', ptuCapacityTpm: 2000 }
+      { modelName: 'gpt-4.1', ptuCapacityTpm: 1000 }
     ]
   }
   // -- Paygo instance (eastus2) ----------------------------------------------
@@ -102,7 +103,7 @@ param accessContracts = [
       { name: 'gpt-4.1-mini', tpm: 5000, ptuTpm: 500 }
       { name: 'gpt-oss-120b', tpm: 100 }
     ]
-    monthlyQuota: 7000
+    monthlyQuota: 500000
     environment: 'PROD'
   }
   {
