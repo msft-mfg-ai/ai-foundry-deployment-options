@@ -182,13 +182,11 @@
                         return &quot;ptu&quot;;
                     }
                 }
-            }
-            // Fallback: if route-target was set to payg, trust it
-            var target = (string)context.Variables.GetValueOrDefault(&quot;route-target&quot;, &quot;&quot;);
-            if (target == &quot;payg&quot;) {
+                // Host not in PTU list → PAYG (failover or direct PAYG routing)
                 return &quot;payg&quot;;
             }
-            return &quot;unknown&quot;;
+            // No PTU hosts configured — fall back to inbound route-target
+            return (string)context.Variables.GetValueOrDefault(&quot;route-target&quot;, &quot;payg&quot;);
         }" />
 
         <!-- ================================================================ -->
