@@ -167,16 +167,26 @@
         <base />
 
         <!-- ================================================================ -->
-        <!-- Detect backend type from context.Backend.Id                      -->
+        <!-- Detect backend type (PTU vs PAYG) after pool failover             -->
         <!--                                                                  -->
-        <!-- context.Backend.Id returns the specific backend entity that      -->
-        <!-- served the request (e.g., "foundry-eastus-ptu-backend").         -->
-        <!-- Backend naming convention encodes the type.                      -->
+        <!-- APIM gap: after circuit-breaker failover inside a backend pool,  -->
+        <!-- context.Backend.Id / .Url / .Type / .AzureRegion ALL return     -->
+        <!-- pool-level values — there is no built-in way to identify which   -->
+        <!-- individual backend actually served the request.                  -->
+        <!--                                                                  -->
+        <!-- Workaround: inspect the upstream x-ratelimit-limit-requests      -->
+        <!-- response header. PTU deployments return very low values (1-10),  -->
+        <!-- PAYG returns 1000+. Threshold of 50 separates them.             -->
+        <!--                                                                  -->
+        <!-- NOTE: These response headers are UNDOCUMENTED by Azure OpenAI.   -->
+        <!-- They work in practice but are not contractual. If Azure adds an  -->
+        <!-- official x-ms-deployment-type header or exposes the resolved     -->
+        <!-- backend in context.Backend, prefer that instead.                 -->
         <!-- ================================================================ -->
         <set-variable name="backend-type" value="@{
-            // Detect actual backend after pool resolution / circuit-breaker failover.
-            // Backend.Id and Backend.Url both return pool-level values, so inspect
-            // the upstream response headers instead.
+            // APIM product gap: context.Backend.* returns pool-level values after
+            // circuit-breaker failover — cannot identify the resolved backend.
+            // Workaround: use undocumented upstream rate-limit headers.
             // PTU deployments return very low x-ratelimit-limit-requests (1-10);
             // PAYG deployments return high values (1000+).
             var rlHeader = context.Response.Headers.GetValueOrDefault(&quot;x-ratelimit-limit-requests&quot;, &quot;&quot;);
