@@ -93,7 +93,7 @@ var logSettings = {
 // Response headers to log — captures caller identity and gateway routing details
 // so that rate-limited (429) and error requests still show CallerName in dashboard queries
 var responseLogSettings = {
-  headers: [ 'x-caller-name', 'x-caller-priority', 'x-caller-id', 'x-backend-pool', 'x-backend-type', 'x-route-trace', 'x-retry-count', 'x-quota-remaining-tokens', 'x-ptu-utilization', 'x-ptu-consumed', 'x-error-reason', 'x-error-source' ]
+  headers: [ 'x-caller-name', 'x-caller-priority', 'x-caller-id', 'x-backend-pool', 'x-route-trace', 'x-retry-count', 'x-quota-remaining-tokens', 'x-ptu-utilization', 'x-ptu-consumed', 'x-error-reason', 'x-error-source' ]
   body: { bytes: 0 }
 }
 
