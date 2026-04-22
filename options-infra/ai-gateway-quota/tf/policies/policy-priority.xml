@@ -169,41 +169,26 @@
         <!-- ================================================================ -->
         <!-- Detect backend type (PTU vs PAYG) after pool failover             -->
         <!--                                                                  -->
-        <!-- APIM gap: after circuit-breaker failover inside a backend pool,  -->
-        <!-- context.Backend.Id / .Url / .Type / .AzureRegion ALL return     -->
-        <!-- pool-level values — there is no built-in way to identify which   -->
-        <!-- individual backend actually served the request.                  -->
-        <!--                                                                  -->
-        <!-- Workaround: real PTU endpoints do NOT return the                 -->
-        <!-- x-ratelimit-limit-requests header, while PAYG endpoints do.     -->
-        <!-- Absence of this header is the primary PTU signal.               -->
-        <!-- Additionally, real PTU returns x-openai-backend-id containing   -->
-        <!-- "ptu" (e.g. "genai-openai-endpoint-ptu").                       -->
-        <!--                                                                  -->
-        <!-- NOTE: These response headers are UNDOCUMENTED by Azure OpenAI.   -->
-        <!-- They work in practice but are not contractual. If Azure adds an  -->
-        <!-- official x-ms-deployment-type header or exposes the resolved     -->
-        <!-- backend in context.Backend, prefer that instead.                 -->
+        <!-- context.Backend.* returns pool-level values after failover, but  -->
+        <!-- context.Request.Url.Host reflects the RESOLVED backend host.     -->
+        <!-- We compare it against the known PTU hosts list injected by IaC.  -->
         <!-- ================================================================ -->
         <set-variable name="backend-type" value="@{
-            // APIM product gap: context.Backend.* returns pool-level values after
-            // circuit-breaker failover — cannot identify the resolved backend.
-            //
-            // Detection signals (undocumented but observed on real deployments):
-            // 1. x-ratelimit-limit-requests: ABSENT on real PTU, present on PAYG
-            // 2. x-openai-backend-id: contains &quot;ptu&quot; on real PTU endpoints
-            var rlHeader = context.Response.Headers.GetValueOrDefault(&quot;x-ratelimit-limit-requests&quot;, &quot;&quot;);
-            if (string.IsNullOrEmpty(rlHeader)) {
-                // No rate-limit header → real PTU deployment
-                return &quot;ptu&quot;;
+            var host = context.Request.Url.Host.ToLowerInvariant();
+            var ptuHosts = &quot;{ptu-backend-hosts}&quot;.ToLowerInvariant();
+            if (!string.IsNullOrEmpty(ptuHosts)) {
+                foreach (var ptuHost in ptuHosts.Split(',')) {
+                    if (host == ptuHost.Trim()) {
+                        return &quot;ptu&quot;;
+                    }
+                }
             }
-            int rl = 0;
-            int.TryParse(rlHeader, out rl);
-            if (rl > 0 &amp;&amp; rl <= 50) {
-                // Very low rate limit → PTU (simulated or low-capacity)
-                return &quot;ptu&quot;;
+            // Fallback: if route-target was set to payg, trust it
+            var target = (string)context.Variables.GetValueOrDefault(&quot;route-target&quot;, &quot;&quot;);
+            if (target == &quot;payg&quot;) {
+                return &quot;payg&quot;;
             }
-            return &quot;payg&quot;;
+            return &quot;unknown&quot;;
         }" />
 
         <!-- ================================================================ -->

@@ -120,7 +120,11 @@ resource "azurerm_api_management_api_policy" "inference_policy" {
   api_management_name = data.azurerm_api_management.existing.name
   resource_group_name = data.azurerm_resource_group.existing.name
 
-  xml_content = file("${path.module}/policies/policy-priority.xml")
+  xml_content = replace(
+    file("${path.module}/policies/policy-priority.xml"),
+    "{ptu-backend-hosts}",
+    join(",", [for inst in var.foundry_instances : replace(replace(inst.endpoint, "https://", ""), "/", "") if inst.is_ptu])
+  )
 
   depends_on = [
     module.advanced_backends,

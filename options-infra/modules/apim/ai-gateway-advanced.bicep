@@ -267,10 +267,20 @@ resource identityFragment 'Microsoft.ApiManagement/service/policyFragments@2024-
 // ============================================================================
 // -- Priority Routing Policy (Main API)
 // ============================================================================
+// Extract PTU backend hostnames from foundry instances for URL-based detection
+var ptuBackendHosts = join(
+  map(filter(foundryInstances, inst => inst.isPtu), inst => replace(replace(inst.endpoint, 'https://', ''), '/', '')),
+  ','
+)
+
 var mainPolicyXml = replace(
-  loadTextContent('advanced/policy-priority.xml'),
-  '{eventhub-logger-id}',
-  eventHubEnabled ? 'quota-eventhub-logger' : ''
+  replace(
+    loadTextContent('advanced/policy-priority.xml'),
+    '{eventhub-logger-id}',
+    eventHubEnabled ? 'quota-eventhub-logger' : ''
+  ),
+  '{ptu-backend-hosts}',
+  ptuBackendHosts
 )
 
 // ============================================================================
