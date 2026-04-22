@@ -174,9 +174,11 @@
         <!-- pool-level values — there is no built-in way to identify which   -->
         <!-- individual backend actually served the request.                  -->
         <!--                                                                  -->
-        <!-- Workaround: inspect the upstream x-ratelimit-limit-requests      -->
-        <!-- response header. PTU deployments return very low values (1-10),  -->
-        <!-- PAYG returns 1000+. Threshold of 50 separates them.             -->
+        <!-- Workaround: real PTU endpoints do NOT return the                 -->
+        <!-- x-ratelimit-limit-requests header, while PAYG endpoints do.     -->
+        <!-- Absence of this header is the primary PTU signal.               -->
+        <!-- Additionally, real PTU returns x-openai-backend-id containing   -->
+        <!-- "ptu" (e.g. "genai-openai-endpoint-ptu").                       -->
         <!--                                                                  -->
         <!-- NOTE: These response headers are UNDOCUMENTED by Azure OpenAI.   -->
         <!-- They work in practice but are not contractual. If Azure adds an  -->
@@ -186,16 +188,22 @@
         <set-variable name="backend-type" value="@{
             // APIM product gap: context.Backend.* returns pool-level values after
             // circuit-breaker failover — cannot identify the resolved backend.
-            // Workaround: use undocumented upstream rate-limit headers.
-            // PTU deployments return very low x-ratelimit-limit-requests (1-10);
-            // PAYG deployments return high values (1000+).
+            //
+            // Detection signals (undocumented but observed on real deployments):
+            // 1. x-ratelimit-limit-requests: ABSENT on real PTU, present on PAYG
+            // 2. x-openai-backend-id: contains &quot;ptu&quot; on real PTU endpoints
             var rlHeader = context.Response.Headers.GetValueOrDefault(&quot;x-ratelimit-limit-requests&quot;, &quot;&quot;);
+            if (string.IsNullOrEmpty(rlHeader)) {
+                // No rate-limit header → real PTU deployment
+                return &quot;ptu&quot;;
+            }
             int rl = 0;
             int.TryParse(rlHeader, out rl);
-            if (rl > 0) {
-                return rl <= 50 ? &quot;ptu&quot; : &quot;payg&quot;;
+            if (rl > 0 &amp;&amp; rl <= 50) {
+                // Very low rate limit → PTU (simulated or low-capacity)
+                return &quot;ptu&quot;;
             }
-            return (string)context.Variables.GetValueOrDefault(&quot;route-target&quot;, &quot;payg&quot;);
+            return &quot;payg&quot;;
         }" />
 
         <!-- ================================================================ -->
