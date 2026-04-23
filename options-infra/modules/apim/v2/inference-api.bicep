@@ -155,6 +155,20 @@ resource api 'Microsoft.ApiManagement/service/apis@2024-06-01-preview' = {
     value: apiDefinition
   }
 }
+
+resource inferenceTag 'Microsoft.ApiManagement/service/tags@2024-06-01-preview' = {
+  name: 'inference'
+  parent: apimService
+  properties: {
+    displayName: 'inference'
+  }
+}
+
+resource apiTag 'Microsoft.ApiManagement/service/apis/tags@2024-06-01-preview' = {
+  name: 'inference'
+  parent: api
+  dependsOn: [inferenceTag]
+}
 // https://learn.microsoft.com/azure/templates/microsoft.apimanagement/service/apis/policies
 resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-06-01-preview' = {
   name: 'policy'

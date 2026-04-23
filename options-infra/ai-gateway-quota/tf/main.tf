@@ -115,6 +115,17 @@ resource "azurerm_api_management_api" "inference" {
   }
 }
 
+resource "azurerm_api_management_tag" "inference" {
+  api_management_id = data.azurerm_api_management.existing.id
+  name              = "inference"
+  display_name      = "inference"
+}
+
+resource "azurerm_api_management_api_tag" "inference" {
+  api_id = azurerm_api_management_api.inference.id
+  name   = azurerm_api_management_tag.inference.name
+}
+
 resource "azurerm_api_management_api_policy" "inference_policy" {
   api_name            = azurerm_api_management_api.inference.name
   api_management_name = data.azurerm_api_management.existing.name
