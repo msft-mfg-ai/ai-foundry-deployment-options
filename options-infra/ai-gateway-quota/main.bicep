@@ -29,7 +29,7 @@ param useStorageAccount bool = true
 
 var tags = {
   'created-by': 'ai-gateway-quota-priority'
-  'hidden-title': 'APIM AI Gateway — JWT Citadel with Priority Routing'
+  'hidden-title': 'APIM AI Gateway — Quota Access Contracts'
   SecurityControl: 'Ignore'
 }
 

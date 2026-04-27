@@ -6,11 +6,14 @@
 // 4. Projects with capability hosts - in Foundry Standard mode
 targetScope = 'resourceGroup'
 
+import { apiType } from '../modules/apps/apps-private-link.bicep'
+
 param location string = resourceGroup().location
 param openAiApiBase string
 param openAiResourceId string
 param openAiLocation string = location
 param projectsCount int = 3
+param apiServices apiType[] = [] // Array of MCP service definitions
 
 var valid_config = empty(openAiApiBase) || empty(openAiResourceId)
   ? fail('OPENAI_API_BASE and OPENAI_RESOURCE_ID environment variables must be set.')
@@ -248,6 +251,21 @@ module models_policy_assignment '../modules/policy/models-policy-assignment.bice
   params: {
     cognitiveServicesPolicyDefinitionId: models_policy.outputs.cognitiveServicesPolicyDefinitionId
     allowedCognitiveServicesModels: []
+  }
+}
+
+module mcp_apis '../modules/apps/apps-private-link.bicep' = {
+  name: 'mcp-apis-private-link-${resourceToken}'
+  params: {
+    tags: tags
+    location: location
+    vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
+    peSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+    apimServiceName: ai_gateway.outputs.apimName
+    apimGatewayUrl: ai_gateway.outputs.apimGatewayUrl
+    apimAppInsightsLoggerId: ai_gateway.outputs.apimAppInsightsLoggerId
+    aiFoundryName: foundry.outputs.FOUNDRY_NAME
+    externalApis: apiServices
   }
 }
 

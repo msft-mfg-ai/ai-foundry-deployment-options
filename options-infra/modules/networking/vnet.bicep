@@ -63,7 +63,7 @@ var is_vnet_address_prefix_valid = int(split(vnetAddress, '/')[1]) <= 21
   ? true
   : fail('VNet address prefix must be /21 or larger (e.g., /16, /20)')
 
-var defaultVnetAddressPrefix = '192.168.0.0/21'
+var defaultVnetAddressPrefix = '192.168.0.0/20'
 var vnetAddress = empty(vnetAddressPrefix) ? defaultVnetAddressPrefix : vnetAddressPrefix
 var agentSubnet = empty(agentSubnetPrefix) ? cidrSubnet(vnetAddress, 24, 0) : agentSubnetPrefix
 var peSubnet = empty(peSubnetPrefix) ? cidrSubnet(vnetAddress, 24, 1) : peSubnetPrefix

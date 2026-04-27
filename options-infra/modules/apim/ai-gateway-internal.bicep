@@ -159,4 +159,6 @@ module aiGatewayProjectConnectionDynamic '../ai/connection-apim-gateway.bicep' =
 
 output apimResourceId string = apim.outputs.apimResourceId
 output apimName string = apim.outputs.apimName
+output apimGatewayUrl string = apim.outputs.apimGatewayUrl
 output apimPrincipalId string = apim.outputs.apimPrincipalId
+output apimAppInsightsLoggerId string = apim.outputs.apimAppInsightsLoggerId
