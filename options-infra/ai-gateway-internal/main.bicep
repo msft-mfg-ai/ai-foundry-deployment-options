@@ -275,3 +275,5 @@ output project_connection_strings string[] = [
 output project_names string[] = [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
 output config_validation_result bool = valid_config
 output FOUNDRY_NAME string = foundry.outputs.FOUNDRY_NAME
+output APIM_GATEWAY_URL string = ai_gateway.outputs.apimGatewayUrl
+output AZURE_OPENAI_CHAT_DEPLOYMENT_NAME string = 'gpt-4.1-mini'

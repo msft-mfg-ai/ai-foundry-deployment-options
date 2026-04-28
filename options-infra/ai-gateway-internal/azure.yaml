@@ -8,8 +8,43 @@ infra:
 
 hooks:
   postprovision:
-    shell: sh
-    run: |
-      echo "Provisioning complete!"
-      echo "📍 Foundry Name: ${FOUNDRY_NAME}"
-      echo "🤖 Project Connections: ${FOUNDRY_PROJECTS_CONNECTION_STRINGS}"
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host "=========================================="
+        Write-Host "Creating agents"
+        Write-Host "=========================================="
+
+        Push-Location ..\..\agents_v2
+        uv sync
+
+        $env:OPENAPI_SPEC_FILE = "weather.json"
+        $env:OPENAPI_SERVICE_URL = "$env:APIM_GATEWAY_URL/weather-openapi"
+        uv run python create_agents.py
+
+        Pop-Location
+
+        Write-Host ""
+        Write-Host "=========================================="
+        Write-Host "All agents created!"
+        Write-Host "=========================================="
+      interactive: true
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        echo "=========================================="
+        echo "Creating agents"
+        echo "=========================================="
+
+        cd ../../agents_v2
+        uv sync
+
+        OPENAPI_SPEC_FILE=weather.json OPENAPI_SERVICE_URL="${APIM_GATEWAY_URL}/weather-openapi" uv run python create_agents.py
+
+        echo ""
+        echo "=========================================="
+        echo "All agents created!"
+        echo "=========================================="
+      interactive: true
+      continueOnError: false
