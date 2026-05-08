@@ -12,15 +12,9 @@ var tags = {
   'hidden-title': 'Foundry Standard - BYO Vnet'
 }
 
-@export()
-type apiType = {
-  name: string
-  resourceId: string
-  type: string
-  dnsZoneName: string // The DNS zone name for the private endpoint
-}
+import { apiType } from '../modules/apps/apps-private-link.bicep'
 
-param externalApis apiType[] = [] // Array of external API definitions
+param apiServices apiType[] = [] // Array of external API definitions
 
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
 
@@ -72,12 +66,12 @@ module foundry '../modules/ai/ai-foundry.bicep' = {
     agentSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId // Use the first agent subnet
     deployments: [
       {
-        name: 'gpt-4.1-mini'
+        name: 'gpt-5.2'
         properties: {
           model: {
             format: 'OpenAI'
-            name: 'gpt-4.1-mini'
-            version: '2025-04-14'
+            name: 'gpt-5.2'
+            version: '2025-12-11'
           }
         }
         sku: {
@@ -119,68 +113,22 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
   }
 ]
 
-module dnsZoneSites 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
-  name: 'dns-sites'
+module mcp_apis '../modules/apps/apps-private-link.bicep' = {
+  name: 'mcp-apis-private-link-${resourceToken}'
   params: {
     tags: tags
-    location: 'global'
-    name: 'privatelink.azurewebsites.net'
-    virtualNetworkLinks: [
-      {
-        virtualNetworkResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
-      }
-    ]
+    location: location
+    vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
+    peSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+    aiFoundryName: foundry.outputs.FOUNDRY_NAME
+    externalApis: apiServices
   }
 }
-
-var dnsZoneToCreate = map(filter(externalApis, (api) => api.type == 'managedEnvironments'), api => api.dnsZoneName)
-var acaDnsZoneName = empty(dnsZoneToCreate) ? 'privatelink.${location}.azurecontainerapps.io' : first(dnsZoneToCreate)
-
-module dnsZoneAca 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
-  name: 'dns-aca'
-  params: {
-    tags: tags
-    location: 'global'
-    name: acaDnsZoneName
-    virtualNetworkLinks: [
-      {
-        virtualNetworkResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
-      }
-    ]
-  }
-}
-
-var dnsZones = {
-  'privatelink.azurewebsites.net': dnsZoneSites.outputs.resourceId
-  '${acaDnsZoneName}': dnsZoneAca.outputs.resourceId
-}
-
-// private endpoints for external APIs
-module privateEndpoints '../modules/networking/private-endpoint.bicep' = [
-  for (api, index) in externalApis: {
-    name: 'private-endpoint-${api.name}'
-    params: {
-      tags: tags
-      location: location
-      privateEndpointName: 'pe-${api.name}'
-      subnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId // Use the private endpoint subnet
-      targetResourceId: api.resourceId
-      groupIds: [api.type] // Use the type as group ID
-      zoneConfigs: [
-        {
-          name: api.dnsZoneName
-          privateDnsZoneId: dnsZones[api.dnsZoneName]
-        }
-      ]
-    }
-    dependsOn: [
-      dnsZoneSites
-      dnsZoneAca
-    ]
-  }
-]
 
 output project_connection_strings string[] = [
   for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_CONNECTION_STRING
 ]
 output project_names string[] = [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
+output FOUNDRY_NAME string = foundry.outputs.FOUNDRY_NAME
+output AZURE_OPENAI_CHAT_DEPLOYMENT_NAME string = 'gpt-5.2'
+output OPENAPI_URL string = first(filter(apiServices, api => api.name == 'weather-openapi')).?uri ?? ''

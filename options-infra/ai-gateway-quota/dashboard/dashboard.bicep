@@ -116,6 +116,52 @@ ApiManagementGatewayLogs
 | order by TimeGenerated desc
 '''
 
+var kqlRemainingQuota = '''
+ApiManagementGatewayLogs
+| where TimeGenerated >= startofmonth(now())
+| where ResponseHeaders has "x-quota-remaining-tokens"
+| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
+| extend QuotaLimit = tolong(extract(@'"x-quota-limit-tokens":"([^"]+)"', 1, tostring(ResponseHeaders)))
+| extend QuotaRemaining = tolong(extract(@'"x-quota-remaining-tokens":"([^"]+)"', 1, tostring(ResponseHeaders)))
+| where isnotempty(CallerName)
+| summarize arg_max(TimeGenerated, QuotaRemaining, QuotaLimit) by CallerName
+| extend QuotaUsed = QuotaLimit - QuotaRemaining
+| extend QuotaUsedPct = round(100.0 * QuotaUsed / QuotaLimit, 1)
+| project CallerName, QuotaLimit, QuotaUsed, QuotaRemaining, QuotaUsedPct
+| order by QuotaUsedPct desc
+'''
+
+var kqlSpilloverSummary = '''
+ApiManagementGatewayLogs
+| where TimeGenerated >= ago(7d)
+| where ResponseHeaders has "x-caller-name"
+| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
+| extend IsSpillover = extract(@'"x-spillover":"([^"]+)"', 1, tostring(ResponseHeaders))
+| where isnotempty(CallerName)
+| summarize
+    SpilloverCount  = countif(IsSpillover == "true"),
+    TotalRequests   = count(),
+    FirstSpillover  = minif(TimeGenerated, IsSpillover == "true"),
+    LastSpillover   = maxif(TimeGenerated, IsSpillover == "true")
+    by CallerName
+| where SpilloverCount > 0
+| extend SpilloverRate = round(100.0 * SpilloverCount / TotalRequests, 1)
+| project CallerName, SpilloverCount, TotalRequests, SpilloverRate, FirstSpillover, LastSpillover
+| order by SpilloverCount desc
+'''
+
+var kqlSpilloverOverTime = '''
+ApiManagementGatewayLogs
+| where TimeGenerated >= ago(7d)
+| where ResponseHeaders has "x-spillover"
+| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
+| extend IsSpillover = extract(@'"x-spillover":"([^"]+)"', 1, tostring(ResponseHeaders))
+| where isnotempty(CallerName)
+| summarize SpilloverCount = countif(IsSpillover == "true") by bin(TimeGenerated, 1h), CallerName
+| where SpilloverCount > 0
+| order by TimeGenerated asc
+'''
+
 var kqlMonthlyBudgetBurnDown = '''
 let callerLogs = ApiManagementGatewayLogs
 | where BackendRequestHeaders has "x-caller-name"
@@ -372,9 +418,100 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
               }
             }
           }
+          // Remaining Quota by Caller - Row 28, left
+          {
+            position: { x: 0, y: 28, colSpan: 8, rowSpan: 4 }
+            metadata: {
+              type: 'Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart'
+              inputs: [
+                { name: 'Scope', value: { resourceIds: [ logAnalyticsWorkspaceId ] }, isOptional: true }
+                { name: 'Version', value: '2.0', isOptional: true }
+                { name: 'TimeRange', value: 'P30D', isOptional: true }
+                { name: 'PartId', value: 'remaining-quota', isOptional: true }
+                { name: 'PartTitle', value: '💰 Remaining Monthly Quota by Caller', isOptional: true }
+                { name: 'PartSubTitle', value: 'Latest token budget remaining this month (% used)', isOptional: true }
+                { name: 'Query', value: kqlRemainingQuota, isOptional: true }
+                { name: 'ControlType', value: 'AnalyticsGrid', isOptional: true }
+                { name: 'resourceTypeMode', isOptional: true }
+                { name: 'ComponentId', isOptional: true }
+                { name: 'DashboardId', isOptional: true }
+                { name: 'DraftRequestParameters', isOptional: true }
+                { name: 'SpecificChart', isOptional: true }
+                { name: 'Dimensions', isOptional: true }
+                { name: 'LegendOptions', isOptional: true }
+                { name: 'IsQueryContainTimeRange', isOptional: true }
+              ]
+              settings: {}
+            }
+          }
+          // Spillover Events Summary - Row 28, right
+          {
+            position: { x: 8, y: 28, colSpan: 9, rowSpan: 4 }
+            metadata: {
+              type: 'Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart'
+              inputs: [
+                { name: 'Scope', value: { resourceIds: [ logAnalyticsWorkspaceId ] }, isOptional: true }
+                { name: 'Version', value: '2.0', isOptional: true }
+                { name: 'TimeRange', value: 'P7D', isOptional: true }
+                { name: 'PartId', value: 'spillover-summary', isOptional: true }
+                { name: 'PartTitle', value: '🔀 PTU→PAYG Spillover Events (Last 7 Days)', isOptional: true }
+                { name: 'PartSubTitle', value: 'Requests that spilled from PTU to PAYG due to capacity exhaustion', isOptional: true }
+                { name: 'Query', value: kqlSpilloverSummary, isOptional: true }
+                { name: 'ControlType', value: 'AnalyticsGrid', isOptional: true }
+                { name: 'resourceTypeMode', isOptional: true }
+                { name: 'ComponentId', isOptional: true }
+                { name: 'DashboardId', isOptional: true }
+                { name: 'DraftRequestParameters', isOptional: true }
+                { name: 'SpecificChart', isOptional: true }
+                { name: 'Dimensions', isOptional: true }
+                { name: 'LegendOptions', isOptional: true }
+                { name: 'IsQueryContainTimeRange', isOptional: true }
+              ]
+              settings: {}
+            }
+          }
+          // Spillover Over Time - Row 32, chart
+          {
+            position: { x: 0, y: 32, colSpan: 17, rowSpan: 5 }
+            metadata: {
+              type: 'Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart'
+              inputs: [
+                { name: 'Scope', value: { resourceIds: [ logAnalyticsWorkspaceId ] }, isOptional: true }
+                { name: 'Version', value: '2.0', isOptional: true }
+                { name: 'TimeRange', value: 'P7D', isOptional: true }
+                { name: 'PartId', value: 'spillover-over-time', isOptional: true }
+                { name: 'PartTitle', value: '📉 PTU→PAYG Spillover Over Time', isOptional: true }
+                { name: 'PartSubTitle', value: 'Hourly spillover event count by caller', isOptional: true }
+                { name: 'Query', value: kqlSpilloverOverTime, isOptional: true }
+                { name: 'ControlType', value: 'AnalyticsGrid', isOptional: true }
+                { name: 'resourceTypeMode', isOptional: true }
+                { name: 'ComponentId', isOptional: true }
+                { name: 'DashboardId', isOptional: true }
+                { name: 'DraftRequestParameters', isOptional: true }
+                { name: 'SpecificChart', isOptional: true }
+                { name: 'Dimensions', isOptional: true }
+                { name: 'LegendOptions', isOptional: true }
+                { name: 'IsQueryContainTimeRange', isOptional: true }
+              ]
+              settings: {
+                content: {
+                  Query: '${kqlSpilloverOverTime}\n'
+                  ControlType: 'FrameControlChart'
+                  SpecificChart: 'StackedColumn'
+                  Dimensions: {
+                    xAxis: { name: 'TimeGenerated', type: 'datetime' }
+                    yAxis: [ { name: 'SpilloverCount', type: 'long' } ]
+                    splitBy: [ { name: 'CallerName', type: 'string' } ]
+                    aggregation: 'Sum'
+                  }
+                  LegendOptions: { isEnabled: true, position: 'Bottom' }
+                }
+              }
+            }
+          }
           // Caller Tier Config Reference
           {
-            position: { x: 0, y: 28, colSpan: 17, rowSpan: 2 }
+            position: { x: 0, y: 37, colSpan: 17, rowSpan: 2 }
             metadata: {
               type: 'Extension/HubsExtension/PartType/MarkdownPart'
               inputs: []

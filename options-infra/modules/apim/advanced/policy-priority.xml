@@ -225,6 +225,14 @@
         <set-header name="x-backend-type" exists-action="override">
             <value>@((string)context.Variables["backend-type"])</value>
         </set-header>
+        <!-- x-spillover: "true" when request was intended for PTU but landed on PAYG due to capacity exhaustion -->
+        <set-header name="x-spillover" exists-action="override">
+            <value>@{
+                var routeTarget  = (string)context.Variables.GetValueOrDefault("route-target", "payg");
+                var backendType  = (string)context.Variables.GetValueOrDefault("backend-type", "payg");
+                return (routeTarget == "ptu" && backendType == "payg") ? "true" : "false";
+            }</value>
+        </set-header>
         <set-header name="x-backend-id" exists-action="override">
             <value>@(context.Backend?.Id ?? "unknown")</value>
         </set-header>

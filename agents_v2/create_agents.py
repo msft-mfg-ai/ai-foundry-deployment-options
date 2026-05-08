@@ -83,11 +83,11 @@ async def _create_agents_for_project(conn_string: str, spec_file: str | None):
 
             if not model_connection:
                 print(
-                    "⚠️  No APIM/ModelGateway connection found — skipping agent creation for this project."
+                    "⚠️  No APIM/ModelGateway connection found — creating agents directly against "
+                    f"the model deployment ({os.environ.get('AZURE_OPENAI_CHAT_DEPLOYMENT_NAME')})."
                 )
-                return
-
-            print(f"\n🔗 Using gateway connection: {model_connection}")
+            else:
+                print(f"\n🔗 Using gateway connection: {model_connection}")
 
             # --- agent-basic ---
             print("\n📝 Creating agent-basic...")
