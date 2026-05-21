@@ -3,12 +3,6 @@ using 'main.bicep'
 var projectsCountValue = readEnvironmentVariable('PROJECTS_COUNT', '')
 param projectsCount = empty(projectsCountValue) ? null : int(projectsCountValue)
 
-// Provide your existing VNet resource IDs below.
-// The agent subnet must be exclusively delegated to Microsoft.App/environments.
-param vnetResourceId = readEnvironmentVariable('VNET_RESOURCE_ID', '')
-param agentSubnetResourceId = readEnvironmentVariable('AGENT_SUBNET_RESOURCE_ID', '')
-param peSubnetResourceId = readEnvironmentVariable('PE_SUBNET_RESOURCE_ID', '')
-
 param apiServices = [
   {
     name: 'weather-mcp'

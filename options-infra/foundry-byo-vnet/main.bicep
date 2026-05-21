@@ -1,6 +1,6 @@
-// Deploys AI Foundry with two projects into an existing (BYO) VNet.
+// Deploys AI Foundry with two projects and a new VNet (BYO VNet injection).
 // No storage, AI Search, or Cosmos DB dependencies are created.
-// MCP tools are connected via private endpoints in the provided subnet.
+// MCP tools are connected via private endpoints in the VNet.
 targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
@@ -14,16 +14,18 @@ var tags = {
 import { apiType } from '../modules/apps/apps-private-link.bicep'
 param apiServices apiType[] = []
 
-@description('Resource ID of the existing VNet (used for DNS zone links and MCP private endpoints).')
-param vnetResourceId string
-
-@description('Resource ID of the existing agent subnet. Must be exclusively delegated to Microsoft.App/environments.')
-param agentSubnetResourceId string
-
-@description('Resource ID of the existing private endpoint subnet.')
-param peSubnetResourceId string
-
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
+
+// vnet doesn't have to be in the same RG as the AI Services
+// each foundry needs its own delegated subnet; projects inside one Foundry share the agent subnet
+module vnet '../modules/networking/vnet.bicep' = {
+  name: 'vnet'
+  params: {
+    tags: tags
+    location: location
+    vnetName: 'project-vnet-${resourceToken}'
+  }
+}
 
 module logAnalytics '../modules/monitor/loganalytics.bicep' = {
   name: 'log-analytics'
@@ -43,7 +45,7 @@ module foundry '../modules/ai/ai-foundry.bicep' = {
     managedIdentityResourceId: '' // Use System Assigned Identity
     name: 'ai-foundry-${resourceToken}'
     publicNetworkAccess: 'Enabled'
-    agentSubnetResourceId: agentSubnetResourceId
+    agentSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId
     deployments: [
       {
         name: 'gpt-5.2'
@@ -114,8 +116,8 @@ module mcp_apis '../modules/apps/apps-private-link.bicep' = {
   params: {
     tags: tags
     location: location
-    vnetResourceId: vnetResourceId
-    peSubnetResourceId: peSubnetResourceId
+    vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
+    peSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
     aiFoundryName: foundry.outputs.FOUNDRY_NAME
     externalApis: apiServices
   }
