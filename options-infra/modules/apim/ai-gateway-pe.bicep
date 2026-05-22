@@ -21,6 +21,12 @@ param apimPublicEnabled bool = false
 @allowed(['ApiKey', 'ProjectManagedIdentity'])
 param authType string = 'ApiKey'
 
+@description('Foundry-hosted Anthropic backend services (e.g. Claude models)')
+param anthropicServicesConfig aiServiceConfigType[] = []
+
+@description('Static Anthropic model list surfaced in Foundry connections')
+param anthropicStaticModels ModelType[] = []
+
 var connection_per_project = !empty(aiFoundryProjectNames)
 var subscriptions subscriptionType[] = connection_per_project
   ? map(aiFoundryProjectNames, (projectName) => {
@@ -44,6 +50,7 @@ module apim 'apim.bicep' = {
     appInsightsId: appInsightsId
     resourceSuffix: resourceToken
     aiServicesConfig: aiServicesConfig
+    anthropicServicesConfig: anthropicServicesConfig
     apimSku: 'Standardv2'
     virtualNetworkType: 'External'
     subnetResourceId: subnetResourceId
@@ -74,6 +81,7 @@ module apim_update 'apim.bicep' = if (!apimPublicEnabled) {
     appInsightsId: appInsightsId
     resourceSuffix: resourceToken
     aiServicesConfig: aiServicesConfig
+    anthropicServicesConfig: anthropicServicesConfig
     apimSku: 'Standardv2'
     virtualNetworkType: 'External'
     subnetResourceId: subnetResourceId
@@ -167,6 +175,46 @@ module public_mcps './public-mcps.bicep' = {
     apimAppInsightsLoggerId: apim.outputs.apimAppInsightsLoggerId
   }
 }
+
+// ----------------------------------------------------------
+// Anthropic connections — static only; Anthropic has no model-discovery endpoint.
+// deploymentInPath: 'false' because the Claude model is in the request body, not the URL path.
+// ----------------------------------------------------------
+
+module aiGatewayAnthropicConnectionStatic '../ai/connection-apim-gateway.bicep' = if (!connection_per_project && !empty(anthropicStaticModels) && !empty(anthropicServicesConfig)) {
+  name: 'apim-anthropic-connection-static'
+  params: {
+    aiFoundryName: aiFoundryName
+    connectionName: 'apim-${resourceToken}-anthropic-static'
+    apimResourceId: apim.outputs.apimResourceId
+    apiName: apim.outputs.anthropicApiName
+    apimSubscriptionName: authType == 'ApiKey' ? first(apim.outputs.subscriptions).name : null
+    isSharedToAll: true
+    staticModels: anthropicStaticModels
+    deploymentInPath: 'false'
+    authType: authType
+  }
+}
+
+module aiGatewayAnthropicProjectConnectionStatic '../ai/connection-apim-gateway.bicep' = [
+  for projectName in aiFoundryProjectNames: if (connection_per_project && !empty(anthropicStaticModels) && !empty(anthropicServicesConfig)) {
+    name: 'apim-anthropic-connection-static-${projectName}'
+    params: {
+      aiFoundryName: aiFoundryName
+      aiFoundryProjectName: projectName
+      connectionName: 'apim-${resourceToken}-anthropic-static-for-${projectName}'
+      apimResourceId: apim.outputs.apimResourceId
+      apiName: apim.outputs.anthropicApiName
+      apimSubscriptionName: authType == 'ApiKey'
+        ? first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).name
+        : null
+      isSharedToAll: false
+      staticModels: anthropicStaticModels
+      deploymentInPath: 'false'
+      authType: authType
+    }
+  }
+]
 
 // module modelGatewayConnectionStatic '../ai/connection-modelgateway-static.bicep' = if (!empty(staticModels)) {
 //   name: 'model-gateway-connection-static'

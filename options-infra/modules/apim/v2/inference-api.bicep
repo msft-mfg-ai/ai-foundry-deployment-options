@@ -48,6 +48,7 @@ param inferenceBackendPoolName string = 'inference-backend-pool-${inferenceAPITy
   'AzureOpenAI'
   'AzureAI'
   'OpenAI'
+  'Anthropic'
   'Other'
 ])
 param inferenceAPIType string = 'AzureOpenAI'
@@ -111,8 +112,9 @@ var endpointPaths = {
   AzureOpenAI: 'openai'
   AzureAI: 'models'
   OpenAI: ''
+  Anthropic: 'anthropic'
 }
-var endpointPath = endpointPaths[inferenceAPIType]
+var endpointPath = endpointPaths[?inferenceAPIType] ?? ''
 
 // var apiDefinitions = {
 //   AzureOpenAI: string(loadJsonContent('./specs/AIFoundryOpenAI.json'))
@@ -124,14 +126,16 @@ var apiFormats = {
   AzureOpenAI: 'openapi+json'
   AzureAI: 'openapi+json'
   OpenAI: 'openapi+json-link'
+  Anthropic: 'openapi+json'
   Other: 'openapi+json'
 }
 
 var apiDefinition = inferenceAPIType == 'AzureOpenAI' ? string(loadJsonContent('./specs/AIFoundryOpenAI.json'))
   : inferenceAPIType == 'AzureAI' ? string(loadJsonContent('./specs/AIFoundryOpenAI.json'))
+  : inferenceAPIType == 'Anthropic' ? string(loadJsonContent('./specs/PassThrough.json'))
   : inferenceAPIType == 'Other' ? string(loadJsonContent('./specs/PassThrough.json'))
   : 'https://raw.githubusercontent.com/msft-mfg-ai/ai-foundry-config-testing/refs/heads/ai-gateway/options-infra/modules/apim/v2/specs/azure-v1-v1-generated.json'
-var apiFormat = apiFormats[inferenceAPIType]
+var apiFormat = apiFormats[?inferenceAPIType] ?? 'openapi+json'
 
 // https://learn.microsoft.com/azure/templates/microsoft.apimanagement/service/apis
 resource api 'Microsoft.ApiManagement/service/apis@2024-06-01-preview' = {

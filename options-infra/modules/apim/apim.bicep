@@ -14,6 +14,9 @@ param gatewayAuthenticationType string = 'ApiKey'
 @description('Configuration array for AI Services')
 param aiServicesConfig aiServiceConfigType[] = []
 
+@description('Configuration array for Anthropic AI Services (Foundry-hosted Claude models)')
+param anthropicServicesConfig aiServiceConfigType[] = []
+
 @description('The suffix to append to the API Management instance name. Defaults to a unique string based on subscription and resource group IDs.')
 param resourceSuffix string = uniqueString(subscription().id, resourceGroup().id)
 
@@ -97,6 +100,12 @@ var updatedJwtInferencePolicyXml = replace(
   subscription().tenantId
 )
 
+var updatedAnthropicPolicyXml = replace(
+  loadTextContent('anthropic-policy.xml'),
+  '{retry-count}',
+  string(max(length(anthropicServicesConfig) - 1, 1))
+)
+
 module inference_api 'v2/inference-api.bicep' = {
   name: 'inference-api-deployment'
   params: {
@@ -138,11 +147,38 @@ module openAiv2Api 'v2/inference-api.bicep' = if (apimSku == 'Premium' || apimSk
   }
 }
 
+// Anthropic API — Foundry-hosted Claude models proxied through APIM.
+// Uses PassThrough spec and a separate policy (no OpenAI token metrics).
+// Deployed as a separate API at inference/anthropic so backends can be grouped independently.
+// Depends on inference_api to avoid race condition on the service-level inference tag.
+module anthropic_api 'v2/inference-api.bicep' = if (!empty(anthropicServicesConfig)) {
+  name: 'anthropic-api-deployment'
+  dependsOn: [inference_api]
+  params: {
+    policyXml: updatedAnthropicPolicyXml
+    apiManagementName: apim.outputs.name
+    apimLoggerId: apim.outputs.loggerId
+    aiServicesConfig: anthropicServicesConfig
+    inferenceAPIType: 'Anthropic'
+    inferenceAPIPath: 'inference'
+    inferenceAPIDescription: 'Anthropic Claude API for AI Gateway'
+    inferenceAPIDisplayName: 'Anthropic API'
+    inferenceAPIName: 'anthropic-api'
+    configureCircuitBreaker: true
+    resourceSuffix: resourceSuffix
+    enableModelDiscovery: false
+    appInsightsInstrumentationKey: appInsightsInstrumentationKey
+    appInsightsId: appInsightsId
+  }
+}
+
 output apimResourceId string = apim.outputs.id
 output apimName string = apim.outputs.name
 output inferenceApiId string = inference_api.outputs.apiId
 output inferenceApiName string = inference_api.outputs.apiName
 output inferenceApiPath string = inference_api.outputs.apiPath
+output anthropicApiName string = !empty(anthropicServicesConfig) ? anthropic_api!.outputs.apiName : ''
+output anthropicApiPath string = !empty(anthropicServicesConfig) ? anthropic_api!.outputs.apiPath : ''
 output subscriptions array = apim.outputs.apimSubscriptions
 output apimPrincipalId string = apim.outputs.principalId
 output apimAppInsightsLoggerId string = apim.outputs.appInsightsLoggerId

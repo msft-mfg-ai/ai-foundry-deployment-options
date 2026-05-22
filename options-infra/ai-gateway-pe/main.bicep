@@ -16,6 +16,13 @@ param projectsCount int = 3
 param apiServices apiType[] = [] // Array of MCP service definitions
 param apimPublicEnabled bool = false
 
+@description('Base endpoint of the Foundry account hosting Claude models (e.g. https://<name>.services.ai.azure.com). Leave empty to skip Anthropic support.')
+param anthropicApiBase string = ''
+@description('Resource ID of the Foundry account hosting Claude models. Leave empty to skip Anthropic support.')
+param anthropicResourceId string = ''
+@description('Location of the Foundry account hosting Claude models.')
+param anthropicLocation string = location
+
 var tags = {
   'created-by': 'option-ai-gateway'
   'hidden-title': 'Foundry - APIM v2 Standard with PE'
@@ -26,11 +33,46 @@ var valid_config = empty(openAiApiBase) || empty(openAiResourceId)
   ? fail('OPENAI_API_BASE and OPENAI_RESOURCE_ID environment variables must be set.')
   : true
 
+var valid_anthropic_config = (!empty(anthropicApiBase) && empty(anthropicResourceId)) || (empty(anthropicApiBase) && !empty(anthropicResourceId))
+  ? fail('ANTHROPIC_API_BASE and ANTHROPIC_RESOURCE_ID must both be set or both be empty.')
+  : true
+
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
 var openAiParts = split(openAiResourceId, '/')
 var openAiName = last(openAiParts)
 var openAiSubscriptionId = openAiParts[2]
 var openAiResourceGroupName = openAiParts[4]
+
+var anthropicParts = split(empty(anthropicResourceId) ? '/subscriptions/x/resourceGroups/x/providers/x/x/x' : anthropicResourceId, '/')
+var anthropicName = empty(anthropicResourceId) ? '' : last(anthropicParts)
+var anthropicSubscriptionId = empty(anthropicResourceId) ? '' : anthropicParts[2]
+var anthropicResourceGroupName = empty(anthropicResourceId) ? '' : anthropicParts[4]
+
+var anthropicServicesConfig = !empty(anthropicApiBase)
+  ? [
+      {
+        name: anthropicName
+        resourceId: anthropicResourceId
+        endpoint: anthropicApiBase
+        location: anthropicLocation
+      }
+    ]
+  : []
+
+var anthropicStaticModels = !empty(anthropicApiBase)
+  ? [
+      {
+        name: 'claude-opus-4-6'
+        properties: {
+          model: {
+            name: 'claude-opus-4-6'
+            version: '20250514'
+            format: 'Anthropic'
+          }
+        }
+      }
+    ]
+  : []
 
 module foundry_identity '../modules/iam/identity.bicep' = {
   name: 'foundry-identity-deployment'
@@ -78,6 +120,21 @@ module openai_private_endpoint '../modules/networking/ai-pe-dns.bicep' = {
     aiAccountSubscriptionId: openAiSubscriptionId
     peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
     resourceToken: resourceToken
+    existingDnsZones: ai_dependencies.outputs.DNS_ZONES
+  }
+}
+
+// Private endpoint for the Anthropic (Claude) Foundry account — only when configured
+module anthropic_private_endpoint '../modules/networking/ai-pe-dns.bicep' = if (!empty(anthropicResourceId)) {
+  name: 'anthropic-private-endpoint-and-dns-deployment'
+  params: {
+    tags: tags
+    location: location
+    aiAccountName: anthropicName
+    aiAccountNameResourceGroup: anthropicResourceGroupName
+    aiAccountSubscriptionId: anthropicSubscriptionId
+    peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+    resourceToken: '${resourceToken}-anth'
     existingDnsZones: ai_dependencies.outputs.DNS_ZONES
   }
 }
@@ -222,6 +279,8 @@ module ai_gateway '../modules/apim/ai-gateway-pe.bicep' = {
         location: openAiLocation
       }
     ]
+    anthropicServicesConfig: anthropicServicesConfig
+    anthropicStaticModels: anthropicStaticModels
   }
 }
 
@@ -230,6 +289,16 @@ module apim_role_assignment '../modules/iam/role-assignment-cognitiveServices.bi
   scope: resourceGroup(openAiSubscriptionId, openAiResourceGroupName)
   params: {
     accountName: openAiName
+    principalId: ai_gateway.outputs.apimPrincipalId
+    roleName: 'Cognitive Services User'
+  }
+}
+
+module apim_anthropic_role_assignment '../modules/iam/role-assignment-cognitiveServices.bicep' = if (!empty(anthropicResourceId)) {
+  name: 'apim-anthropic-role-assignment-deployment-${resourceToken}'
+  scope: resourceGroup(anthropicSubscriptionId, anthropicResourceGroupName)
+  params: {
+    accountName: anthropicName
     principalId: ai_gateway.outputs.apimPrincipalId
     roleName: 'Cognitive Services User'
   }

@@ -1,0 +1,51 @@
+<policies>
+    <inbound>
+        <base />
+        <set-header name="x-caller-name" exists-action="override">
+            <value>@((string)context.Subscription.Id)</value>
+        </set-header>
+        <cors allow-credentials="true">
+            <allowed-origins>
+                <origin>https://ai.azure.com</origin>
+            </allowed-origins>
+            <allowed-methods preflight-result-max-age="300">
+                <method>*</method>
+            </allowed-methods>
+            <allowed-headers>
+                <header>*</header>
+            </allowed-headers>
+            <expose-headers>
+                <header>*</header>
+            </expose-headers>
+        </cors>
+        <!-- Authenticate to Foundry-hosted Anthropic with API Management's managed identity -->
+        <authentication-managed-identity resource="https://cognitiveservices.azure.com" output-token-variable-name="managed-id-access-token" ignore-error="false" />
+        <set-header name="Authorization" exists-action="override">
+            <value>@("Bearer " + (string)context.Variables["managed-id-access-token"])</value>
+        </set-header>
+        <!-- Anthropic requires this header; allow clients to supply a specific version -->
+        <set-header name="anthropic-version" exists-action="skip">
+            <value>2023-06-01</value>
+        </set-header>
+        <set-backend-service backend-id="{backend-id}" />
+    </inbound>
+    <backend>
+        <!-- Apply load-balancing and retry across the backend pool -->
+        <retry count="{retry-count}" interval="0" first-fast-retry="true" condition="@(context.Response.StatusCode == 429 || (context.Response.StatusCode == 503 && !context.Response.StatusReason.Contains(&quot;Backend pool&quot;) && !context.Response.StatusReason.Contains(&quot;is temporarily unavailable&quot;)))">
+            <forward-request buffer-request-body="true" />
+        </retry>
+    </backend>
+    <outbound>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+        <choose>
+            <when condition="@(context.Response.StatusCode == 503)">
+                <return-response>
+                    <set-status code="503" reason="Service Unavailable" />
+                </return-response>
+            </when>
+        </choose>
+    </on-error>
+</policies>
