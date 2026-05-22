@@ -123,7 +123,7 @@ resource foundry_project 'Microsoft.CognitiveServices/accounts/projects@2025-04-
       isSharedToAll: false
       //isDefault: true  // not valid property
       credentials: {
-        key: appInsights!.properties.InstrumentationKey
+        key: appInsights!.properties.ConnectionString
       }
       metadata: {
         ApiType: 'Azure'
@@ -178,7 +178,9 @@ resource accountCapabilityHost 'Microsoft.CognitiveServices/accounts/capabilityH
 }
 
 resource project_connection_cosmosdb_account 'Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview' = if (!empty(cosmosDBName)) {
-  name: '${cosmosDBName}-for-${project_name}'
+  // Name must always produce a valid (non-empty, non-leading-hyphen) value because ARM validates
+  // resource names even when condition evaluates to false.
+  name: empty(cosmosDBName) ? 'not-used-cosmosdb' : '${cosmosDBName}-for-${project_name}'
   parent: foundry_project
   properties: {
     category: 'CosmosDB'
@@ -193,7 +195,7 @@ resource project_connection_cosmosdb_account 'Microsoft.CognitiveServices/accoun
 }
 
 resource project_connection_azure_storage 'Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview' = if (!empty(azureStorageName)) {
-  name: '${azureStorageName}-for-${project_name}'
+  name: empty(azureStorageName) ? 'not-used-storage' : '${azureStorageName}-for-${project_name}'
   parent: foundry_project
   properties: {
     category: 'AzureStorageAccount'
@@ -208,7 +210,7 @@ resource project_connection_azure_storage 'Microsoft.CognitiveServices/accounts/
 }
 
 resource project_connection_azureai_search 'Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview' = if (!empty(aiSearchName)) {
-  name: '${aiSearchName}-for-${project_name}'
+  name: empty(aiSearchName) ? 'not-used-ai-search' : '${aiSearchName}-for-${project_name}'
   parent: foundry_project
   properties: {
     category: 'CognitiveSearch'
@@ -228,9 +230,9 @@ output FOUNDRY_PROJECT_CONNECTION_STRING string = 'https://${foundry_name}.servi
 output FOUNDRY_CAPABILITYHOST_NAME string? = accountCapabilityHost.?name
 
 // return the BYO connection names
-output FOUNDRY_PROJECT_CONNECTION_NAME_COSMOSDB string = empty(cosmosDBName) ? '' : project_connection_cosmosdb_account.name
-output FOUNDRY_PROJECT_CONNECTION_NAME_STORAGE string = empty(azureStorageName) ? '' : project_connection_azure_storage.name
-output FOUNDRY_PROJECT_CONNECTION_NAME_AI_SEARCH string = empty(aiSearchName) ? '' : project_connection_azureai_search.name
+output FOUNDRY_PROJECT_CONNECTION_NAME_COSMOSDB string = empty(cosmosDBName) ? '' : project_connection_cosmosdb_account.?name ?? ''
+output FOUNDRY_PROJECT_CONNECTION_NAME_STORAGE string = empty(azureStorageName) ? '' : project_connection_azure_storage.?name ?? ''
+output FOUNDRY_PROJECT_CONNECTION_NAME_AI_SEARCH string = empty(aiSearchName) ? '' : project_connection_azureai_search.?name ?? ''
 output FOUNDRY_PROJECT_CONNECTION_NAME_AI string = empty(existingAiResourceId)
   ? ''
   : usingFoundryAiConnection ? byoAiFoundryConnectionName : byoAiProjectConnectionName
