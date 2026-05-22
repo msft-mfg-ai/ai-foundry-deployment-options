@@ -23,7 +23,7 @@ resource connection 'Microsoft.CognitiveServices/accounts/connections@2025-06-01
     isSharedToAll: true
     //isDefault: true  // not valid property
     credentials: {
-      key: appInsights.properties.InstrumentationKey
+      key: appInsights.properties.ConnectionString
     }
     metadata: {
       ApiType: 'Azure'

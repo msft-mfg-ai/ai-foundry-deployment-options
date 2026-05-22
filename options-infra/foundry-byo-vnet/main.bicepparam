@@ -21,6 +21,14 @@ param apiServices = [
     apiType: 'mcp'
   }
   {
+    name: 'server-mcp'
+    dnsZoneName: 'privatelink.westus.azurecontainerapps.io'
+    type: 'managedEnvironments'
+    resourceId: '/subscriptions/0721e282-2773-4021-af16-e00641ed5e36/resourceGroups/foundry-landing-zone-westus/providers/Microsoft.App/managedEnvironments/acaqczp34j2qg7pk'
+    uri: 'https://mcp-server-qczp34j2qg7pk.ashyocean-7ea49412.westus.azurecontainerapps.io/mcp'
+    apiType: 'mcp'
+  }
+  {
     name: 'weather-openapi'
     dnsZoneName: 'privatelink.westus.azurecontainerapps.io'
     type: 'managedEnvironments'

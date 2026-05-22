@@ -4,7 +4,7 @@
 targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
-param projectsCount int = 2
+param projectsCount int = 1
 
 var tags = {
   'created-by': 'foundry-byo-vnet'
@@ -18,7 +18,7 @@ var resourceToken = toLower(uniqueString(resourceGroup().id, location))
 
 // vnet doesn't have to be in the same RG as the AI Services
 // each foundry needs its own delegated subnet; projects inside one Foundry share the agent subnet
-module vnet '../modules/networking/vnet.bicep' = {
+module vnet '../modules/networking/vnet-simple.bicep' = {
   name: 'vnet'
   params: {
     tags: tags
@@ -90,7 +90,7 @@ module projects '../modules/ai/ai-project.bicep' = [
       managedIdentityResourceId: project_identities[i - 1].outputs.MANAGED_IDENTITY_RESOURCE_ID
       appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
       // Account-level caphost is created automatically with VNet injection; only create once
-      createAccountCapabilityHost: i == 1
+      createAccountCapabilityHost: false
     }
   }
 ]
@@ -103,10 +103,6 @@ module caphosts '../modules/ai/add-project-capability-host.bicep' = [
     params: {
       accountName: foundry.outputs.FOUNDRY_NAME
       projectName: projects[i - 1].outputs.FOUNDRY_PROJECT_NAME
-      cosmosDBConnection: projects[i - 1].outputs.FOUNDRY_PROJECT_CONNECTION_NAME_COSMOSDB
-      azureStorageConnection: projects[i - 1].outputs.FOUNDRY_PROJECT_CONNECTION_NAME_STORAGE
-      aiSearchConnection: projects[i - 1].outputs.FOUNDRY_PROJECT_CONNECTION_NAME_AI_SEARCH
-      aiFoundryConnectionName: projects[i - 1].outputs.FOUNDRY_PROJECT_CONNECTION_NAME_AI
     }
   }
 ]
