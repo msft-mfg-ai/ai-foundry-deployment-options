@@ -1,0 +1,50 @@
+# deploying using AZD because https://github.com/Azure/azure-cli/pull/31990
+name: foundry-byo-vnet
+
+infra:
+  provider: bicep
+  path: .
+  module: main
+
+hooks:
+  postprovision:
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host "=========================================="
+        Write-Host "Creating agents"
+        Write-Host "=========================================="
+
+        Push-Location ..\..\agents_v2
+        uv sync
+
+        $env:OPENAPI_SPEC_FILE = "weather.json"
+        $env:OPENAPI_SERVICE_URL = "$env:OPENAPI_URL"
+        uv run python create_agents.py
+
+        Pop-Location
+
+        Write-Host ""
+        Write-Host "=========================================="
+        Write-Host "All agents created!"
+        Write-Host "=========================================="
+      interactive: true
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        echo "=========================================="
+        echo "Creating agents"
+        echo "=========================================="
+
+        cd ../../agents_v2
+        uv sync
+
+        OPENAPI_SPEC_FILE=weather.json OPENAPI_SERVICE_URL="${OPENAPI_URL}/weather-openapi" uv run python create_agents.py
+
+        echo ""
+        echo "=========================================="
+        echo "All agents created!"
+        echo "=========================================="
+      interactive: true
+      continueOnError: false

@@ -142,3 +142,24 @@ resource mcpTools 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-p
     }
   }
 ]
+
+// Create the connection with ApiKey authentication
+resource mcpToolsDirect 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-preview' = [
+  for (api, index) in externalApis: if (api.apiType == 'mcp' && !empty(aiFoundryName) && empty(apimGatewayUrl)) {
+    name: 'MCP-${api.name}'
+    parent: aiFoundry
+    properties: {
+      category: 'RemoteTool'
+      group: 'GenericProtocol'
+      target: api.uri
+      authType: 'None'
+      isSharedToAll: true
+      // credentials: {
+      //   key: apimSubscription.listSecrets(apimSubscription.apiVersion).primaryKey
+      // }
+      metadata: {
+        type: 'custom_MCP'
+      }
+    }
+  }
+]

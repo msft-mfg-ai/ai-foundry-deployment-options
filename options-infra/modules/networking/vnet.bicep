@@ -63,7 +63,32 @@ var is_vnet_address_prefix_valid = int(split(vnetAddress, '/')[1]) <= 21
   ? true
   : fail('VNet address prefix must be /21 or larger (e.g., /16, /20)')
 
-var defaultVnetAddressPrefix = '192.168.0.0/20'
+// Regions where Azure AI Foundry Agents supports Class A (10.0.0.0/8) VNet address space.
+// Other regions must use Class B (172.16.0.0/12) or Class C (192.168.0.0/16) ranges.
+// West Europe is included as an additional supported region beyond the official Class A list.
+var classASupportedLocations = [
+  'australiaeast'
+  'brazilsouth'
+  'canadaeast'
+  'eastus'
+  'eastus2'
+  'francecentral'
+  'germanywestcentral'
+  'italynorth'
+  'japaneast'
+  'southafricanorth'
+  'southcentralus'
+  'southindia'
+  'spaincentral'
+  'swedencentral'
+  'uaenorth'
+  'uksouth'
+  'westus'
+  'westus3'
+  'westeurope'
+]
+var isClassASupported = contains(classASupportedLocations, toLower(replace(location, ' ', '')))
+var defaultVnetAddressPrefix = isClassASupported ? '10.0.0.0/20' : '192.168.0.0/20'
 var vnetAddress = empty(vnetAddressPrefix) ? defaultVnetAddressPrefix : vnetAddressPrefix
 var agentSubnet = empty(agentSubnetPrefix) ? cidrSubnet(vnetAddress, 24, 0) : agentSubnetPrefix
 var peSubnet = empty(peSubnetPrefix) ? cidrSubnet(vnetAddress, 24, 1) : peSubnetPrefix
@@ -89,7 +114,7 @@ var extraAgentSubnetObjects = [
   }
 ]
 
-module networkSecurityGroup 'br/public:avm/res/network/network-security-group:0.5.2' = {
+module networkSecurityGroup 'br/public:avm/res/network/network-security-group:0.5.3' = {
   name: 'networkSecurityGroupDeployment'
   params: {
     name: 'agent-nsg'
@@ -98,7 +123,7 @@ module networkSecurityGroup 'br/public:avm/res/network/network-security-group:0.
   }
 }
 
-module apimv2SecurityGroup 'br/public:avm/res/network/network-security-group:0.5.2' = {
+module apimv2SecurityGroup 'br/public:avm/res/network/network-security-group:0.5.3' = {
   name: 'apimv2SecurityGroupDeployment'
   params: {
     name: 'apim-v2-nsg'
@@ -153,7 +178,7 @@ module apimSecurityGroup 'apim-nsg.bicep' = {
   }
 }
 
-module virtualNetwork 'br/public:avm/res/network/virtual-network:0.7.2' = {
+module virtualNetwork 'br/public:avm/res/network/virtual-network:0.9.0' = {
   name: '${vnetName}-virtual-network-deployment'
   params: {
     name: vnetName
