@@ -2,7 +2,7 @@
     <inbound>
         <base />
         <set-header name="x-caller-name" exists-action="override">
-            <value>@((string)context.Subscription.Id)</value>
+            <value>@(context.Subscription?.Id ?? "anonymous")</value>
         </set-header>
         <cors allow-credentials="true">
             <allowed-origins>
@@ -18,15 +18,13 @@
                 <header>*</header>
             </expose-headers>
         </cors>
-        <!-- Authenticate to Foundry-hosted Anthropic with API Management's managed identity -->
-        <authentication-managed-identity resource="https://cognitiveservices.azure.com" output-token-variable-name="managed-id-access-token" ignore-error="false" />
-        <set-header name="Authorization" exists-action="override">
-            <value>@("Bearer " + (string)context.Variables["managed-id-access-token"])</value>
-        </set-header>
-        <!-- Anthropic requires this header; allow clients to supply a specific version -->
+        <!-- anthropic-version is required by all Anthropic endpoints; clients may override -->
         <set-header name="anthropic-version" exists-action="skip">
             <value>2023-06-01</value>
         </set-header>
+        <!-- Remove any client-supplied auth headers; auth is handled by the backend credential (api-key) -->
+        <set-header name="Authorization" exists-action="delete" />
+        <set-header name="x-api-key" exists-action="delete" />
         <set-backend-service backend-id="{backend-id}" />
     </inbound>
     <backend>

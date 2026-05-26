@@ -1,0 +1,15 @@
+name: ai-gateway-anthropic
+
+infra:
+  provider: bicep
+  path: .
+  module: main
+
+hooks:
+  postprovision:
+    shell: sh
+    run: |
+      echo "Provisioning complete!"
+      echo "📍 Foundry Name: ${FOUNDRY_NAME}"
+      echo "🤖 Project Connections: ${FOUNDRY_PROJECTS_CONNECTION_STRINGS}"
+      echo "🌐 Anthropic Inference URL: ${ANTHROPIC_INFERENCE_URL}"

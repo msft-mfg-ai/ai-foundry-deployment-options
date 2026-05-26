@@ -17,6 +17,10 @@ param aiServicesConfig aiServiceConfigType[] = []
 @description('Configuration array for Anthropic AI Services (Foundry-hosted Claude models)')
 param anthropicServicesConfig aiServiceConfigType[] = []
 
+@description('API key for the Anthropic Foundry endpoint. Use for cross-tenant endpoints where managed identity is not available.')
+@secure()
+param anthropicApiKey string = ''
+
 @description('The suffix to append to the API Management instance name. Defaults to a unique string based on subscription and resource group IDs.')
 param resourceSuffix string = uniqueString(subscription().id, resourceGroup().id)
 
@@ -106,7 +110,19 @@ var updatedAnthropicPolicyXml = replace(
   string(max(length(anthropicServicesConfig) - 1, 1))
 )
 
-module inference_api 'v2/inference-api.bicep' = {
+// Backend ID for the Anthropic compat layer — matches the naming convention in inference-api.bicep.
+// Single backend: "<name>-Anthropic-backend"; pool: "anthropic-api-backend-pool".
+var anthropicCompatBackendId = length(anthropicServicesConfig) > 1
+  ? 'anthropic-api-backend-pool'
+  : !empty(anthropicServicesConfig) ? '${anthropicServicesConfig[0].name}-Anthropic-backend' : ''
+
+var updatedAnthropicCompatPolicyXml = replace(
+  loadTextContent('anthropic-openai-compat-policy.xml'),
+  '{backend-id}',
+  anthropicCompatBackendId
+)
+
+module inference_api 'v2/inference-api.bicep' = if (!empty(aiServicesConfig)) {
   name: 'inference-api-deployment'
   params: {
     policyXml: gatewayAuthenticationType == 'ProjectManagedIdentity' ? updatedJwtInferencePolicyXml : updatedInferencePolicyXml
@@ -126,7 +142,7 @@ module inference_api 'v2/inference-api.bicep' = {
 // OpenAI v1 API has more than 100 Operations and requires Premium or Standardv2 SKU
 // https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-subscription-service-limits?toc=%2Fazure%2Fapi-management%2Ftoc.json&bc=%2Fazure%2Fapi-management%2Fbreadcrumb%2Ftoc.json#limits---api-management-v2-tiers
 // Depends on inference_api to avoid race condition creating duplicate APIM service-level tags
-module openAiv2Api 'v2/inference-api.bicep' = if (apimSku == 'Premium' || apimSku == 'Standardv2') {
+module openAiv2Api 'v2/inference-api.bicep' = if (!empty(aiServicesConfig) && (apimSku == 'Premium' || apimSku == 'Standardv2')) {
   name: 'openai-v2-api-deployment'
   dependsOn: [inference_api]
   params: {
@@ -167,6 +183,22 @@ module anthropic_api 'v2/inference-api.bicep' = if (!empty(anthropicServicesConf
     configureCircuitBreaker: true
     resourceSuffix: resourceSuffix
     enableModelDiscovery: false
+    backendApiKey: anthropicApiKey
+    appInsightsInstrumentationKey: appInsightsInstrumentationKey
+    appInsightsId: appInsightsId
+  }
+}
+
+// OpenAI-compatible Anthropic API — accepts OpenAI Chat Completions requests and translates
+// them to Anthropic Messages format (and back). Reuses the Anthropic backend created above.
+// Useful for OpenAI SDK clients that cannot be changed to use the Anthropic SDK.
+module openai_compat_api 'anthropic-openai-compat-api.bicep' = if (!empty(anthropicServicesConfig)) {
+  name: 'anthropic-openai-compat-api-deployment'
+  dependsOn: [anthropic_api] // ensure Anthropic backends exist before policy references them
+  params: {
+    apiManagementName: apim.outputs.name
+    policyXml: updatedAnthropicCompatPolicyXml
+    apimLoggerId: apim.outputs.loggerId
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
     appInsightsId: appInsightsId
   }
@@ -174,15 +206,17 @@ module anthropic_api 'v2/inference-api.bicep' = if (!empty(anthropicServicesConf
 
 output apimResourceId string = apim.outputs.id
 output apimName string = apim.outputs.name
-output inferenceApiId string = inference_api.outputs.apiId
-output inferenceApiName string = inference_api.outputs.apiName
-output inferenceApiPath string = inference_api.outputs.apiPath
+output inferenceApiId string = !empty(aiServicesConfig) ? inference_api!.outputs.apiId : ''
+output inferenceApiName string = !empty(aiServicesConfig) ? inference_api!.outputs.apiName : ''
+output inferenceApiPath string = !empty(aiServicesConfig) ? inference_api!.outputs.apiPath : ''
 output anthropicApiName string = !empty(anthropicServicesConfig) ? anthropic_api!.outputs.apiName : ''
 output anthropicApiPath string = !empty(anthropicServicesConfig) ? anthropic_api!.outputs.apiPath : ''
+output anthropicCompatApiName string = !empty(anthropicServicesConfig) ? openai_compat_api!.outputs.apiName : ''
+output anthropicCompatApiPath string = !empty(anthropicServicesConfig) ? openai_compat_api!.outputs.apiPath : ''
 output subscriptions array = apim.outputs.apimSubscriptions
 output apimPrincipalId string = apim.outputs.principalId
 output apimAppInsightsLoggerId string = apim.outputs.appInsightsLoggerId
 output apimPrivateIp string = apim.outputs.apimPrivateIp
 output apimPublicIp string = apim.outputs.apimPublicIp
 output apimGatewayUrl string = apim.outputs.gatewayUrl
-output apiUrl string = '${apim.outputs.gatewayUrl}/${inference_api.outputs.apiPath}'
+output apiUrl string = !empty(aiServicesConfig) ? '${apim.outputs.gatewayUrl}/${inference_api!.outputs.apiPath}' : apim.outputs.gatewayUrl

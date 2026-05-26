@@ -13,15 +13,6 @@ param apimPublicEnabled = toLower(apimPublicEnabledValue) == 'true' ? true : fal
 var projectsCountValue = readEnvironmentVariable('PROJECTS_COUNT','')
 param projectsCount = empty(projectsCountValue) ? null : int(projectsCountValue)
 
-var anthropicApiBaseValue = readEnvironmentVariable('ANTHROPIC_API_BASE', '')
-param anthropicApiBase = anthropicApiBaseValue
-
-var anthropicResourceIdValue = readEnvironmentVariable('ANTHROPIC_RESOURCE_ID', '')
-param anthropicResourceId = anthropicResourceIdValue
-
-var anthropicLocationValue = readEnvironmentVariable('ANTHROPIC_LOCATION', '')
-param anthropicLocation = empty(anthropicLocationValue) ? null : anthropicLocationValue
-
 param apiServices = [
   {
     name: 'weather-mcp'

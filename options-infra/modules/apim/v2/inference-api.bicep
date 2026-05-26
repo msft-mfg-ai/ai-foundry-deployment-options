@@ -62,6 +62,13 @@ param configureCircuitBreaker bool = false
 @description('Enable dynamic model discovery via ARM API. When true, adds /deployments operations for Foundry Agents.')
 param enableModelDiscovery bool = false
 
+@description('API key to include as a static backend credential header. Use for cross-tenant endpoints where managed identity is not available. Leave empty to use managed identity only.')
+@secure()
+param backendApiKey string = ''
+
+@description('Require a valid APIM subscription key on every request. Set to true to enforce subscription key validation.')
+param requireSubscriptionKey bool = true
+
 // ------------------
 //    TYPE DEFINITIONS
 // ------------------
@@ -122,19 +129,21 @@ var endpointPath = endpointPaths[?inferenceAPIType] ?? ''
 //   OpenAI: 'https://raw.githubusercontent.com/msft-mfg-ai/ai-foundry-config-testing/refs/heads/ai-gateway/options-infra/modules/apim/v2/specs/azure-v1-v1-generated.json'
 //   Other: string(loadJsonContent('./specs/PassThrough.json'))
 // }
+var specsBaseUrl = 'https://raw.githubusercontent.com/msft-mfg-ai/ai-foundry-config-testing/refs/heads/main/options-infra/modules/apim/v2/specs'
 var apiFormats = {
-  AzureOpenAI: 'openapi+json'
-  AzureAI: 'openapi+json'
+  AzureOpenAI: 'openapi+json-link'
+  AzureAI: 'openapi+json-link'
   OpenAI: 'openapi+json-link'
   Anthropic: 'openapi+json'
   Other: 'openapi+json'
 }
 
-var apiDefinition = inferenceAPIType == 'AzureOpenAI' ? string(loadJsonContent('./specs/AIFoundryOpenAI.json'))
-  : inferenceAPIType == 'AzureAI' ? string(loadJsonContent('./specs/AIFoundryOpenAI.json'))
-  : inferenceAPIType == 'Anthropic' ? string(loadJsonContent('./specs/PassThrough.json'))
-  : inferenceAPIType == 'Other' ? string(loadJsonContent('./specs/PassThrough.json'))
-  : 'https://raw.githubusercontent.com/msft-mfg-ai/ai-foundry-config-testing/refs/heads/ai-gateway/options-infra/modules/apim/v2/specs/azure-v1-v1-generated.json'
+var passThroughSpec = string(loadJsonContent('./specs/PassThrough.json'))
+var apiDefinition = inferenceAPIType == 'AzureOpenAI' ? '${specsBaseUrl}/AIFoundryOpenAI.json'
+  : inferenceAPIType == 'AzureAI' ? '${specsBaseUrl}/AIFoundryAzureAI.json'
+  : inferenceAPIType == 'Anthropic' ? passThroughSpec
+  : inferenceAPIType == 'Other' ? passThroughSpec
+  : '${specsBaseUrl}/azure-v1-v1-generated.json'
 var apiFormat = apiFormats[?inferenceAPIType] ?? 'openapi+json'
 
 // https://learn.microsoft.com/azure/templates/microsoft.apimanagement/service/apis
@@ -154,7 +163,7 @@ resource api 'Microsoft.ApiManagement/service/apis@2024-06-01-preview' = {
       header: 'api-key'
       query: 'api-key'
     }
-    subscriptionRequired: false
+    subscriptionRequired: requireSubscriptionKey
     type: 'http'
     value: apiDefinition
   }
@@ -298,9 +307,10 @@ resource inferenceBackend 'Microsoft.ApiManagement/service/backends@2024-06-01-p
     }: null
     credentials: {
       #disable-next-line BCP037
-      managedIdentity: {
+      managedIdentity: empty(backendApiKey) ? {
           resource: 'https://cognitiveservices.azure.com'
-      }
+      } : null
+      header: !empty(backendApiKey) ? { 'Authorization': ['Bearer ${backendApiKey}'] } : {}
     }
   }
 }]

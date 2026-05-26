@@ -1,36 +1,73 @@
-// This bicep file deploys one resource group with the following resources:
-// 1. Foundry dependencies, such as VNet and
-//    private endpoints for AI Search, Azure Storage and Cosmos DB
-// 2. Foundry account and projects
-// 3. APIM as AI Gateway to allow Foundry Agent Service to use models from APIM
-// 4. Projects with capability hosts - in Foundry Standard mode
+// Deploys Azure AI Foundry with an APIM AI Gateway configured to proxy Claude (Anthropic)
+// models hosted on a Foundry account. Designed for scenarios where the Anthropic Foundry
+// account is in a different tenant — authentication uses an API key sent as a backend
+// credential header rather than managed identity.
+//
+// Infrastructure deployed:
+//  - VNet + private DNS zones
+//  - Foundry account + projects with capability hosts
+//  - Key Vault, Log Analytics, App Insights
+//  - APIM Standardv2 (External VNet) with private endpoint
+//  - Anthropic inference API at {gateway}/inference/anthropic
+//  - Foundry connections (static model list, deploymentInPath=false)
+
 targetScope = 'resourceGroup'
 
-import { apiType } from '../modules/apps/apps-private-link.bicep'
-
 param location string = resourceGroup().location
-param openAiApiBase string
-param openAiResourceId string
-param openAiLocation string = location
+
+@description('Base endpoint of the Foundry account hosting Claude models (e.g. https://<name>.services.ai.azure.com).')
+param anthropicApiBase string
+
+@description('API key for the Anthropic Foundry endpoint.')
+@secure()
+param anthropicApiKey string
+
+@description('Resource ID of the Foundry account hosting Claude models. Used as backend metadata only; not required for auth.')
+param anthropicResourceId string = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/placeholder/providers/Microsoft.CognitiveServices/accounts/placeholder'
+
+@description('Location of the Foundry account hosting Claude models.')
+param anthropicLocation string = location
+
+@description('Number of Foundry projects to create.')
 param projectsCount int = 1
-param apiServices apiType[] = [] // Array of MCP service definitions
-param apimPublicEnabled bool = false
+
+@description('Allow public access to APIM. Set to true for testing; false for production.')
+param apimPublicEnabled bool = true
+
+@description('Static list of Claude model deployments to surface in Foundry connections.')
+param staticModels object[] = [
+  {
+    name: 'claude-opus-4-6'
+    properties: {
+      model: {
+        name: 'claude-opus-4-6'
+        version: '20250514'
+        format: 'Anthropic'
+      }
+    }
+  }
+]
 
 var tags = {
-  'created-by': 'option-ai-gateway'
-  'hidden-title': 'Foundry - APIM v2 Standard with PE'
+  'created-by': 'option-ai-gateway-anthropic'
+  'hidden-title': 'Foundry - Anthropic AI Gateway (APIM v2 Standard with PE)'
   SecurityControl: 'Ignore'
 }
 
-var valid_config = empty(openAiApiBase) || empty(openAiResourceId)
-  ? fail('OPENAI_API_BASE and OPENAI_RESOURCE_ID environment variables must be set.')
+var valid_anthropic_config = empty(anthropicApiBase) || empty(anthropicApiKey)
+  ? fail('ANTHROPIC_API_BASE and ANTHROPIC_API_KEY environment variables must be set.')
   : true
 
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
-var openAiParts = split(openAiResourceId, '/')
-var openAiName = last(openAiParts)
-var openAiSubscriptionId = openAiParts[2]
-var openAiResourceGroupName = openAiParts[4]
+
+var anthropicServicesConfig = [
+  {
+    name: 'anthropic-foundry'
+    resourceId: anthropicResourceId
+    endpoint: anthropicApiBase
+    location: anthropicLocation
+  }
+]
 
 module foundry_identity '../modules/iam/identity.bicep' = {
   name: 'foundry-identity-deployment'
@@ -41,8 +78,6 @@ module foundry_identity '../modules/iam/identity.bicep' = {
   }
 }
 
-// vnet doesn't have to be in the same RG as the AI Services
-// each foundry needs it's own delegated subnet, projects inside of one Foundry share the subnet for the Agents Service
 module vnet '../modules/networking/vnet.bicep' = {
   name: 'vnet'
   params: {
@@ -62,29 +97,11 @@ module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
     peSubnetName: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.name
     vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     resourceToken: resourceToken
-    aiServicesName: '' // create AI services PE later
+    aiServicesName: ''
     aiAccountNameResourceGroupName: ''
   }
 }
 
-// Private endpoint for external OpenAI
-module openai_private_endpoint '../modules/networking/ai-pe-dns.bicep' = {
-  name: 'openai-private-endpoint-and-dns-deployment'
-  params: {
-    tags: tags
-    location: location
-    aiAccountName: openAiName
-    aiAccountNameResourceGroup: openAiResourceGroupName
-    aiAccountSubscriptionId: openAiSubscriptionId
-    peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
-    resourceToken: resourceToken
-    existingDnsZones: ai_dependencies.outputs.DNS_ZONES
-  }
-}
-
-// --------------------------------------------------------------------------------------------------------------
-// -- Log Analytics Workspace and App Insights ------------------------------------------------------------------
-// --------------------------------------------------------------------------------------------------------------
 module logAnalytics '../modules/monitor/loganalytics.bicep' = {
   name: 'log-analytics'
   params: {
@@ -104,7 +121,6 @@ module keyVault '../modules/kv/key-vault.bicep' = {
     logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
     doRoleAssignments: true
     secrets: []
-
     publicAccessEnabled: false
     privateEndpointSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
     privateEndpointName: 'pe-kv-foundry-${resourceToken}'
@@ -119,10 +135,10 @@ module foundry '../modules/ai/ai-foundry.bicep' = {
     location: location
     managedIdentityResourceId: foundry_identity.outputs.MANAGED_IDENTITY_RESOURCE_ID
     name: 'ai-foundry-${resourceToken}'
-    disableLocalAuth: false // enable local auth because AI Foundry needs it
+    disableLocalAuth: false
     publicNetworkAccess: 'Enabled'
-    agentSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId // Use the first agent subnet
-    deployments: [] // no models
+    agentSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId
+    deployments: []
     keyVaultResourceId: keyVault.outputs.KEY_VAULT_RESOURCE_ID
     keyVaultConnectionEnabled: true
   }
@@ -158,7 +174,7 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
   }
 ]
 
-module ai_gateway '../modules/apim/ai-gateway-pe.bicep' = {
+module ai_gateway '../modules/apim/ai-gateway-anthropic.bicep' = {
   name: 'ai-gateway-deployment-${resourceToken}'
   params: {
     tags: tags
@@ -172,66 +188,9 @@ module ai_gateway '../modules/apim/ai-gateway-pe.bicep' = {
     appInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
     appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
     aiFoundryProjectNames: [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
-    staticModels: [
-      {
-        name: 'gpt-4.1-mini'
-        properties: {
-          model: {
-            name: 'gpt-4.1-mini'
-            version: '2025-01-01-preview'
-            format: 'OpenAI'
-          }
-        }
-      }
-      {
-        name: 'gpt-4o'
-        properties: {
-          model: {
-            name: 'gpt-4o'
-            version: '2025-01-01-preview'
-            format: 'OpenAI'
-          }
-        }
-      }
-      {
-        name: 'gpt-5-mini'
-        properties: {
-          model: {
-            name: 'gpt-5-mini'
-            version: '2025-04-01-preview'
-            format: 'OpenAI'
-          }
-        }
-      }
-      {
-        name: 'o3-mini'
-        properties: {
-          model: {
-            name: 'o3-mini'
-            version: '2025-01-01-preview'
-            format: 'OpenAI'
-          }
-        }
-      }
-    ]
-    aiServicesConfig: [
-      {
-        name: openAiName
-        resourceId: openAiResourceId
-        endpoint: openAiApiBase
-        location: openAiLocation
-      }
-    ]
-  }
-}
-
-module apim_role_assignment '../modules/iam/role-assignment-cognitiveServices.bicep' = {
-  name: 'apim-role-assignment-deployment-${resourceToken}'
-  scope: resourceGroup(openAiSubscriptionId, openAiResourceGroupName)
-  params: {
-    accountName: openAiName
-    principalId: ai_gateway.outputs.apimPrincipalId
-    roleName: 'Cognitive Services User'
+    anthropicServicesConfig: anthropicServicesConfig
+    anthropicStaticModels: staticModels
+    anthropicApiKey: anthropicApiKey
   }
 }
 
@@ -258,23 +217,10 @@ module models_policy_assignment '../modules/policy/models-policy-assignment.bice
   }
 }
 
-module mcp_apis '../modules/apps/apps-private-link.bicep' = {
-  name: 'mcp-apis-private-link-${resourceToken}'
-  params: {
-    tags: tags
-    location: location
-    vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
-    peSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
-    apimServiceName: ai_gateway.outputs.apimName
-    apimGatewayUrl: ai_gateway.outputs.apimGatewayUrl
-    apimAppInsightsLoggerId: ai_gateway.outputs.apimAppInsightsLoggerId
-    aiFoundryName: foundry.outputs.FOUNDRY_NAME
-    externalApis: apiServices
-  }
-}
-
 output project_connection_strings string[] = [
   for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_CONNECTION_STRING
 ]
 output project_names string[] = [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
-output config_validation_result bool = valid_config
+output apim_gateway_url string = ai_gateway.outputs.apimGatewayUrl
+output anthropic_inference_url string = '${ai_gateway.outputs.apimGatewayUrl}/inference/anthropic'
+output config_validation_result bool = valid_anthropic_config
