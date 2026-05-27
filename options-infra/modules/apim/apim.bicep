@@ -110,18 +110,6 @@ var updatedAnthropicPolicyXml = replace(
   string(max(length(anthropicServicesConfig) - 1, 1))
 )
 
-// Backend ID for the Anthropic compat layer — matches the naming convention in inference-api.bicep.
-// Single backend: "<name>-Anthropic-backend"; pool: "anthropic-api-backend-pool".
-var anthropicCompatBackendId = length(anthropicServicesConfig) > 1
-  ? 'anthropic-api-backend-pool'
-  : !empty(anthropicServicesConfig) ? '${anthropicServicesConfig[0].name}-Anthropic-backend' : ''
-
-var updatedAnthropicCompatPolicyXml = replace(
-  loadTextContent('anthropic-openai-compat-policy.xml'),
-  '{backend-id}',
-  anthropicCompatBackendId
-)
-
 module inference_api 'v2/inference-api.bicep' = if (!empty(aiServicesConfig)) {
   name: 'inference-api-deployment'
   params: {
@@ -189,20 +177,10 @@ module anthropic_api 'v2/inference-api.bicep' = if (!empty(anthropicServicesConf
   }
 }
 
-// OpenAI-compatible Anthropic API — accepts OpenAI Chat Completions requests and translates
-// them to Anthropic Messages format (and back). Reuses the Anthropic backend created above.
-// Useful for OpenAI SDK clients that cannot be changed to use the Anthropic SDK.
-module openai_compat_api 'anthropic-openai-compat-api.bicep' = if (!empty(anthropicServicesConfig)) {
-  name: 'anthropic-openai-compat-api-deployment'
-  dependsOn: [anthropic_api] // ensure Anthropic backends exist before policy references them
-  params: {
-    apiManagementName: apim.outputs.name
-    policyXml: updatedAnthropicCompatPolicyXml
-    apimLoggerId: apim.outputs.loggerId
-    appInsightsInstrumentationKey: appInsightsInstrumentationKey
-    appInsightsId: appInsightsId
-  }
-}
+// OpenAI-compatible Anthropic API was removed: Foundry's ModelGateway requires
+// `deploymentInPath=true` semantics which the compat layer cannot satisfy, and the
+// native Anthropic API at /inference/anthropic already supports both Anthropic SDK
+// clients and Foundry v2 agents end-to-end.
 
 output apimResourceId string = apim.outputs.id
 output apimName string = apim.outputs.name
@@ -211,8 +189,6 @@ output inferenceApiName string = !empty(aiServicesConfig) ? inference_api!.outpu
 output inferenceApiPath string = !empty(aiServicesConfig) ? inference_api!.outputs.apiPath : ''
 output anthropicApiName string = !empty(anthropicServicesConfig) ? anthropic_api!.outputs.apiName : ''
 output anthropicApiPath string = !empty(anthropicServicesConfig) ? anthropic_api!.outputs.apiPath : ''
-output anthropicCompatApiName string = !empty(anthropicServicesConfig) ? openai_compat_api!.outputs.apiName : ''
-output anthropicCompatApiPath string = !empty(anthropicServicesConfig) ? openai_compat_api!.outputs.apiPath : ''
 output subscriptions array = apim.outputs.apimSubscriptions
 output apimPrincipalId string = apim.outputs.principalId
 output apimAppInsightsLoggerId string = apim.outputs.appInsightsLoggerId

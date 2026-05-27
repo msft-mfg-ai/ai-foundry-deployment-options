@@ -9,6 +9,9 @@ param anthropicResourceId = empty(anthropicResourceIdValue) ? null : anthropicRe
 var anthropicLocationValue = readEnvironmentVariable('ANTHROPIC_LOCATION', '')
 param anthropicLocation = empty(anthropicLocationValue) ? null : anthropicLocationValue
 
+var dependenciesLocationValue = readEnvironmentVariable('DEPENDENCIES_LOCATION', '')
+param dependenciesLocation = empty(dependenciesLocationValue) ? null : dependenciesLocationValue
+
 var apimPublicEnabledValue = readEnvironmentVariable('APIM_PUBLIC_ENABLED', '')
 param apimPublicEnabled = toLower(apimPublicEnabledValue) == 'true' ? true : false
 

@@ -23,10 +23,13 @@ param anthropicApiBase string
 param anthropicApiKey string
 
 @description('Resource ID of the Foundry account hosting Claude models. Used as backend metadata only; not required for auth.')
-param anthropicResourceId string = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/placeholder/providers/Microsoft.CognitiveServices/accounts/placeholder'
+param anthropicResourceId string
 
 @description('Location of the Foundry account hosting Claude models.')
 param anthropicLocation string = location
+
+@description('Location for Foundry dependency resources (Storage, AI Search, Cosmos DB). Defaults to `location`. Override when the primary region does not allow one of the services (e.g. AI Search in eastus2).')
+param dependenciesLocation string = location
 
 @description('Number of Foundry projects to create.')
 param projectsCount int = 1
@@ -54,8 +57,8 @@ var tags = {
   SecurityControl: 'Ignore'
 }
 
-var valid_anthropic_config = empty(anthropicApiBase) || empty(anthropicApiKey)
-  ? fail('ANTHROPIC_API_BASE and ANTHROPIC_API_KEY environment variables must be set.')
+var valid_anthropic_config = empty(anthropicApiBase) || empty(anthropicApiKey) || empty(anthropicResourceId)
+  ? fail('ANTHROPIC_API_BASE, ANTHROPIC_API_KEY, and ANTHROPIC_RESOURCE_ID environment variables must be set.')
   : true
 
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
@@ -94,11 +97,43 @@ module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
   params: {
     tags: tags
     location: location
+    dependenciesLocation: dependenciesLocation
     peSubnetName: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.name
     vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     resourceToken: resourceToken
     aiServicesName: ''
     aiAccountNameResourceGroupName: ''
+  }
+}
+
+// Cross-tenant private endpoint for the Anthropic-hosting Foundry account.
+// Uses manualPrivateLinkServiceConnections — requires approval on the target tenant.
+var anthropicParts = split(empty(anthropicResourceId) ? '' : anthropicResourceId, '/')
+var anthropicAccountName = last(anthropicParts)
+var anthropicCrossSubscription = (empty(anthropicResourceId) ? '' : anthropicParts[2]) != subscription().subscriptionId
+var createAnthropicPE = !empty(anthropicResourceId)
+
+module anthropic_foundry_private_endpoint_cross_tenant '../modules/networking/ai-pe-dns-cross-tenant.bicep' = if (createAnthropicPE && anthropicCrossSubscription) {
+  name: 'anthropic-foundry-pe-and-dns-deployment'
+  params: {
+    tags: tags
+    location: location
+    aiAccountResourceId: anthropicResourceId
+    peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+    resourceToken: resourceToken
+    existingDnsZones: ai_dependencies.outputs.DNS_ZONES
+  }
+}
+
+module anthropic_foundry_private_endpoint '../modules/networking/ai-pe-dns.bicep' = if (createAnthropicPE && !anthropicCrossSubscription) {
+  name: 'anthropic-foundry-pe-and-dns-deployment'
+  params: {
+    tags: tags
+    location: location
+    aiAccountName: anthropicAccountName
+    peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+    resourceToken: resourceToken
+    existingDnsZones: ai_dependencies.outputs.DNS_ZONES
   }
 }
 

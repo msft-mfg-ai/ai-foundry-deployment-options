@@ -27,7 +27,8 @@ param peSubnetResourceId string
 param apimPublicEnabled bool = false
 
 @allowed(['ApiKey', 'ProjectManagedIdentity'])
-param authType string = 'ApiKey'
+@description('Auth type for the Foundry-to-APIM connection. Defaults to ProjectManagedIdentity because the Foundry portal\'s BYOM page only honors `metadata.models` when the connection uses ProjectManagedIdentity — ApiKey connections fail.')
+param authType string = 'ProjectManagedIdentity'
 
 var connection_per_project = !empty(aiFoundryProjectNames)
 var subscriptions subscriptionType[] = connection_per_project
@@ -96,6 +97,10 @@ module apim_update 'apim.bicep' = if (!apimPublicEnabled) {
 }
 
 // Account-level Anthropic connection (used when there are no per-project connections).
+// The APIM subscription name is supplied for BOTH auth types — the underlying module reads the
+// APIM subscription key and, under ProjectManagedIdentity, surfaces it as `metadata.customHeaders.api-key`
+// (the Foundry ModelGateway uses this header to authenticate against APIM; the project's MI is
+// what the Foundry portal trusts to render `metadata.models` as the authoritative static list).
 module aiGatewayAnthropicConnectionStatic '../ai/connection-apim-gateway.bicep' = if (!connection_per_project && !empty(anthropicStaticModels)) {
   name: 'apim-anthropic-connection-static'
   params: {
@@ -103,7 +108,7 @@ module aiGatewayAnthropicConnectionStatic '../ai/connection-apim-gateway.bicep' 
     connectionName: 'apim-${resourceToken}-anthropic-static'
     apimResourceId: apim.outputs.apimResourceId
     apiName: apim.outputs.anthropicApiName
-    apimSubscriptionName: authType == 'ApiKey' ? first(apim.outputs.subscriptions).name : null
+    apimSubscriptionName: first(apim.outputs.subscriptions).name
     isSharedToAll: true
     staticModels: anthropicStaticModels
     deploymentInPath: 'false' // Claude model is in the request body, not the URL path
@@ -121,9 +126,7 @@ module aiGatewayAnthropicProjectConnectionStatic '../ai/connection-apim-gateway.
       connectionName: 'apim-${resourceToken}-anthropic-static-for-${projectName}'
       apimResourceId: apim.outputs.apimResourceId
       apiName: apim.outputs.anthropicApiName
-      apimSubscriptionName: authType == 'ApiKey'
-        ? first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).name
-        : null
+      apimSubscriptionName: first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).name
       isSharedToAll: false
       staticModels: anthropicStaticModels
       deploymentInPath: 'false'
