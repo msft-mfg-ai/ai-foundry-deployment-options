@@ -3,10 +3,8 @@ import * as types from '../types/types.bicep'
 param location string = resourceGroup().location
 param tags object = {}
 
-@description('Name of the AI Foundry account')
-param aiAccountName string
-param aiAccountNameResourceGroup string = resourceGroup().name
-param aiAccountSubscriptionId string = subscription().subscriptionId
+@description('Resource ID of the AI Foundry account')
+param aiAccountResourceId string
 
 @description('The resource ID of the subnet where the private endpoint will be created')
 param peSubnetId string
@@ -23,6 +21,9 @@ var aiServicesDnsZoneName = 'privatelink.services.ai.azure.com'
 var openAiDnsZoneName = 'privatelink.openai.azure.com'
 var cognitiveServicesDnsZoneName = 'privatelink.cognitiveservices.azure.com'
 
+var aAccountParts = split(aiAccountResourceId, '/')
+var aiAccountName = last(aAccountParts)
+
 // ---- DNS Zone Resource Group lookups ----
 var aiServicesDnsZone = existingDnsZones[?aiServicesDnsZoneName]
 var openAiDnsZone = existingDnsZones[?openAiDnsZoneName]
@@ -31,12 +32,6 @@ var cognitiveServicesDnsZone = existingDnsZones[?cognitiveServicesDnsZoneName]
 var validDnsConfig = (empty(aiServicesDnsZone) || empty(openAiDnsZone) || empty(cognitiveServicesDnsZone)) && empty(vnetId)
   ? fail('vnetId must be provided if any DNS zones are to be created.')
   : true
-
-// ---- Resource references ----
-resource aiAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = {
-  name: aiAccountName
-  scope: resourceGroup(aiAccountSubscriptionId, aiAccountNameResourceGroup)
-}
 
 // ---- DNS Zone Resources and References ----
 resource aiServicesPrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (empty(aiServicesDnsZone)) {
@@ -125,13 +120,13 @@ resource aiAccountPrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01
   tags: tags
   properties: {
     subnet: { id: peSubnetId } // Deploy in customer hub subnet
-    privateLinkServiceConnections: [
+    manualPrivateLinkServiceConnections: [
       {
-        name: '${aiAccountName}-private-link-service-connection'
+        name: '${aiAccountName}-manual-private-link-service-connection'
         properties: {
-          
-          privateLinkServiceId: aiAccount.id
+          privateLinkServiceId: aiAccountResourceId
           groupIds: ['account'] // Target AI Services account
+          requestMessage: 'Connection from APIM ${tenant().displayName} ${tenant().tenantId} to Foundry'
         }
       }
     ]
