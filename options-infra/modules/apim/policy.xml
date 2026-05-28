@@ -1,10 +1,8 @@
 <policies>
     <inbound>
         <base />
-        <!-- CORS policy to allow Azure AI Foundry portal -->
-        <set-header name="x-caller-name" exists-action="override">
-            <value>@((string)context.Subscription.Id)</value>
-        </set-header>
+        <!-- Caller identity: sets x-caller-name, x-caller-id, x-caller-foundry, x-caller-project -->
+        <include-fragment fragment-id="caller-identity" />
         <cors allow-credentials="true">
             <allowed-origins>
                 <origin>https://ai.azure.com</origin>
@@ -25,12 +23,14 @@
             <value>@("Bearer " + (string)context.Variables["managed-id-access-token"])</value>
         </set-header>
         <set-backend-service backend-id="{backend-id}" />
-        <!--Policy 2 - Emit the Azure OpenAI Token Metrics to Application Insights -->
+        <!-- Standardized token-metric dimensions: Caller Name, Foundry, Project, API ID, Model. -->
+        <!-- 5 custom dims, within Azure Monitor's 10-dim cap. -->
         <azure-openai-emit-token-metric namespace="openai">
-            <dimension name="Client IP" value="@(context.Request.IpAddress)" />
+            <dimension name="Caller Name" value="@((string)context.Variables["caller-name"])" />
+            <dimension name="Foundry" value="@((string)context.Variables["caller-foundry"])" />
+            <dimension name="Project" value="@((string)context.Variables["caller-project"])" />
             <dimension name="API ID" value="@(context.Api.Id)" />
-            <dimension name="User ID" value="@(context.Request.Headers.GetValueOrDefault("x-user-id", "N/A"))" />
-            <dimension name="Caller Name" value="@(context.Subscription.Id)" />
+            <dimension name="Model" value="@(context.Request.Headers.GetValueOrDefault(&quot;x-ms-foundry-model-id&quot;, &quot;unknown&quot;))" />
         </azure-openai-emit-token-metric>
     </inbound>
     <backend>

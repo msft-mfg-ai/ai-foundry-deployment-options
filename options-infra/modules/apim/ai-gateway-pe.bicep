@@ -19,7 +19,7 @@ param peSubnetResourceId string
 param apimPublicEnabled bool = false
 // Connection configuration
 @allowed(['ApiKey', 'ProjectManagedIdentity'])
-param authType string = 'ApiKey'
+param authType string = 'ProjectManagedIdentity'
 
 var connection_per_project = !empty(aiFoundryProjectNames)
 var subscriptions subscriptionType[] = connection_per_project
@@ -92,7 +92,10 @@ module aiGatewayConnectionDynamic '../ai/connection-apim-gateway.bicep' = if (!c
     connectionName: 'apim-${resourceToken}-dynamic'
     apimResourceId: apim.outputs.apimResourceId
     apiName: apim.outputs.inferenceApiName
-    apimSubscriptionName: authType == 'ApiKey' ? first(apim.outputs.subscriptions).name : null
+    // Always pass the subscription name — the underlying module uses it to inject
+    // metadata.customHeaders.api-key, which is required for the Foundry portal to
+    // honor metadata.models even under ProjectManagedIdentity auth.
+    apimSubscriptionName: first(apim.outputs.subscriptions).name
     isSharedToAll: true
     listModelsEndpoint: '/deployments'
     getModelEndpoint: '/deployments/{deploymentName}'
@@ -102,6 +105,8 @@ module aiGatewayConnectionDynamic '../ai/connection-apim-gateway.bicep' = if (!c
   }
 }
 
+// Static-models connection — see comment in ai-gateway.bicep for the rationale
+// behind the ProjectManagedIdentity default + always-passed apimSubscriptionName.
 module aiGatewayConnectionStatic '../ai/connection-apim-gateway.bicep' = if (!connection_per_project && !empty(staticModels)) {
   name: 'apim-connection-static'
   params: {
@@ -109,7 +114,7 @@ module aiGatewayConnectionStatic '../ai/connection-apim-gateway.bicep' = if (!co
     connectionName: 'apim-${resourceToken}-static'
     apimResourceId: apim.outputs.apimResourceId
     apiName: apim.outputs.inferenceApiName
-    apimSubscriptionName: authType == 'ApiKey' ? first(apim.outputs.subscriptions).name : null
+    apimSubscriptionName: first(apim.outputs.subscriptions).name
     isSharedToAll: true
     staticModels: staticModels
     inferenceAPIVersion: '2025-03-01-preview'
@@ -126,9 +131,7 @@ module aiGatewayProjectConnectionStatic '../ai/connection-apim-gateway.bicep' = 
       connectionName: 'apim-${resourceToken}-static-for-${projectName}'
       apimResourceId: apim.outputs.apimResourceId
       apiName: apim.outputs.inferenceApiName
-      apimSubscriptionName: authType == 'ApiKey'
-        ? first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).name
-        : null
+      apimSubscriptionName: first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).name
       isSharedToAll: false
       staticModels: staticModels
       inferenceAPIVersion: '2025-03-01-preview'

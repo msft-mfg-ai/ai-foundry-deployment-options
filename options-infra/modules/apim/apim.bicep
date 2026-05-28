@@ -105,13 +105,32 @@ var updatedJwtInferencePolicyXml = replace(
 )
 
 var updatedAnthropicPolicyXml = replace(
-  loadTextContent('anthropic-policy.xml'),
-  '{retry-count}',
-  string(max(length(anthropicServicesConfig) - 1, 1))
+  replace(
+    replace(
+      loadTextContent('anthropic-policy.xml'),
+      '{retry-count}',
+      string(max(length(anthropicServicesConfig) - 1, 1))
+    ),
+    'SUBSCRIPTION_ID',
+    subscription().subscriptionId
+  ),
+  'TENANT_ID',
+  subscription().tenantId
 )
+
+// Deploy the shared caller-identity policy fragment. Inbound policies use
+// <include-fragment fragment-id="caller-identity" /> to inherit the canonical
+// x-caller-* headers (name/id/foundry/project) without duplicating logic.
+module callerIdentityFragment 'caller-identity-fragment.bicep' = {
+  name: 'caller-identity-fragment'
+  params: {
+    apiManagementName: apim.outputs.name
+  }
+}
 
 module inference_api 'v2/inference-api.bicep' = if (!empty(aiServicesConfig)) {
   name: 'inference-api-deployment'
+  dependsOn: [callerIdentityFragment]
   params: {
     policyXml: gatewayAuthenticationType == 'ProjectManagedIdentity' ? updatedJwtInferencePolicyXml : updatedInferencePolicyXml
     apiManagementName: apim.outputs.name
@@ -122,6 +141,9 @@ module inference_api 'v2/inference-api.bicep' = if (!empty(aiServicesConfig)) {
     configureCircuitBreaker: true
     resourceSuffix: resourceSuffix
     enableModelDiscovery: true
+    // Under PMI the JWT policy authenticates the caller — APIM subscription
+    // key is no longer the gating credential, so we can drop the requirement.
+    requireSubscriptionKey: gatewayAuthenticationType != 'ProjectManagedIdentity'
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
     appInsightsId: appInsightsId
   }
@@ -132,7 +154,7 @@ module inference_api 'v2/inference-api.bicep' = if (!empty(aiServicesConfig)) {
 // Depends on inference_api to avoid race condition creating duplicate APIM service-level tags
 module openAiv2Api 'v2/inference-api.bicep' = if (!empty(aiServicesConfig) && (apimSku == 'Premium' || apimSku == 'Standardv2')) {
   name: 'openai-v2-api-deployment'
-  dependsOn: [inference_api]
+  dependsOn: [inference_api, callerIdentityFragment]
   params: {
     policyXml: gatewayAuthenticationType == 'ProjectManagedIdentity' ? updatedJwtInferencePolicyXml : updatedInferencePolicyXml
     apiManagementName: apim.outputs.name
@@ -146,18 +168,20 @@ module openAiv2Api 'v2/inference-api.bicep' = if (!empty(aiServicesConfig) && (a
     configureCircuitBreaker: true
     resourceSuffix: resourceSuffix
     enableModelDiscovery: true
+    requireSubscriptionKey: gatewayAuthenticationType != 'ProjectManagedIdentity'
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
     appInsightsId: appInsightsId
   }
 }
 
 // Anthropic API — Foundry-hosted Claude models proxied through APIM.
-// Uses PassThrough spec and a separate policy (no OpenAI token metrics).
-// Deployed as a separate API at inference/anthropic so backends can be grouped independently.
-// Depends on inference_api to avoid race condition on the service-level inference tag.
+// Uses PassThrough spec + JWT validation policy. Backend Anthropic api-key is
+// supplied by APIM (via the `credentials` on the backend resource), so callers
+// don't send any key. Depends on inference_api to avoid race condition on the
+// service-level inference tag.
 module anthropic_api 'v2/inference-api.bicep' = if (!empty(anthropicServicesConfig)) {
   name: 'anthropic-api-deployment'
-  dependsOn: [inference_api]
+  dependsOn: [inference_api, callerIdentityFragment]
   params: {
     policyXml: updatedAnthropicPolicyXml
     apiManagementName: apim.outputs.name
@@ -171,6 +195,10 @@ module anthropic_api 'v2/inference-api.bicep' = if (!empty(anthropicServicesConf
     configureCircuitBreaker: true
     resourceSuffix: resourceSuffix
     enableModelDiscovery: false
+    // anthropic-policy.xml validates the caller's JWT and requires
+    // xms_mirid to belong to this subscription, so APIM subscription auth
+    // is redundant.
+    requireSubscriptionKey: false
     backendApiKey: anthropicApiKey
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
     appInsightsId: appInsightsId

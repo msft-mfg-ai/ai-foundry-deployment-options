@@ -1,9 +1,28 @@
 <policies>
     <inbound>
         <base />
-        <set-header name="x-caller-name" exists-action="override">
-            <value>@(context.Subscription?.Id ?? "anonymous")</value>
-        </set-header>
+        <!-- Validate the caller's Foundry-issued bearer token (Project Managed Identity). -->
+        <!-- This replaces APIM subscription-key auth (anthropic-api has subscriptionRequired=false). -->
+        <validate-azure-ad-token
+            tenant-id="TENANT_ID"
+            header-name="Authorization"
+            failed-validation-httpcode="401"
+            failed-validation-error-message="Unauthorized. Valid Entra token is required."
+            output-token-variable-name="jwt">
+            <audiences>
+                <audience>https://cognitiveservices.azure.com</audience>
+            </audiences>
+        </validate-azure-ad-token>
+        <choose>
+            <when condition="@(!((Jwt)context.Variables[&quot;jwt&quot;]).Claims.GetValueOrDefault(&quot;xms_mirid&quot;, &quot;&quot;).StartsWith(&quot;/subscriptions/SUBSCRIPTION_ID/&quot;))">
+                <return-response>
+                    <set-status code="401" reason="Unauthorized" />
+                    <set-body>Unauthorized. Caller must be an Azure AI resource from subscription SUBSCRIPTION_ID.</set-body>
+                </return-response>
+            </when>
+        </choose>
+        <!-- Caller identity: sets x-caller-name, x-caller-id, x-caller-foundry, x-caller-project -->
+        <include-fragment fragment-id="caller-identity" />
         <cors allow-credentials="true">
             <allowed-origins>
                 <origin>https://ai.azure.com</origin>
@@ -22,7 +41,8 @@
         <set-header name="anthropic-version" exists-action="skip">
             <value>2023-06-01</value>
         </set-header>
-        <!-- Remove any client-supplied auth headers; auth is handled by the backend credential (api-key) -->
+        <!-- Remove client-supplied auth headers; the backend api-key is supplied
+             by APIM via the backend resource credentials (not from the caller). -->
         <set-header name="Authorization" exists-action="delete" />
         <set-header name="x-api-key" exists-action="delete" />
         <set-backend-service backend-id="{backend-id}" />

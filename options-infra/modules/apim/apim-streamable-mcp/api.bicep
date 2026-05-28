@@ -7,10 +7,9 @@ param apimAppInsightsLoggerId string?
 //    VARIABLES
 // ------------------
 
-var logSettings = {
-  headers: [ 'Content-type', 'User-agent', 'x-ms-region', 'x-ratelimit-remaining-tokens' , 'x-ratelimit-remaining-requests', 'x-aml-data-proxy-url', 'x-aml-vnet-identifier', 'x-aml-static-ingress-ip' ]
-  body: { bytes: 8192 }
-}
+import { requestLogSettings } from '../log-settings.bicep'
+
+var logSettings = requestLogSettings
 
 // ------------------
 //    RESOURCES
