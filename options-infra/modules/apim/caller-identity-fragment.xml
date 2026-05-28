@@ -1,0 +1,105 @@
+<fragment>
+    <!--
+        Caller Identity Fragment
+        ========================
+        Derives a uniform set of `x-caller-*` headers from whichever auth path
+        the caller used, so KQL / dashboard queries can pivot on the same
+        column names regardless of which gateway sample produced the call.
+
+        Output headers (always set, even if values are "unknown"):
+          - x-caller-name      best display name; "foundry/project" when known
+          - x-caller-id        raw identifier (xms_mirid, subscription id, or anonymous)
+          - x-caller-foundry   Foundry account name when derivable
+          - x-caller-project   Foundry project name when derivable
+
+        Derivation order:
+          1. JWT in Authorization header (xms_mirid) — preferred, available under
+             ProjectManagedIdentity flows. Extracts foundry + project from the
+             managed identity resource ID.
+          2. Foundry-supplied `openai-project` header — present on all current
+             Foundry ModelGateway calls (project name).
+          3. APIM subscription name following `sub-{project}-{token}` convention.
+          4. Fallback: subscription id / "anonymous".
+    -->
+
+    <!-- 1. Try to read xms_mirid claim from Authorization Bearer (no validation here —
+         caller-identity is for telemetry, not authz; gateway policies enforce JWT
+         separately when needed). -->
+    <set-variable name="auth-header" value="@(context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;, &quot;&quot;))" />
+    <set-variable name="xms_mirid" value="@{
+        var auth = (string)context.Variables[&quot;auth-header&quot;];
+        if (string.IsNullOrEmpty(auth) || !auth.StartsWith(&quot;Bearer &quot;)) { return string.Empty; }
+        try {
+            var parts = auth.Substring(7).Split('.');
+            if (parts.Length < 2) { return string.Empty; }
+            var payload = parts[1].Replace('-', '+').Replace('_', '/');
+            switch (payload.Length % 4) { case 2: payload += &quot;==&quot;; break; case 3: payload += &quot;=&quot;; break; }
+            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            var obj = Newtonsoft.Json.Linq.JObject.Parse(json);
+            var v = obj[&quot;xms_mirid&quot;];
+            return v != null ? v.ToString() : string.Empty;
+        } catch { return string.Empty; }
+    }" />
+
+    <!-- 2. Look for Foundry's own project header (sent on every ModelGateway call). -->
+    <set-variable name="foundry-project-header" value="@(context.Request.Headers.GetValueOrDefault(&quot;openai-project&quot;, &quot;&quot;))" />
+
+    <!-- 3. Build foundry + project + caller name from whichever signal is richest. -->
+    <set-variable name="caller-foundry" value="@{
+        var mirid = (string)context.Variables[&quot;xms_mirid&quot;];
+        if (!string.IsNullOrEmpty(mirid) &amp;&amp; mirid.Contains(&quot;Microsoft.CognitiveServices&quot;)) {
+            var parts = mirid.Split('/');
+            for (int i = 0; i &lt; parts.Length - 1; i++) {
+                if (parts[i] == &quot;accounts&quot;) { return parts[i + 1]; }
+            }
+        }
+        return &quot;unknown&quot;;
+    }" />
+
+    <set-variable name="caller-project" value="@{
+        var mirid = (string)context.Variables[&quot;xms_mirid&quot;];
+        if (!string.IsNullOrEmpty(mirid) &amp;&amp; mirid.Contains(&quot;Microsoft.CognitiveServices&quot;)) {
+            var parts = mirid.Split('/');
+            for (int i = 0; i &lt; parts.Length - 1; i++) {
+                if (parts[i] == &quot;projects&quot;) { return parts[i + 1]; }
+            }
+        }
+        var foundryHdr = (string)context.Variables[&quot;foundry-project-header&quot;];
+        if (!string.IsNullOrEmpty(foundryHdr)) { return foundryHdr; }
+        var subName = context.Subscription != null ? (context.Subscription.Name ?? string.Empty) : string.Empty;
+        if (subName.StartsWith(&quot;sub-&quot;)) {
+            var afterPrefix = subName.Substring(4);
+            var lastDash = afterPrefix.LastIndexOf('-');
+            if (lastDash > 0) { return afterPrefix.Substring(0, lastDash); }
+        }
+        return &quot;unknown&quot;;
+    }" />
+
+    <set-variable name="caller-id" value="@{
+        var mirid = (string)context.Variables[&quot;xms_mirid&quot;];
+        if (!string.IsNullOrEmpty(mirid)) { return mirid; }
+        return context.Subscription != null ? (context.Subscription.Id ?? &quot;anonymous&quot;) : &quot;anonymous&quot;;
+    }" />
+
+    <set-variable name="caller-name" value="@{
+        var foundry = (string)context.Variables[&quot;caller-foundry&quot;];
+        var project = (string)context.Variables[&quot;caller-project&quot;];
+        if (foundry != &quot;unknown&quot; &amp;&amp; project != &quot;unknown&quot;) { return foundry + &quot;/&quot; + project; }
+        if (project != &quot;unknown&quot;) { return project; }
+        return context.Subscription != null ? (context.Subscription.Id ?? &quot;anonymous&quot;) : &quot;anonymous&quot;;
+    }" />
+
+    <!-- 4. Emit canonical headers (forwarded to backend AND captured by the diagnostic). -->
+    <set-header name="x-caller-name" exists-action="override">
+        <value>@((string)context.Variables[&quot;caller-name&quot;])</value>
+    </set-header>
+    <set-header name="x-caller-id" exists-action="override">
+        <value>@((string)context.Variables[&quot;caller-id&quot;])</value>
+    </set-header>
+    <set-header name="x-caller-foundry" exists-action="override">
+        <value>@((string)context.Variables[&quot;caller-foundry&quot;])</value>
+    </set-header>
+    <set-header name="x-caller-project" exists-action="override">
+        <value>@((string)context.Variables[&quot;caller-project&quot;])</value>
+    </set-header>
+</fragment>

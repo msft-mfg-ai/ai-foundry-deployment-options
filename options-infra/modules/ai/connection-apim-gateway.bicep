@@ -62,8 +62,20 @@ param customHeaders object = {}
 param authConfig object = {}
 
 // Connection configuration
+//
+// NOTE on `authType` default: the Foundry portal's "Connections → Models" list
+// only renders `metadata.models` (i.e. the static list passed by the caller)
+// when BOTH of these are true:
+//   1. authType == 'ProjectManagedIdentity'
+//   2. metadata.customHeaders is non-empty
+// Under `ApiKey`, the portal silently ignores the static list and shows a
+// global-catalog discovery count (~118-464 depending on declared `format`).
+// We default to `ProjectManagedIdentity` here and always inject the APIM
+// subscription key as customHeaders.api-key further down, so callers get
+// correct portal display without any extra parameters. See
+// agents_anthropic/foundry-byom-ui-findings.md for the full investigation.
 @allowed(['ApiKey', 'ProjectManagedIdentity'])
-param authType string = 'ApiKey'
+param authType string = 'ProjectManagedIdentity'
 param isSharedToAll bool = false
 
 // APIM-specific metadata (passed through from parent template)
@@ -161,11 +173,24 @@ resource apimSubscription 'Microsoft.ApiManagement/service/subscriptions@2021-08
 var subscriptionKey = !empty(apimSubscriptionName)
   ? apimSubscription!.listSecrets(apimSubscription.apiVersion).primaryKey
   : ''
-var subscriptionKeyHeader = !empty(apimSubscriptionName)
-  ? {
-      customHeaders: string({ 'api-key': subscriptionKey })
-    }
-  : {}
+
+// The Foundry portal only displays `metadata.models` when the connection uses
+// `authType=ProjectManagedIdentity` AND `metadata.customHeaders` is non-empty.
+// We inject a single constant marker header to satisfy that rule without
+// leaking the APIM subscription key into the connection metadata. The real
+// auth path is:
+//   - ApiKey  → key flows via `credentials.key` (separate field, handled by
+//     the connection-account.bicep / connection-project.bicep submodules)
+//   - PMI     → Foundry's ModelGateway sends a JWT in `Authorization`, which
+//     APIM validates via `<validate-azure-ad-token>` in the API policy
+//
+// For APIs that previously relied on `subscriptionRequired=true` + the
+// customHeaders.api-key for caller auth (e.g. anthropic-api with no JWT
+// validation), set `subscriptionRequired=false` on the API and rely on the
+// JWT validation policy instead — see anthropic-policy.xml / policy_jwt.xml.
+var subscriptionKeyHeader = {
+  customHeaders: string({ 'x-ms-foundry-models': 'byom' })
+}
 var subscriptionKeyValidation = authType == 'ApiKey' && empty(apimSubscriptionName)
   ? fail('ERROR: ApiKey authentication requires a valid APIM subscription name.')
   : true

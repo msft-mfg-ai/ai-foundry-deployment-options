@@ -96,11 +96,12 @@ module apim_update 'apim.bicep' = if (!apimPublicEnabled) {
   dependsOn: [apim_pe]
 }
 
+// TODO: Temporary hack for APIM static connection
+
 // Account-level Anthropic connection (used when there are no per-project connections).
-// The APIM subscription name is supplied for BOTH auth types — the underlying module reads the
-// APIM subscription key and, under ProjectManagedIdentity, surfaces it as `metadata.customHeaders.api-key`
-// (the Foundry ModelGateway uses this header to authenticate against APIM; the project's MI is
-// what the Foundry portal trusts to render `metadata.models` as the authoritative static list).
+// Uses ProjectManagedIdentity + always-passed apimSubscriptionName so the Foundry
+// portal displays the Claude models from `metadata.models` instead of the broken
+// global-catalog discovery count. See ai-gateway.bicep for the rationale.
 module aiGatewayAnthropicConnectionStatic '../ai/connection-apim-gateway.bicep' = if (!connection_per_project && !empty(anthropicStaticModels)) {
   name: 'apim-anthropic-connection-static'
   params: {
