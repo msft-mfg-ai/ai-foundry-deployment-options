@@ -20,6 +20,24 @@ param staticModels array = []
 param litlLlmPublicFqdn string?
 param tags object = {}
 
+@description('Optional. Custom domain bound to the LiteLLM container app (e.g. litellm.contoso.internal). When set, ACA terminates TLS on this hostname with the supplied PFX certificate (the LiteLLM container itself stays HTTP — ACA HTTP ingress would otherwise conflict with end-to-end TLS). The "self-signed cert" presented to clients is the leaf inside certPfxBase64.')
+param customDomain string = ''
+
+@secure()
+@description('Optional. Base64-encoded PFX (cert chain + key) bound to the ACA managed environment when customDomain is set.')
+param certPfxBase64 string = ''
+
+@secure()
+@description('Optional. Password protecting certPfxBase64.')
+param certPfxPassword string = ''
+
+@description('Optional. When true, this module creates the Foundry ModelGateway connections (dynamic + optional static) pointing at the LiteLLM container app FQDN. Set to false when a downstream proxy (e.g. nginx in the cert variant) will create the connections instead.')
+param createFoundryConnections bool = true
+
+@secure()
+@description('Optional override for the LiteLLM master key. When empty, the module computes a deterministic key from resourceToken. Pass a value here when an upstream caller (e.g. the cert variant\'s main.bicep) needs to share the same key with downstream connection modules without relying on a non-secure module output.')
+param liteLlmMasterKeyOverride string = ''
+
 var identityResourceParts = split(identityResourceId, '/')
 var identityResourceName = last(identityResourceParts)
 var identityResourceRgName = identityResourceParts[length(identityResourceParts) - 5]
@@ -30,7 +48,12 @@ resource userAssignedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@
   scope: resourceGroup(identityResourceSubId, identityResourceRgName)
 }
 
-var litelllmasterkey = take(uniqueString(resourceToken, 'litellm'), 6)
+var litelllmasterkey = empty(liteLlmMasterKeyOverride) ? take(uniqueString(resourceToken, 'litellm'), 6) : liteLlmMasterKeyOverride
+var customDomainEnabled = !empty(customDomain)
+
+var custom_domain_cert_valid = customDomainEnabled && (empty(certPfxBase64) || empty(certPfxPassword))
+  ? fail('When customDomain is set, certPfxBase64 and certPfxPassword must both be provided.')
+  : true
 
 module postgressDb '../db/postgress.bicep' = {
   name: 'postgress-db-deployment'
@@ -60,6 +83,34 @@ module managedEnvironment '../aca/container-app-environment.bicep' = {
     infrastructureSubnetId: acaSubnetResourceId
   }
 }
+
+// Existing managed environment reference so we can attach a child cert resource
+// when customDomain is set. Bicep doesn't let us write a child of a module
+// output, so we re-reference the env by name.
+resource managedEnvExisting 'Microsoft.App/managedEnvironments@2025-01-01' existing = {
+  name: 'aca${resourceToken}'
+  dependsOn: [managedEnvironment]
+}
+
+resource liteLlmCustomDomainCert 'Microsoft.App/managedEnvironments/certificates@2025-01-01' = if (customDomainEnabled) {
+  parent: managedEnvExisting
+  name: 'litellm-${resourceToken}-cert'
+  location: location
+  properties: {
+    password: certPfxPassword
+    value: any(certPfxBase64)
+  }
+}
+
+var liteLlmCustomDomains = customDomainEnabled
+  ? [
+      {
+        name: customDomain
+        bindingType: 'SniEnabled'
+        certificateId: liteLlmCustomDomainCert.id
+      }
+    ]
+  : []
 
 module keyVault '../kv/key-vault.bicep' = {
   name: 'key-vault-deployment'
@@ -231,9 +282,6 @@ module liteLlmApp '../aca/container-app.bicep' = {
       '/config/config.yml'
       '--port'
       '4000'
-      // '--num_workers'
-      // '2'
-      // '--detailed_debug'
     ]
     volumes: [
       {
@@ -274,6 +322,11 @@ module liteLlmApp '../aca/container-app.bicep' = {
         ]
       }
     ]
+    // When set, ACA binds <customDomain> to the LiteLLM ingress and
+    // terminates TLS with the self-signed cert from the managed env cert
+    // resource. The container itself still speaks plain HTTP on port 4000 —
+    // ACA HTTP ingress would conflict with end-to-end TLS.
+    customDomains: liteLlmCustomDomains
     ingressTargetPort: 4000
     existingImage: 'ghcr.io/berriai/litellm-database:main-stable'
     userAssignedManagedIdentityClientId: userAssignedIdentity.properties.clientId
@@ -306,7 +359,7 @@ module liteLlmApp '../aca/container-app.bicep' = {
   }
 }
 
-module liteLlmConnectionDynamic '../ai/connection-modelgateway-dynamic.bicep' = {
+module liteLlmConnectionDynamic '../ai/connection-modelgateway-dynamic.bicep' = if (createFoundryConnections) {
   name: 'lite-llm-connection-dynamic'
   params: {
     aiFoundryName: aiFoundryName
@@ -318,7 +371,7 @@ module liteLlmConnectionDynamic '../ai/connection-modelgateway-dynamic.bicep' = 
   }
 }
 
-module liteLlmConnectionStatic '../ai/connection-modelgateway-static.bicep' = if (!empty(staticModels)) {
+module liteLlmConnectionStatic '../ai/connection-modelgateway-static.bicep' = if (createFoundryConnections && !empty(staticModels)) {
   name: 'lite-llm-connection-static'
   params: {
     aiFoundryName: aiFoundryName
@@ -332,3 +385,8 @@ module liteLlmConnectionStatic '../ai/connection-modelgateway-static.bicep' = if
 }
 
 output liteLlmAcaFqdn string = liteLlmApp.outputs.CONTAINER_APP_FQDN
+output containerAppsEnvironmentId string = managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_ID
+output containerAppsEnvironmentDefaultDomain string = managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN
+output containerAppsWorkloadProfileName string = managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
+output keyVaultName string = keyVault.outputs.KEY_VAULT_NAME
+output certConfigValid bool = custom_domain_cert_valid

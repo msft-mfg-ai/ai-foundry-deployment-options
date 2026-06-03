@@ -1,0 +1,24 @@
+name: 'Bicep: ai-gateway-litellm-cert'
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'options-infra/ai-gateway-litellm-cert/**'
+      - 'options-infra/modules/**'
+      - 'options-infra/scripts/preprovision-litellm-cert.*'
+      - '.github/workflows/bicep-validate-reusable.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'options-infra/ai-gateway-litellm-cert/**'
+      - 'options-infra/modules/**'
+      - 'options-infra/scripts/preprovision-litellm-cert.*'
+      - '.github/workflows/bicep-validate-reusable.yml'
+
+jobs:
+  validate:
+    uses: ./.github/workflows/bicep-validate-reusable.yml
+    with:
+      bicep-file: main.bicep
+      working-directory: options-infra/ai-gateway-litellm-cert
