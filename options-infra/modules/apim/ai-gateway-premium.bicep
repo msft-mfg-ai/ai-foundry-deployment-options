@@ -133,6 +133,8 @@ module aiGatewayConnectionDynamic '../ai/connection-apim-gateway.bicep' = if (!c
   }
 }
 
+// Static-models connection — see comment in ai-gateway.bicep for the rationale
+// (Foundry portal requires PMI + non-empty customHeaders to display models).
 module aiGatewayConnectionStatic '../ai/connection-apim-gateway.bicep' = if (!connection_per_project && !empty(staticModels)) {
   name: 'apim-connection-static'
   params: {

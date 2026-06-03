@@ -11,7 +11,7 @@ param aiFoundryName string
 param aiFoundryProjectNames string[] = []
 param resourceToken string
 @allowed(['ApiKey', 'ProjectManagedIdentity'])
-param gatewayAuthenticationType string = 'ApiKey'
+param gatewayAuthenticationType string = 'ProjectManagedIdentity'
 
 param staticModels ModelType[] = []
 param aiServicesConfig aiServiceConfigType[] = []
@@ -62,6 +62,12 @@ module aiGatewayConnectionDynamic '../ai/connection-apim-gateway.bicep' = if (!c
   }
 }
 
+// Static-models connection: the Foundry portal only displays `staticModels` when
+// the connection uses `ProjectManagedIdentity` auth AND has non-empty
+// `metadata.customHeaders`. The connection-apim-gateway.bicep module enforces
+// both defaults (PMI by default; api-key auto-injected as customHeaders when
+// apimSubscriptionName is provided). Override `gatewayAuthenticationType` only
+// if you accept that the portal will show a misleading global-catalog count.
 module aiGatewayConnectionStatic '../ai/connection-apim-gateway.bicep' = if (!connection_per_project && !empty(staticModels)) {
   name: 'apim-connection-static'
   params: {

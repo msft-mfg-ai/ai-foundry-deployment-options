@@ -92,18 +92,9 @@ type aiServiceConfigType = {
 //    VARIABLES
 // ------------------
 
-var logSettings = {
-  // Include x-caller-id, x-caller-name, and x-caller-priority headers for caller correlation with gateway logs
-  headers: [ 'Content-type', 'User-agent', 'x-ms-region', 'x-ratelimit-remaining-tokens' , 'x-ratelimit-remaining-requests', 'x-aml-data-proxy-url', 'x-aml-vnet-identifier', 'x-aml-static-ingress-ip', 'x-caller-name', 'x-caller-priority', 'x-foundry-name', 'x-caller-id' ]
-  body: { bytes: 8192 }
-}
+import { requestLogSettings, responseLogSettings } from '../log-settings.bicep'
 
-// Response headers to log — captures caller identity and gateway routing details
-// so that rate-limited (429) and error requests still show CallerName in dashboard queries
-var responseLogSettings = {
-  headers: [ 'x-caller-name', 'x-caller-priority', 'x-caller-id', 'x-backend-pool', 'x-route-trace', 'x-retry-count', 'x-quota-remaining-tokens', 'x-ptu-utilization', 'x-ptu-consumed', 'x-backend-type', 'x-spillover', 'x-error-reason', 'x-error-source' ]
-  body: { bytes: 0 }
-}
+var logSettings = requestLogSettings
 
 var updatedPolicyXml = replace(policyXml, '{backend-id}', (length(aiServicesConfig) > 1) ? inferenceBackendPoolName : length(aiServicesConfig) == 1 ? '${aiServicesConfig[0].name}-${inferenceAPIType}-backend' : 'no-backend')
 
