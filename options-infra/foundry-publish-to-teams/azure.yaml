@@ -1,0 +1,27 @@
+name: foundry-publish-to-teams
+
+infra:
+  provider: bicep
+  path: .
+  module: main
+
+hooks:
+  # Postprovision: publish the agent to Microsoft 365 + build a Teams app
+  # sideload zip. Shared with foundry-byo-vnet-teams.
+  # Inline `run:` (vs a path) because azd rejects `path:`/`run:` values that
+  # escape the deployment option's project root. azd runs hooks with CWD =
+  # this folder, so `../scripts/...` resolves correctly at exec time.
+  postprovision:
+    windows:
+      shell: pwsh
+      run: |
+        & '../scripts/publish-teams-agent.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      interactive: true
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        sh ../scripts/publish-teams-agent.sh
+      interactive: true
+      continueOnError: false

@@ -87,7 +87,7 @@ module aiSearchRoleAssignments '../iam/ai-search-role-assignments.bicep' = {
 
 // This module creates the capability host for the project and account
 module addProjectCapabilityHost 'add-project-capability-host.bicep' = {
-  name: 'capabilityHost-configuration-deployment-${project_name}'
+  name: take('capabilityHost-configuration-deployment-${project_name}', 64)
   params: {
     accountName: foundryName
     projectName: aiProject.outputs.FOUNDRY_PROJECT_NAME

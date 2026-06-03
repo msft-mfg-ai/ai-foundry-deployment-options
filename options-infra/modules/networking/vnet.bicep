@@ -59,6 +59,24 @@ param apimv2SubnetPrefix string = ''
 @description('Address prefix for the APIM v2 Premium subnet')
 param apimv2PremiumSubnetPrefix string = ''
 
+// ---- Optional firewall subnets (when `createFirewallSubnets` is true,
+// AzureFirewallSubnet and — for the Basic SKU — AzureFirewallManagementSubnet
+// are added to the VNet. Prefixes auto-default to non-overlapping /26 slots
+// past all standard subnets unless explicitly provided.) ----
+@description('Create AzureFirewallSubnet (and, for Basic SKU, AzureFirewallManagementSubnet).')
+param createFirewallSubnets bool = false
+
+@description('Address prefix for AzureFirewallSubnet. Auto-computed (non-overlapping /26 past the standard subnets) when empty and createFirewallSubnets=true.')
+param firewallSubnetPrefix string = ''
+
+@description('Address prefix for AzureFirewallManagementSubnet. Required for Firewall Basic SKU. Auto-computed when empty and createFirewallSubnets=true.')
+param firewallManagementSubnetPrefix string = ''
+
+// ---- Optional route table (when set, attached to agent + pe subnets so
+// traffic egresses via the firewall the route table points at.) ----
+@description('Optional route table resource ID to attach to agent + pe subnets. Used to route their outbound traffic through an Azure Firewall — the caller creates the route table empty, then populates it after the firewall private IP is known.')
+param routeTableResourceId string = ''
+
 var is_vnet_address_prefix_valid = int(split(vnetAddress, '/')[1]) <= 21
   ? true
   : fail('VNet address prefix must be /21 or larger (e.g., /16, /20)')
@@ -178,6 +196,56 @@ module apimSecurityGroup 'apim-nsg.bicep' = {
   }
 }
 
+var hasRouteTable = !empty(routeTableResourceId)
+
+// Standard subnets occupy /24 slots 0-7 of the VNet's /20 (when defaults
+// apply). Reserve /26 slots 32 + 33 (= .8.0/26 and .8.64/26 for a 192.168.0.0/20
+// VNet) for the firewall — past all standard /24s, no overlap possible.
+var autoFirewallSubnet = cidrSubnet(vnetAddress, 26, 32)
+var autoFirewallMgmtSubnet = cidrSubnet(vnetAddress, 26, 33)
+var resolvedFirewallSubnetPrefix = empty(firewallSubnetPrefix) ? autoFirewallSubnet : firewallSubnetPrefix
+var resolvedFirewallMgmtSubnetPrefix = empty(firewallManagementSubnetPrefix)
+  ? autoFirewallMgmtSubnet
+  : firewallManagementSubnetPrefix
+
+var firewallSubnetObjects = createFirewallSubnets
+  ? [
+      {
+        name: 'AzureFirewallSubnet'
+        addressPrefix: resolvedFirewallSubnetPrefix
+      }
+      {
+        name: 'AzureFirewallManagementSubnet'
+        addressPrefix: resolvedFirewallMgmtSubnetPrefix
+      }
+    ]
+  : []
+
+// Build agent + pe subnet objects so they have NO `routeTableResourceId`
+// property at all unless `routeTableResourceId` was explicitly passed. This
+// keeps the ARM payload byte-identical for existing consumers that don't use
+// firewall routing — AVM never sees the new key.
+var routeTableProps = hasRouteTable ? { routeTableResourceId: routeTableResourceId } : {}
+
+var agentSubnetObj = union(
+  {
+    name: agentSubnetName
+    addressPrefix: agentSubnet
+    delegation: 'Microsoft.app/environments'
+    networkSecurityGroupResourceId: networkSecurityGroup.outputs.resourceId
+  },
+  routeTableProps
+)
+
+var peSubnetObj = union(
+  {
+    name: peSubnetName
+    addressPrefix: peSubnet
+    networkSecurityGroupResourceId: networkSecurityGroup.outputs.resourceId
+  },
+  routeTableProps
+)
+
 module virtualNetwork 'br/public:avm/res/network/virtual-network:0.9.0' = {
   name: '${vnetName}-virtual-network-deployment'
   params: {
@@ -186,18 +254,9 @@ module virtualNetwork 'br/public:avm/res/network/virtual-network:0.9.0' = {
     tags: tags
     addressPrefixes: [vnetAddress]
     dnsServers: empty(customDNS) ? null : [customDNS]
-    subnets: union(extraAgentSubnetObjects, [
-      {
-        name: agentSubnetName
-        addressPrefix: agentSubnet
-        delegation: 'Microsoft.app/environments'
-        networkSecurityGroupResourceId: networkSecurityGroup.outputs.resourceId
-      }
-      {
-        name: peSubnetName
-        addressPrefix: peSubnet
-        networkSecurityGroupResourceId: networkSecurityGroup.outputs.resourceId
-      }
+    subnets: union(extraAgentSubnetObjects, firewallSubnetObjects, [
+      agentSubnetObj
+      peSubnetObj
       {
         name: appGwSubnetName
         addressPrefix: appGwSubnet
@@ -241,6 +300,7 @@ var extraAgentSubnetsArray = filter(
   map(virtualNetwork.outputs.subnetResourceIds, (subnetId, index) => {
     name: virtualNetwork.outputs.subnetNames[index]
     resourceId: subnetId
+    prefix: '' // Not returned by the VNet module, left blank here
   }),
   subnet => contains(extraAgentSubnetNames, subnet.name)
 )
@@ -249,6 +309,7 @@ var extraAgentSubnetsArray = filter(
 type SubnetInfoType = {
   name: string
   resourceId: string
+  prefix: string
 }
 type SubnetsType = {
   @description('The Agents Subnet information')
@@ -275,34 +336,42 @@ output VIRTUAL_NETWORK_SUBNETS SubnetsType = {
   agentSubnet: {
     name: agentSubnetName
     resourceId: '${virtualNetwork.outputs.resourceId}/subnets/${agentSubnetName}'
+    prefix: agentSubnet
   }
   peSubnet: {
     name: peSubnetName
     resourceId: '${virtualNetwork.outputs.resourceId}/subnets/${peSubnetName}'
+    prefix: peSubnet
   }
   appGwSubnet: {
     name: appGwSubnetName
     resourceId: '${virtualNetwork.outputs.resourceId}/subnets/${appGwSubnetName}'
+    prefix: appGwSubnet
   }
   apimSubnet: {
     name: apimSubnetName
     resourceId: '${virtualNetwork.outputs.resourceId}/subnets/${apimSubnetName}'
+    prefix: apimSubnet
   }
   apimv2Subnet: {
     name: apimv2SubnetName
     resourceId: '${virtualNetwork.outputs.resourceId}/subnets/${apimv2SubnetName}'
+    prefix: apimv2Subnet
   }
   apimv2PremiumSubnet: {
     name: apimv2PremiumSubnetName
     resourceId: '${virtualNetwork.outputs.resourceId}/subnets/${apimv2PremiumSubnetName}'
+    prefix: apimv2PremiumSubnet
   }
   logicAppsSubnet: {
     name: laSubnetName
     resourceId: '${virtualNetwork.outputs.resourceId}/subnets/${laSubnetName}'
+    prefix: laSubnet
   }
   acaSubnet: {
     name: acaSubnetName
     resourceId: '${virtualNetwork.outputs.resourceId}/subnets/${acaSubnetName}'
+    prefix: acaSubnet
   }
   extraAgentSubnets: extraAgentSubnetsArray
 }
@@ -312,3 +381,13 @@ output VIRTUAL_NETWORK_NAME string = virtualNetwork.name
 output VIRTUAL_NETWORK_RESOURCE_ID string = virtualNetwork.outputs.resourceId
 output VIRTUAL_NETWORK_RESOURCE_GROUP string = resourceGroup().name
 output VIRTUAL_NETWORK_SUBSCRIPTION_ID string = subscription().subscriptionId
+
+@description('Resource ID of AzureFirewallSubnet (empty when createFirewallSubnets=false).')
+output VIRTUAL_NETWORK_AZURE_FIREWALL_SUBNET_RESOURCE_ID string = createFirewallSubnets
+  ? '${virtualNetwork.outputs.resourceId}/subnets/AzureFirewallSubnet'
+  : ''
+
+@description('Resource ID of AzureFirewallManagementSubnet (empty when createFirewallSubnets=false).')
+output VIRTUAL_NETWORK_AZURE_FIREWALL_MANAGEMENT_SUBNET_RESOURCE_ID string = createFirewallSubnets
+  ? '${virtualNetwork.outputs.resourceId}/subnets/AzureFirewallManagementSubnet'
+  : ''

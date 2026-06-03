@@ -1,0 +1,188 @@
+# deploying using AZD because https://github.com/Azure/azure-cli/pull/31990
+name: foundry-byo-vnet-teams
+
+infra:
+  provider: bicep
+  path: .
+  module: main
+
+hooks:
+  # Preprovision: create the AAD app for Teams SSO (proxy bot OBO flow) and
+  # write SSO_APP_ID + SSO_APP_SECRET to the azd env so main.bicepparam can
+  # pick them up via readEnvironmentVariable. Safe to skip — the bicep will
+  # treat empty values as "SSO disabled".
+  preprovision:
+    windows:
+      shell: pwsh
+      run: |
+        & '../scripts/preprovision-sso-app.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      interactive: true
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        sh ../scripts/preprovision-sso-app.sh
+      interactive: true
+      continueOnError: false
+
+  # Postprovision: publish the agent to Microsoft 365 + build a Teams app
+  # sideload zip. Shared with foundry-publish-to-teams — keep both options'
+  # Bicep outputs in sync with the contract documented in the script header.
+  # Inline `run:` (vs a path) because azd rejects `path:`/`run:` values that
+  # escape the deployment option's project root. azd runs hooks with CWD =
+  # this folder, so `../scripts/...` resolves correctly at exec time.
+  postprovision:
+    windows:
+      shell: pwsh
+      run: |
+        & '../scripts/publish-teams-agent.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      interactive: true
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        sh ../scripts/publish-teams-agent.sh
+      interactive: true
+      continueOnError: false
+
+  predown:
+    windows:
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $api = '2025-06-01'
+        $sub = $env:AZURE_SUBSCRIPTION_ID
+        $rg  = $env:AZURE_RESOURCE_GROUP
+        $acct = $env:FOUNDRY_NAME
+        if (-not $acct) { Write-Host "FOUNDRY_NAME not set — nothing to destroy."; exit 0 }
+
+        $acctBase = "https://management.azure.com/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.CognitiveServices/accounts/$acct"
+
+        Write-Host "Listing projects under $acct..."
+        $projects = (az rest --method get --url "$acctBase/projects?api-version=$api" --query "value[].name" -o tsv) -split "`n" |
+          Where-Object { $_ } |
+          ForEach-Object { ($_ -split '/')[-1] }
+
+        foreach ($p in $projects) {
+          Write-Host "→ Starting capability host deletes for project $p"
+          $hosts = (az rest --method get --url "$acctBase/projects/$p/capabilityHosts?api-version=$api" --query "value[].name" -o tsv) -split "`n" |
+            Where-Object { $_ } |
+            ForEach-Object { ($_ -split '/')[-1] }
+          foreach ($h in $hosts) {
+            Write-Host "    - delete project caphost $h"
+            az rest --method delete --url "$acctBase/projects/$p/capabilityHosts/$h?api-version=$api" | Out-Null
+          }
+        }
+
+        Write-Host "→ Waiting for all project capability hosts to be removed..."
+        for ($i = 0; $i -lt 60; $i++) {
+          $remaining = 0
+          foreach ($p in $projects) {
+            $c = (az rest --method get --url "$acctBase/projects/$p/capabilityHosts?api-version=$api" --query "length(value)" -o tsv 2>$null)
+            if ($c) { $remaining += [int]$c }
+          }
+          if ($remaining -eq 0) { Write-Host "    All project caphosts gone."; break }
+          Write-Host "    $remaining project caphost(s) still present — waiting 5s..."
+          Start-Sleep -Seconds 5
+        }
+
+        Write-Host "→ Starting account-level capability host deletes"
+        $acctHosts = (az rest --method get --url "$acctBase/capabilityHosts?api-version=$api" --query "value[].name" -o tsv) -split "`n" |
+          Where-Object { $_ } |
+          ForEach-Object { ($_ -split '/')[-1] }
+        foreach ($h in $acctHosts) {
+          Write-Host "    - delete account caphost $h"
+          az rest --method delete --url "$acctBase/capabilityHosts/$h?api-version=$api" | Out-Null
+        }
+
+        Write-Host "→ Waiting for account capability hosts to be removed..."
+        for ($i = 0; $i -lt 60; $i++) {
+          $c = [int](az rest --method get --url "$acctBase/capabilityHosts?api-version=$api" --query "length(value)" -o tsv 2>$null)
+          if ($c -eq 0) { Write-Host "    All account caphosts gone."; break }
+          Write-Host "    $c account caphost(s) still present — waiting 5s..."
+          Start-Sleep -Seconds 5
+        }
+
+        foreach ($p in $projects) {
+          Write-Host "→ Deleting project $p"
+          az rest --method delete --url "$acctBase/projects/$p`?api-version=$api" | Out-Null
+        }
+
+        Write-Host "→ Deleting account $acct"
+        az cognitiveservices account delete -n $acct -g $rg
+        Write-Host "Foundry account + projects + caphosts removed."
+      interactive: true
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        set -e
+        api=2025-06-01
+        sub="${AZURE_SUBSCRIPTION_ID}"
+        rg="${AZURE_RESOURCE_GROUP}"
+        acct="${FOUNDRY_NAME}"
+        if [ -z "$acct" ]; then
+          echo "FOUNDRY_NAME not set — nothing to destroy."
+          exit 0
+        fi
+
+        acct_base="https://management.azure.com/subscriptions/${sub}/resourceGroups/${rg}/providers/Microsoft.CognitiveServices/accounts/${acct}"
+
+        echo "Listing projects under ${acct}..."
+        projects=$(az rest --method get --url "${acct_base}/projects?api-version=${api}" --query "value[].name" -o tsv \
+          | awk -F/ '{print $NF}')
+
+        for p in $projects; do
+          echo "→ Starting capability host deletes for project $p"
+          hosts=$(az rest --method get --url "${acct_base}/projects/${p}/capabilityHosts?api-version=${api}" --query "value[].name" -o tsv \
+            | awk -F/ '{print $NF}')
+          for h in $hosts; do
+            echo "    - delete project caphost $h"
+            az rest --method delete --url "${acct_base}/projects/${p}/capabilityHosts/${h}?api-version=${api}"
+          done
+        done
+
+        echo "→ Waiting for all project capability hosts to be removed..."
+        i=0
+        while [ $i -lt 60 ]; do
+          remaining=0
+          for p in $projects; do
+            c=$(az rest --method get --url "${acct_base}/projects/${p}/capabilityHosts?api-version=${api}" --query "length(value)" -o tsv 2>/dev/null || echo 0)
+            remaining=$((remaining + c))
+          done
+          if [ "$remaining" -eq 0 ]; then echo "    All project caphosts gone."; break; fi
+          echo "    $remaining project caphost(s) still present — waiting 5s..."
+          sleep 5
+          i=$((i + 1))
+        done
+
+        echo "→ Starting account-level capability host deletes"
+        acct_hosts=$(az rest --method get --url "${acct_base}/capabilityHosts?api-version=${api}" --query "value[].name" -o tsv \
+          | awk -F/ '{print $NF}')
+        for h in $acct_hosts; do
+          echo "    - delete account caphost $h"
+          az rest --method delete --url "${acct_base}/capabilityHosts/${h}?api-version=${api}"
+        done
+
+        echo "→ Waiting for account capability hosts to be removed..."
+        i=0
+        while [ $i -lt 60 ]; do
+          c=$(az rest --method get --url "${acct_base}/capabilityHosts?api-version=${api}" --query "length(value)" -o tsv 2>/dev/null || echo 0)
+          if [ "$c" -eq 0 ]; then echo "    All account caphosts gone."; break; fi
+          echo "    $c account caphost(s) still present — waiting 5s..."
+          sleep 5
+          i=$((i + 1))
+        done
+
+        for p in $projects; do
+          echo "→ Deleting project $p"
+          az rest --method delete --url "${acct_base}/projects/${p}?api-version=${api}"
+        done
+
+        echo "→ Deleting account ${acct}"
+        az cognitiveservices account delete -n "${acct}" -g "${rg}"
+        echo "Foundry account + projects + caphosts removed."
+      interactive: true
+      continueOnError: false
