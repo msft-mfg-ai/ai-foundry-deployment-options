@@ -56,8 +56,13 @@ resource existingCosmosDB 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' exi
 
 // regions that do not support Cosmos DB in EUAP or have limited capacity
 var canaryRegions = ['eastus2euap', 'centraluseuap']
-// TODO: fix if capacity issue is resolved
-var lowCapacityRegions = ['eastus', 'northeurope', 'westeurope']
+// Regions that routinely return Cosmos "high demand / zonal redundant accounts"
+// capacity errors at create time. We force the Cosmos write-region to eastus2
+// in these cases so deploys succeed — even though it means cross-region calls
+// from the Foundry agents subnet. The actual ARM resource still lives in the
+// caller's `location`; only the `locations[0].locationName` (the data region)
+// is overridden. Norway East is included as of 2026-05.
+var lowCapacityRegions = ['eastus', 'northeurope', 'westeurope', 'norwayeast']
 var cosmosDbRegion = contains(canaryRegions, location) ? 'westus' : location
 resource cosmosDB 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = if(!cosmosDBExists) {
   name: cosmosDBName
@@ -134,6 +139,7 @@ resource existingAzureStorageAccount 'Microsoft.Storage/storageAccounts@2023-05-
 }
 
 // Some regions doesn't support Standard Zone-Redundant storage, need to use Geo-redundant storage
+// Regions where Standard_ZRS is not available — those fall back to Standard_GRS.
 param noZRSRegions array = ['southindia', 'westus', 'northcentralus']
 param sku object = contains(noZRSRegions, location) ? { name: 'Standard_GRS' } : { name: 'Standard_ZRS' }
 

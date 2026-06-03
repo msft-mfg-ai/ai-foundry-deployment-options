@@ -2,7 +2,7 @@ param location string
 param name string
 param tags object = {}
 
-module identity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.0' = {
+module identity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.1' = {
   name: 'identity-${name}'
   params: {
     tags: tags

@@ -15,7 +15,7 @@ resource existingIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023
   name: existingIdentityName!
 }
 
-module newIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.0' = if (!useExistingIdentity) {
+module botServiceIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.1' = if (!useExistingIdentity) {
   name: '${identityName}-deployment'
   params: {
     name: identityName
@@ -27,11 +27,11 @@ module newIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.
 // --------------------------------------------------------------------------------------------------------------
 // Outputs
 // --------------------------------------------------------------------------------------------------------------
-output MANAGED_IDENTITY_RESOURCE_ID string = useExistingIdentity ? existingIdentity.id : newIdentity!.outputs.resourceId
-output MANAGED_IDENTITY_NAME string = useExistingIdentity ? existingIdentity.name : newIdentity!.outputs.name
+output MANAGED_IDENTITY_RESOURCE_ID string = useExistingIdentity ? existingIdentity.id : botServiceIdentity!.outputs.resourceId
+output MANAGED_IDENTITY_NAME string = useExistingIdentity ? existingIdentity.name : botServiceIdentity!.outputs.name
 output MANAGED_IDENTITY_CLIENT_ID string = useExistingIdentity
   ? existingIdentity!.properties.clientId
-  : newIdentity!.outputs.clientId
+  : botServiceIdentity!.outputs.clientId
 output MANAGED_IDENTITY_PRINCIPAL_ID string = useExistingIdentity
   ? existingIdentity!.properties.principalId
-  : newIdentity!.outputs.principalId
+  : botServiceIdentity!.outputs.principalId
