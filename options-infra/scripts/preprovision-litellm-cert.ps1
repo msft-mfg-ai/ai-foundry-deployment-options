@@ -18,7 +18,13 @@ if (-not $env:AZURE_ENV_NAME) {
 }
 
 function Get-AzdEnvValue([string]$name) {
-    try { (& azd env get-value $name 2>$null) } catch { $null }
+    # `azd env get-value` writes its "key not found" error to STDOUT and
+    # exits 1. try/catch on a native command doesn't catch that — we must
+    # check $LASTEXITCODE explicitly, otherwise the error message itself
+    # would be treated as a "value present" signal.
+    $out = & azd env get-value $name 2>$null
+    if ($LASTEXITCODE -ne 0) { return $null }
+    return $out
 }
 
 $existingPfx = Get-AzdEnvValue 'LITELLM_CERT_PFX_BASE64'

@@ -39,9 +39,13 @@ if [ -z "${AZURE_ENV_NAME:-}" ]; then
 fi
 
 # Idempotency check
-existing_pfx=$(azd env get-value LITELLM_CERT_PFX_BASE64 2>/dev/null || true)
-existing_pwd=$(azd env get-value LITELLM_CERT_PFX_PASSWORD 2>/dev/null || true)
-existing_ca=$(azd env get-value LITELLM_ROOT_CA_PEM_BASE64 2>/dev/null || true)
+# Idempotency check — note: `azd env get-value` writes its "key not found"
+# error to STDOUT (not stderr) and exits 1, so we must check the exit code
+# and fall back to empty on failure, otherwise the error message itself
+# would be treated as a "value present" signal.
+existing_pfx=$(azd env get-value LITELLM_CERT_PFX_BASE64 2>/dev/null) || existing_pfx=""
+existing_pwd=$(azd env get-value LITELLM_CERT_PFX_PASSWORD 2>/dev/null) || existing_pwd=""
+existing_ca=$(azd env get-value LITELLM_ROOT_CA_PEM_BASE64 2>/dev/null) || existing_ca=""
 
 if [ -z "${FORCE_REGENERATE:-}" ] \
    && [ -n "$existing_pfx" ] && [ -n "$existing_pwd" ] && [ -n "$existing_ca" ]; then
