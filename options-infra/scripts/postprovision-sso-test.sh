@@ -138,4 +138,78 @@ if [ "$warn_count" -eq 0 ]; then
 else
   echo "Summary: $pass_count passed, $warn_count failed/warned. This diagnostic is non-fatal."
 fi
+
+# ---------------------------------------------------------------------------
+# Deployment summary — explains what was provisioned in Microsoft Entra and
+# Bot Service so operators can verify in the portal or replicate the setup
+# manually in a tenant where this script can't run.
+# ---------------------------------------------------------------------------
+tenant_id=$(az account show --query tenantId -o tsv 2>/dev/null || echo "<unknown>")
+subscription_id=$(az account show --query id -o tsv 2>/dev/null || echo "<unknown>")
+container_app=$(get_azd_value PROXY_CONTAINER_APP_NAME)
+if [ -z "$container_app" ] && [ -n "$resource_group" ]; then
+  container_app=$(az resource list -g "$resource_group" --resource-type Microsoft.App/containerApps --query "[?contains(name, 'teams-proxy')].name | [0]" -o tsv 2>/dev/null || echo "<not-found>")
+fi
+proxy_fqdn=""
+if [ -n "$container_app" ] && [ -n "$resource_group" ]; then
+  proxy_fqdn=$(az containerapp show -n "$container_app" -g "$resource_group" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || echo "")
+fi
+
+cat <<EOF
+
+============================================================================
+Microsoft Entra app + Bot Service OAuth — what was provisioned
+============================================================================
+This is what the preprovision script set up for Teams SSO. Verify in the
+Entra portal, or recreate it manually in a tenant where automation can't
+run.
+
+  Microsoft Entra application registration
+    Display name              : sso-foundry-teams-${AZURE_ENV_NAME:-<env>}
+    Application (client) ID   : ${sso_app_id}
+    Tenant ID                 : ${tenant_id}
+    Sign-in audience          : AzureADMyOrg (single-tenant)
+    Application ID URI        : api://botid-${sso_app_id}
+    Access token version      : 2 (api.requestedAccessTokenVersion)
+    Optional claims (access)  : idtyp
+    Exposed scope             : access_as_user (delegated, user-consentable)
+    Pre-authorized clients    : 1fec8e78-bce4-4aaf-ab1b-5451cc387264  (Teams web)
+                                5e3ce6c0-2b1f-4285-8d4b-75ee78787346  (Teams desktop / mobile)
+    Required API permissions  : Microsoft Graph                 / User.Read     (Delegated)
+                                Azure AI Foundry (ai.azure.com) / user_impersonation (Delegated)
+    Web redirect URI          : https://token.botframework.com/.auth/web/redirect
+    Client secret             : created and stored in azd env (SSO_APP_SECRET)
+    Admin consent             : best-effort granted by the script
+
+  Bot Service OAuth connection (on bot '${bot_name}')
+    Connection name           : ${connection_name}
+    Service provider          : Azure Active Directory v2
+    Client ID                 : ${sso_app_id}
+    Client secret             : write-only; the same value as SSO_APP_SECRET
+    tokenExchangeUrl          : api://botid-${sso_app_id}
+    Scopes                    : https://ai.azure.com/user_impersonation offline_access
+
+  Container app env (proxy)
+    TeamsSso__ConnectionName  : ${connection_name}
+    TeamsSso__AadAppId        : ${sso_app_id}
+    TeamsSso__Resource        : api://botid-${sso_app_id}
+    TeamsSso__ClientSecret    : (Container Apps secret, sourced from SSO_APP_SECRET)
+
+Next steps
+  1. Verify the OAuth connection works:
+       Bot Service '${bot_name}' → Configuration → OAuth Connection Settings
+       → '${connection_name}' → 'Test connection'. Expect a JWT for aud=https://ai.azure.com.
+  2. Generate and install the Teams manifest:
+       Open https://${proxy_fqdn}/admin/manifest
+       Paste the bot's Microsoft App ID (the bot's UAMI client id), generate
+       the zip, and side-load it into Teams (Apps → Manage your apps →
+       Upload a custom app).
+  3. Open a chat with the bot in Teams. First message triggers silent SSO; on
+     a fresh install you may see a one-time consent dialog.
+
+  Portal links (this subscription):
+    Entra app:   https://portal.azure.com/#@${tenant_id}/blade/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/Overview/appId/${sso_app_id}
+    Bot Service: https://portal.azure.com/#@${tenant_id}/resource/subscriptions/${subscription_id}/resourceGroups/${resource_group}/providers/Microsoft.BotService/botServices/${bot_name}/Configuration
+EOF
+
 exit 0
