@@ -38,12 +38,14 @@ hooks:
       run: |
         & '../scripts/publish-teams-agent.ps1'
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & '../scripts/postprovision-sso-test.ps1'
       interactive: true
       continueOnError: false
     posix:
       shell: sh
       run: |
         sh ../scripts/publish-teams-agent.sh
+        sh ../scripts/postprovision-sso-test.sh
       interactive: true
       continueOnError: false
 

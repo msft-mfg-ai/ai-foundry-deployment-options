@@ -1,0 +1,42 @@
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    networks:
+      - traefik-net
+    restart: unless-stopped
+    depends_on:
+      - litellm-db
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@litellm-db:5432/${POSTGRES_DB}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      UI_USERNAME: ${UI_USERNAME}
+      UI_PASSWORD: ${UI_PASSWORD}
+      AZURE_API_BASE: ${AZURE_API_BASE}
+      AZURE_API_KEY: ${AZURE_API_KEY}
+      STORE_MODEL_IN_DB: "True"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.litellm.rule=Host(`litellm.domain.com`)
+      - traefik.http.routers.litellm.entrypoints=https
+      - traefik.http.services.litellm.loadbalancer.server.port=4000
+  litellm-db:
+    image: postgres:16-alpine
+    networks:
+      - traefik-net
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ./litellm-db:/var/lib/postgresql/data:rw
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    restart: on-failure:5
+networks:
+  traefik-net:
+    external: true

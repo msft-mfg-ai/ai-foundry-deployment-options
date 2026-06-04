@@ -24,6 +24,8 @@ param initContainersTemplate array = []
 param authentication object = {}
 param managedIdentityClientIdSecretName string = ''
 param containerArgs string[] = []
+@description('Optional. Custom domain bindings — pass-through to AVM. Each entry: { bindingType, name, certificateId? }. Used by the litellm-cert variant to bind a self-signed cert on a custom hostname.')
+param customDomains array = []
 
 var appSettingsArray = filter(array(definition.settings), i => i.name != '')
 var secrets = map(filter(appSettingsArray, i => i.?secret != null), i => {
@@ -142,6 +144,7 @@ module containerApp 'br/public:avm/res/app/container-app:0.20.0' = {
     location: location
     tags: union(tags, { 'azd-service-name': name })
     ingressExternal: ingressExternal
+    customDomains: empty(customDomains) ? null : customDomains
     volumes: additionalVolumes
     initContainersTemplate: initContainersTemplate
     authConfig: empty(authentication)

@@ -60,5 +60,13 @@ resource peDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@202
   }
 }
 
+resource peNic 'Microsoft.Network/networkInterfaces@2024-05-01' existing = {
+  name: nicName
+  dependsOn: [
+    pe
+  ]
+}
+
 output privateEndpointId string = pe.id
 output privateEndpointName string = pe.name
+output privateIpAddress string = peNic.properties.ipConfigurations[0].properties.privateIPAddress

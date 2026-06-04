@@ -16,7 +16,7 @@ $appId = az ad app list --display-name $displayName --query "[0].appId" -o tsv
 if (-not $appId) {
   $appId = az ad app create `
     --display-name $displayName `
-    --sign-in-audience AzureADMyOrg `
+    --sign-in-audience AzureADMultipleOrgs `
     --query appId -o tsv
   Write-Host "    created appId=$appId"
 } else {
@@ -27,12 +27,26 @@ if (-not $appId) {
 az ad sp show --id $appId 2>$null | Out-Null
 if ($LASTEXITCODE -ne 0) { az ad sp create --id $appId | Out-Null }
 
-$identifierUri = "api://$appId"
-$currentUris = az ad app show --id $appId --query "identifierUris" -o tsv
-if ($currentUris -notmatch [Regex]::Escape($identifierUri)) {
-  az ad app update --id $appId --identifier-uris $identifierUri
+# Set requestedAccessTokenVersion=2 — required by tenant policy when the
+# identifierUri uses the api://botid-<botId> format that Teams Bot SSO needs.
+Write-Host "-> Setting requestedAccessTokenVersion=2..."
+$objId = az ad app show --id $appId --query id -o tsv
+az rest --method PATCH `
+  --uri "https://graph.microsoft.com/v1.0/applications/$objId" `
+  --headers "Content-Type=application/json" `
+  --body '{"api":{"requestedAccessTokenVersion":2}}' | Out-Null
+
+# Teams Bot SSO requires identifierUri = api://botid-<aad-app-id>.
+# In the Teams docs, {YourBotId} is the Microsoft Entra application ID that
+# owns the SSO scope, i.e. this preprovision-created SSO app's appId.
+$identifierUri = "api://botid-$appId"
+$currentUris = (az ad app show --id $appId --query "identifierUris" -o tsv) -split "`n" | Where-Object { $_ }
+if ($currentUris -notcontains $identifierUri) {
+  $merged = @($currentUris) + $identifierUri
+  az ad app update --id $appId --identifier-uris @merged
+  Write-Host "    added identifierUri $identifierUri"
 } else {
-  Write-Host "    identifierUri already set"
+  Write-Host "    identifierUri $identifierUri already set"
 }
 
 # Register the Bot Framework token endpoint as a web reply URL. Without this
@@ -72,7 +86,7 @@ if (-not $existingScopes) {
       )
     }
   } | ConvertTo-Json -Depth 10
-  $tmp = New-TemporaryFile
+  $tmp = Join-Path $PSScriptRoot ".preprovision-sso-app-scope-$PID.json"
   Set-Content -Path $tmp -Value $scopeBody -Encoding utf8
   az rest --method PATCH `
     --url "https://graph.microsoft.com/v1.0/applications(appId='$appId')" `
@@ -92,27 +106,97 @@ if (-not $existingScopes) {
     --url "https://graph.microsoft.com/v1.0/applications(appId='$appId')" `
     --headers "Content-Type=application/json" `
     --body "@$tmp"
-  Remove-Item $tmp
+  Remove-Item -Path $tmp -Force -ErrorAction SilentlyContinue
   Write-Host "    exposed access_as_user scope + preauthorized Teams clients"
 } else {
   Write-Host "    oauth2PermissionScopes already configured"
 }
 
-# Required delegated permission against Azure AI Foundry (best-effort).
+# Required delegated permissions + Teams SSO token typing. Preserve existing
+# permissions/claims and only patch when something is missing.
+Write-Host "→ Ensuring optional claims and delegated API permissions are configured..."
+$graphResourceAppId = '00000003-0000-0000-c000-000000000000'
+$graphUserReadScopeId = 'e1fe6dd8-ba31-4d61-89e7-88639da4683d'
 $aiResourceAppId = az ad sp list --filter "servicePrincipalNames/any(s:s eq 'https://ai.azure.com')" --query "[0].appId" -o tsv
+$aiScopeId = ''
 if ($aiResourceAppId) {
   $aiScopeId = az ad sp show --id $aiResourceAppId --query "oauth2PermissionScopes[?value=='user_impersonation'].id | [0]" -o tsv
-  if ($aiScopeId) {
-    Write-Host "    adding requiredResourceAccess for Azure AI Foundry user_impersonation..."
-    az ad app permission add --id $appId `
-      --api $aiResourceAppId `
-      --api-permissions "$aiScopeId=Scope" 2>$null | Out-Null
-    Write-Host "    (run 'az ad app permission admin-consent --id $appId' as a tenant admin to grant consent)"
-  } else {
+  if (-not $aiScopeId) {
     Write-Warning "Could not find 'user_impersonation' scope on Foundry SP — add it manually"
   }
 } else {
   Write-Warning "Azure AI Foundry SP (https://ai.azure.com) not found in this tenant — grant consent manually"
+}
+
+$appState = az rest --method GET `
+  --uri "https://graph.microsoft.com/v1.0/applications/$objId`?`$select=optionalClaims,requiredResourceAccess" `
+  -o json | ConvertFrom-Json
+$patch = @{}
+$changed = $false
+
+$optionalClaims = $appState.optionalClaims
+if (-not $optionalClaims) { $optionalClaims = [pscustomobject]@{} }
+$accessTokenClaims = @($optionalClaims.accessToken)
+if (-not ($accessTokenClaims | Where-Object { $_.name -eq 'idtyp' })) {
+  $accessTokenClaims += [pscustomobject]@{
+    name = 'idtyp'
+    source = $null
+    essential = $false
+    additionalProperties = @()
+  }
+  if ($optionalClaims.PSObject.Properties.Name -contains 'accessToken') {
+    $optionalClaims.accessToken = $accessTokenClaims
+  } else {
+    $optionalClaims | Add-Member -NotePropertyName accessToken -NotePropertyValue $accessTokenClaims
+  }
+  $patch['optionalClaims'] = $optionalClaims
+  $changed = $true
+}
+
+$requiredResourceAccess = @($appState.requiredResourceAccess)
+function Ensure-ScopePermission($resourceAppId, $scopeId) {
+  if ([string]::IsNullOrWhiteSpace($resourceAppId) -or [string]::IsNullOrWhiteSpace($scopeId)) { return }
+  $entry = $script:requiredResourceAccess | Where-Object { $_.resourceAppId -eq $resourceAppId } | Select-Object -First 1
+  if (-not $entry) {
+    $script:requiredResourceAccess += [pscustomobject]@{
+      resourceAppId = $resourceAppId
+      resourceAccess = @([pscustomobject]@{ id = $scopeId; type = 'Scope' })
+    }
+    $script:changed = $true
+    return
+  }
+  $access = @($entry.resourceAccess)
+  if (-not ($access | Where-Object { $_.id -eq $scopeId -and $_.type -eq 'Scope' })) {
+    $access += [pscustomobject]@{ id = $scopeId; type = 'Scope' }
+    $entry.resourceAccess = $access
+    $script:changed = $true
+  }
+}
+Ensure-ScopePermission $graphResourceAppId $graphUserReadScopeId
+Ensure-ScopePermission $aiResourceAppId $aiScopeId
+if ($changed) { $patch['requiredResourceAccess'] = $requiredResourceAccess }
+
+if ($patch.Count -gt 0) {
+  $patchFile = Join-Path $PSScriptRoot ".preprovision-sso-app-patch-$PID.json"
+  try {
+    $patch | ConvertTo-Json -Depth 20 | Set-Content -Path $patchFile -Encoding utf8
+    az rest --method PATCH `
+      --uri "https://graph.microsoft.com/v1.0/applications/$objId" `
+      --headers "Content-Type=application/json" `
+      --body "@$patchFile" | Out-Null
+    Write-Host "    patched optionalClaims.accessToken[idtyp] and requiredResourceAccess"
+  } finally {
+    Remove-Item -Path $patchFile -Force -ErrorAction SilentlyContinue
+  }
+} else {
+  Write-Host "    optional claims and API permissions already configured"
+}
+
+az ad app permission admin-consent --id $appId 2>$null | Out-Null
+if ($LASTEXITCODE -eq 0) {
+  Write-Host "    admin consent granted for configured API permissions"
+} else {
+  Write-Warning "Admin consent was not granted; run 'az ad app permission admin-consent --id $appId' as a tenant admin"
 }
 
 Write-Host "→ Minting fresh client secret..."

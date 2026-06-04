@@ -35,7 +35,7 @@ app_id=$(az ad app list --display-name "$display_name" --query "[0].appId" -o ts
 if [ -z "$app_id" ]; then
   app_id=$(az ad app create \
     --display-name "$display_name" \
-    --sign-in-audience AzureADMyOrg \
+    --sign-in-audience AzureADMultipleOrgs \
     --query appId -o tsv)
   echo "    created appId=$app_id"
 else
@@ -45,13 +45,25 @@ fi
 # Make sure a service principal exists for the app — required for OBO.
 az ad sp show --id "$app_id" >/dev/null 2>&1 || az ad sp create --id "$app_id" >/dev/null
 
-# Set the identifier URI to api://<appId> if not already set. Teams SSO
-# token exchange URL must match this value.
-identifier_uri="api://$app_id"
+# Set requestedAccessTokenVersion to 2 — required by tenant policy when the
+# identifierUri uses a non-default format like api://botid-<botId>, which
+# Teams Bot SSO mandates. Also required for v2 endpoint compatibility.
+echo "→ Setting requestedAccessTokenVersion=2 on the AAD app..."
+obj_id=$(az ad app show --id "$app_id" --query id -o tsv)
+az rest --method PATCH \
+  --uri "https://graph.microsoft.com/v1.0/applications/$obj_id" \
+  --headers "Content-Type=application/json" \
+  --body '{"api":{"requestedAccessTokenVersion":2}}' >/dev/null
+
+# Set the identifier URI. Teams Bot SSO requires `api://botid-<aad-app-id>`.
+# In the Teams docs, {YourBotId} is the Microsoft Entra application ID that
+# owns the SSO scope, i.e. this preprovision-created SSO app's appId.
+identifier_uri="api://botid-$app_id"
 current_uris=$(az ad app show --id "$app_id" --query "identifierUris" -o tsv 2>/dev/null || true)
 case " $current_uris " in
-  *" $identifier_uri "*) echo "    identifierUri already set" ;;
-  *) az ad app update --id "$app_id" --identifier-uris "$identifier_uri" ;;
+  *" $identifier_uri "*) echo "    identifierUri $identifier_uri already set" ;;
+  *) az ad app update --id "$app_id" --identifier-uris $current_uris "$identifier_uri" && \
+     echo "    added identifierUri $identifier_uri" ;;
 esac
 
 # Register the Bot Framework token endpoint as a web reply URL. Without this
@@ -68,7 +80,7 @@ case " $current_replies " in
 esac
 
 # Expose `access_as_user` delegated scope so Teams can request a token for
-# api://<appId>/access_as_user. Only patched if the app has no scopes yet.
+# api://botid-<appId>/access_as_user. Only patched if the app has no scopes yet.
 existing_scopes=$(az ad app show --id "$app_id" --query "api.oauth2PermissionScopes[].value" -o tsv 2>/dev/null || true)
 if [ -z "$existing_scopes" ]; then
   scope_id=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen)
@@ -94,7 +106,8 @@ if [ -z "$existing_scopes" ]; then
 }
 JSON
 )
-  tmp=$(mktemp)
+  script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+  tmp="$script_dir/.preprovision-sso-app-scope-$$.json"
   printf '%s' "$scope_json" > "$tmp"
   az rest --method PATCH \
     --url "https://graph.microsoft.com/v1.0/applications(appId='$app_id')" \
@@ -123,22 +136,85 @@ else
   echo "    oauth2PermissionScopes already configured"
 fi
 
-# Required delegated permission against Azure AI Foundry (best-effort).
-# The resource SP is Microsoft-owned and exposes a user_impersonation scope.
+# Required delegated permissions + Teams SSO token typing. Preserve existing
+# permissions/claims and only patch when something is missing.
+echo "→ Ensuring optional claims and delegated API permissions are configured..."
+graph_resource_app_id="00000003-0000-0000-c000-000000000000"
+graph_user_read_scope_id="e1fe6dd8-ba31-4d61-89e7-88639da4683d"
 ai_resource_app_id=$(az ad sp list --filter "servicePrincipalNames/any(s:s eq 'https://ai.azure.com')" --query "[0].appId" -o tsv 2>/dev/null || true)
+ai_scope_id=""
 if [ -n "$ai_resource_app_id" ]; then
   ai_scope_id=$(az ad sp show --id "$ai_resource_app_id" --query "oauth2PermissionScopes[?value=='user_impersonation'].id | [0]" -o tsv 2>/dev/null || true)
-  if [ -n "$ai_scope_id" ]; then
-    echo "    adding requiredResourceAccess for Azure AI Foundry user_impersonation..."
-    az ad app permission add --id "$app_id" \
-      --api "$ai_resource_app_id" \
-      --api-permissions "${ai_scope_id}=Scope" >/dev/null 2>&1 || true
-    echo "    (run 'az ad app permission admin-consent --id $app_id' as a tenant admin to grant consent)"
-  else
+  if [ -z "$ai_scope_id" ]; then
     echo "    WARN: could not find 'user_impersonation' scope on Foundry SP — add it manually" >&2
   fi
 else
   echo "    WARN: Azure AI Foundry SP (https://ai.azure.com) not found in this tenant — grant consent manually" >&2
+fi
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+app_state_file="$script_dir/.preprovision-sso-app-state-$$.json"
+patch_file="$script_dir/.preprovision-sso-app-patch-$$.json"
+trap 'rm -f "$app_state_file" "$patch_file"' EXIT HUP INT TERM
+az rest --method GET \
+  --uri "https://graph.microsoft.com/v1.0/applications/$obj_id?\$select=optionalClaims,requiredResourceAccess" \
+  -o json > "$app_state_file"
+
+APP_STATE_FILE="$app_state_file" PATCH_FILE="$patch_file" \
+GRAPH_RESOURCE_APP_ID="$graph_resource_app_id" GRAPH_USER_READ_SCOPE_ID="$graph_user_read_scope_id" \
+AI_RESOURCE_APP_ID="$ai_resource_app_id" AI_SCOPE_ID="$ai_scope_id" \
+python3 - <<'PY'
+import json, os
+from pathlib import Path
+state = json.loads(Path(os.environ['APP_STATE_FILE']).read_text())
+patch = {}
+changed = False
+
+optional = state.get('optionalClaims') or {}
+access = list(optional.get('accessToken') or [])
+if not any(c.get('name') == 'idtyp' for c in access):
+    access.append({'name': 'idtyp', 'source': None, 'essential': False, 'additionalProperties': []})
+    optional['accessToken'] = access
+    patch['optionalClaims'] = optional
+    changed = True
+
+required = list(state.get('requiredResourceAccess') or [])
+def ensure_scope(resource_app_id, scope_id):
+    global changed
+    if not resource_app_id or not scope_id:
+        return
+    entry = next((r for r in required if r.get('resourceAppId') == resource_app_id), None)
+    if entry is None:
+        required.append({'resourceAppId': resource_app_id, 'resourceAccess': [{'id': scope_id, 'type': 'Scope'}]})
+        changed = True
+        return
+    access = list(entry.get('resourceAccess') or [])
+    if not any(a.get('id') == scope_id and a.get('type') == 'Scope' for a in access):
+        access.append({'id': scope_id, 'type': 'Scope'})
+        entry['resourceAccess'] = access
+        changed = True
+
+ensure_scope(os.environ['GRAPH_RESOURCE_APP_ID'], os.environ['GRAPH_USER_READ_SCOPE_ID'])
+ensure_scope(os.environ.get('AI_RESOURCE_APP_ID', ''), os.environ.get('AI_SCOPE_ID', ''))
+if changed:
+    patch['requiredResourceAccess'] = required
+    Path(os.environ['PATCH_FILE']).write_text(json.dumps(patch, separators=(',', ':')))
+PY
+
+if [ -s "$patch_file" ]; then
+  az rest --method PATCH \
+    --uri "https://graph.microsoft.com/v1.0/applications/$obj_id" \
+    --headers "Content-Type=application/json" \
+    --body "@$patch_file" >/dev/null
+  echo "    patched optionalClaims.accessToken[idtyp] and requiredResourceAccess"
+else
+  echo "    optional claims and API permissions already configured"
+fi
+
+if az ad app permission admin-consent --id "$app_id" >/dev/null 2>&1; then
+  echo "    admin consent granted for configured API permissions"
+else
+  echo "    WARN: admin consent was not granted; run 'az ad app permission admin-consent --id $app_id' as a tenant admin" >&2
 fi
 
 # Mint a fresh secret. We append rather than replace so older deployments
