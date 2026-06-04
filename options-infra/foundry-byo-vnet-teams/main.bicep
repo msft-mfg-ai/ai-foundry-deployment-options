@@ -26,6 +26,13 @@ param ssoAppSecret string = ''
 var enableSso = !empty(ssoAppId) && !empty(ssoAppSecret)
 var ssoConnectionName = 'foundry-sso'
 
+// Teams Bot SSO requires the AAD app's identifierUri (and the OAuthCard's
+// tokenExchangeResource.Uri) to follow `api://botid-<aad-app-id>` per
+// https://learn.microsoft.com/microsoftteams/platform/bots/how-to/authentication/bot-sso-register-aad.
+// In the Teams docs, {YourBotId} is the Microsoft Entra application ID that
+// owns the SSO scope, which is the SSO AAD app id created by preprovision.
+var ssoTokenExchangeResource = enableSso ? 'api://botid-${ssoAppId}' : ''
+
 var tags = {
   'created-by': 'foundry-byo-vnet-teams'
   'hidden-title': 'Foundry Standard - BYO VNet + Teams Agents'
@@ -267,6 +274,11 @@ module teamsProxy '../modules/aca/container-app.bicep' = {
         { name: 'BOTSERVICE_UAMI_CLIENTID', value: botSharedIdentity.outputs.MANAGED_IDENTITY_CLIENT_ID }
         // Teams SSO — the C# proxy enables OBO when ConnectionName is set.
         { name: 'TeamsSso__ConnectionName', value: enableSso ? ssoConnectionName : '' }
+        // AadAppId + Resource are required by the manifest builder to emit
+        // webApplicationInfo. Without them Teams silent SSO returns
+        // resourcematchfailed because the manifest has nothing to match.
+        { name: 'TeamsSso__AadAppId', value: enableSso ? ssoAppId : '' }
+        { name: 'TeamsSso__Resource', value: ssoTokenExchangeResource }
         // Inline Container Apps secret — only referenced when SSO is enabled.
         // Stored as a Container App secret rather than a plain env value.
         ...(enableSso ? [{
@@ -277,7 +289,7 @@ module teamsProxy '../modules/aca/container-app.bicep' = {
       ]
     }
     ingressTargetPort: 8080
-    existingImage: 'ghcr.io/karpikpl/foundry-teams-bot-service-proxy:0.3.1'
+    existingImage: 'ghcr.io/karpikpl/foundry-teams-bot-service-proxy:0.7.0'
     userAssignedManagedIdentityClientId: botSharedIdentity.outputs.MANAGED_IDENTITY_CLIENT_ID
     userAssignedManagedIdentityResourceId: botSharedIdentity.outputs.MANAGED_IDENTITY_RESOURCE_ID
     ingressExternal: true
@@ -323,7 +335,7 @@ module botServiceForProxy '../modules/bot/bot-service.bicep' = {
     ssoConnectionName: enableSso ? ssoConnectionName : ''
     ssoClientId:       ssoAppId
     ssoClientSecret:   ssoAppSecret
-    ssoTokenExchangeUrl: enableSso ? 'api://${ssoAppId}' : ''
+    ssoTokenExchangeUrl: ssoTokenExchangeResource
   }
 }
 
@@ -362,7 +374,9 @@ var teamsManifest = {
     outline: 'default-outline-icon.png'
   }
   accentColor: '#0078D4'
-  validDomains: []
+  validDomains: [
+    'token.botframework.com'
+  ]
   webApplicationInfo: {
     id: teamsAgent.outputs.agentIdentityAppId
     resource: 'https://ai.azure.com'
@@ -448,10 +462,12 @@ var teamsManifestProxy = {
     outline: 'default-outline-icon.png'
   }
   accentColor: '#0078D4'
-  validDomains: []
+  validDomains: [
+    'token.botframework.com'
+  ]
   webApplicationInfo: enableSso ? {
     id: ssoAppId
-    resource: 'api://${ssoAppId}'
+    resource: ssoTokenExchangeResource
   } : {
     id: botSharedIdentity.outputs.MANAGED_IDENTITY_CLIENT_ID
     resource: 'https://ai.azure.com'
@@ -486,3 +502,4 @@ output TEAMS_MANIFEST_PROXY_JSON string = string(teamsManifestProxy)
 output SSO_CONNECTION_NAME string = enableSso ? ssoConnectionName : ''
 output SSO_APP_ID string = ssoAppId
 output PROXY_BOT_APP_ID string = botSharedIdentity.outputs.MANAGED_IDENTITY_CLIENT_ID
+output PROXY_BOT_NAME string = botServiceForProxy.outputs.botName

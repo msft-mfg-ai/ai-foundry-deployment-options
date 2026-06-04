@@ -27,6 +27,7 @@ The provision step deploys the infrastructure; the **postprovision** hook (in `a
 2. Reads the `TEAMS_MANIFEST_JSON` Bicep output and writes it to `teams-app/build/manifest.json`.
 3. Copies `teams-app/color.png` + `teams-app/outline.png` next to it.
 4. Zips all three into `teams-app/build/teams-app.zip`.
+5. Runs a non-fatal Teams SSO OAuth connection sanity check (`foundry-sso`) and prints PASS/FAIL diagnostics.
 
 Sideload `teams-app/build/teams-app.zip` into Teams (Teams Admin Center → **Manage apps** → **Upload**, or *Apps → Upload a custom app* for personal sideload).
 
