@@ -48,12 +48,15 @@ az ad sp show --id "$app_id" >/dev/null 2>&1 || az ad sp create --id "$app_id" >
 # Set requestedAccessTokenVersion to 2 — required by tenant policy when the
 # identifierUri uses a non-default format like api://botid-<botId>, which
 # Teams Bot SSO mandates. Also required for v2 endpoint compatibility.
-echo "→ Setting requestedAccessTokenVersion=2 on the AAD app..."
+# Also enforce signInAudience=AzureADMyOrg here (idempotent on reused apps —
+# `az ad app create --sign-in-audience` only applies on first creation, so a
+# reused app from an earlier multi-tenant run would otherwise drift).
+echo "→ Enforcing requestedAccessTokenVersion=2 and signInAudience=AzureADMyOrg..."
 obj_id=$(az ad app show --id "$app_id" --query id -o tsv)
 az rest --method PATCH \
   --uri "https://graph.microsoft.com/v1.0/applications/$obj_id" \
   --headers "Content-Type=application/json" \
-  --body '{"api":{"requestedAccessTokenVersion":2}}' >/dev/null
+  --body '{"api":{"requestedAccessTokenVersion":2},"signInAudience":"AzureADMyOrg"}' >/dev/null
 
 # Set the identifier URI. Teams Bot SSO requires `api://botid-<aad-app-id>`.
 # In the Teams docs, {YourBotId} is the Microsoft Entra application ID that
