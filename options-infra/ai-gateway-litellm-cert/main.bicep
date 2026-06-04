@@ -340,6 +340,41 @@ callback_settings:
 
 var phase2 = !empty(liteLlmDomain)
 
+// Private DNS zone for the LiteLLM custom domain. ACA binds <liteLlmDomain>
+// to its ingress for TLS termination but does NOT publish DNS for it. Without
+// this zone, the nginx proxy (and any other VNet workload) gets NXDOMAIN
+// when it tries to resolve <liteLlmDomain> via Azure DNS (168.63.129.16),
+// and proxy_pass fails before TLS validation can even begin.
+//
+// The zone covers the full FQDN with an A record at the apex (`@`) pointing
+// to the ACA managed environment's static IP. The env routes by Host header
+// to the LiteLLM container app's custom-domain binding.
+module liteLlmDomainPrivateDnsZone 'br/public:avm/res/network/private-dns-zone:0.8.0' = if (phase2) {
+  name: 'litellm-domain-private-dns-${resourceToken}'
+  params: {
+    tags: tags
+    name: liteLlmDomain
+    location: 'global'
+    virtualNetworkLinks: [
+      {
+        virtualNetworkResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
+        registrationEnabled: false
+      }
+    ]
+    a: [
+      {
+        name: '@'
+        ttl: 300
+        aRecords: [
+          {
+            ipv4Address: liteLlm.outputs.containerAppsEnvironmentStaticIp
+          }
+        ]
+      }
+    ]
+  }
+}
+
 // nginx proxy that fronts LiteLLM. Uses the default *.azurecontainerapps.io
 // FQDN (MS-trusted cert), terminates Foundry's HTTPS, then re-issues the
 // request to LiteLLM's custom-domain endpoint with the self-signed cert
@@ -361,6 +396,9 @@ module liteLlmProxy '../modules/litellm/litellm-proxy.bicep' = if (phase2) {
     liteLlmDomain: liteLlmDomain
     liteLlmRootCaPemBase64: liteLlmRootCaPemBase64
   }
+  dependsOn: [
+    liteLlmDomainPrivateDnsZone
+  ]
 }
 
 // Foundry ModelGateway connections — point at the proxy (phase 2 only).

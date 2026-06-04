@@ -340,8 +340,20 @@ module liteLlmApp '../aca/container-app.bicep' = {
     keyVaultName: keyVault.outputs.KEY_VAULT_NAME
     probes: [
       {
+        type: 'Startup'
+        initialDelaySeconds: 10
+        periodSeconds: 10
+        failureThreshold: 30
+        httpGet: {
+          path: '/health/readiness'
+          port: 4000
+        }
+      }
+      {
         type: 'Readiness'
         initialDelaySeconds: 5
+        periodSeconds: 10
+        failureThreshold: 3
         httpGet: {
           path: '/health/readiness'
           port: 4000
@@ -350,6 +362,8 @@ module liteLlmApp '../aca/container-app.bicep' = {
       {
         type: 'Liveness'
         initialDelaySeconds: 5
+        periodSeconds: 30
+        failureThreshold: 3
         httpGet: {
           path: '/health/liveliness'
           port: 4000
@@ -387,6 +401,7 @@ module liteLlmConnectionStatic '../ai/connection-modelgateway-static.bicep' = if
 output liteLlmAcaFqdn string = liteLlmApp.outputs.CONTAINER_APP_FQDN
 output containerAppsEnvironmentId string = managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_ID
 output containerAppsEnvironmentDefaultDomain string = managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN
+output containerAppsEnvironmentStaticIp string = managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_STATIC_IP
 output containerAppsWorkloadProfileName string = managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
 output keyVaultName string = keyVault.outputs.KEY_VAULT_NAME
 output certConfigValid bool = custom_domain_cert_valid
