@@ -27,15 +27,20 @@ param targetUrl string = 'https://your-model-gateway.example.com/v1'
 param gatewayName string = 'example-gateway'
 
 // Connection configuration (ModelGateway only supports ApiKey)
+@allowed(['ApiKey', 'ProjectManagedIdentity'])
 param authType string = 'ApiKey'
 param isSharedToAll bool = true
 
 // Connection naming - can be overridden via parameter
 param connectionName string = '' // Optional: specify custom connection name
 
-// API key for the ModelGateway endpoint
+// API key for the ModelGateway endpoint (only used when authType=ApiKey;
+// optional/ignored under ProjectManagedIdentity).
 @secure()
-param apiKey string
+param apiKey string = ''
+
+@description('Audience for the bearer token under ProjectManagedIdentity auth (ignored under ApiKey). Defaults to https://cognitiveservices.azure.com.')
+param audience string = 'https://cognitiveservices.azure.com'
 
 @description('Authentication configuration (object for custom auth headers)')
 param authConfig AuthConfigType?
@@ -91,12 +96,20 @@ param staticModels array = [
 var hasAuthConfig = !empty(authConfig)
 
 // Build the metadata object for ModelGateway Static Models
-// All values must be strings, including serialized JSON objects
+// All values must be strings, including serialized JSON objects.
+//
+// `customHeaders` carries a constant marker. It is REQUIRED for the Foundry
+// portal's BYOM page to honor `metadata.models` — without a non-empty
+// customHeaders field the portal silently falls back to a global-catalog
+// discovery count (typically 100+). See
+// agents_anthropic/foundry-byom-ui-findings.md and the matching logic in
+// connection-apim-gateway.bicep.
 var modelGatewayMetadata = union(
   {
     deploymentInPath: deploymentInPath
     inferenceAPIVersion: inferenceAPIVersion
     models: string(staticModels) // Serialize static models array as JSON string
+    customHeaders: string({ 'x-ms-foundry-models': 'byom' })
   },
   // Conditionally include custom auth configuration
   hasAuthConfig
@@ -115,6 +128,7 @@ module modelGatewayConnection 'modelgateway-connection-common.bicep' = {
     connectionName: finalConnectionName
     targetUrl: targetUrl
     authType: authType
+    audience: audience
     isSharedToAll: isSharedToAll
     apiKey: apiKey
     metadata: modelGatewayMetadata

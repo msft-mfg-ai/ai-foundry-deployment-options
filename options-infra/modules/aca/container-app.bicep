@@ -1,7 +1,7 @@
 param location string
 param tags object = {}
 param name string
-param definition object
+param definition containerAppDefinition
 param existingImage string = ''
 param applicationInsightsConnectionString string
 param userAssignedManagedIdentityClientId string
@@ -28,10 +28,15 @@ param containerArgs string[] = []
 var appSettingsArray = filter(array(definition.settings), i => i.name != '')
 var secrets = map(filter(appSettingsArray, i => i.?secret != null), i => {
   name: i.name
-  secretName: i.?keyVaultSecretName != null ? i.keyVaultSecretName : '' // Use Key Vault secret name
+  // Container Apps secret name. For Key Vault refs we reuse the KV secret name;
+  // for inline values we derive a kebab-case name from the env var name.
+  secretName: i.?keyVaultSecretName != null
+    ? i.keyVaultSecretName
+    : toLower(replace(i.name, '_', '-'))
   secretUri: i.?keyVaultSecretName != null
     ? 'https://${keyVaultName}${environment().suffixes.keyvaultDns}/secrets/${i.keyVaultSecretName}'
-    : '' // Use Key Vault secret reference
+    : ''
+  inlineValue: i.?secretValue
   path: i.?path
 })
 var srcEnv = map(filter(appSettingsArray, i => i.?secret == null), i => {
@@ -80,10 +85,14 @@ module containerApp 'br/public:avm/res/app/container-app:0.20.0' = {
     }
     secrets: union(
       [],
-      map(secrets, secret => {
-        name: secret.secretName // Use Key Vault secret name
-        value: null // Value is not needed when using Key Vault references
-        keyVaultUrl: secret.secretUri // Add Key Vault secret URI
+      map(secrets, secret => secret.inlineValue != null ? {
+        // Inline value — stored directly as a Container Apps secret.
+        name: secret.secretName
+        value: secret.inlineValue
+      } : {
+        // Key Vault reference — resolved at runtime via the app's UAMI.
+        name: secret.secretName
+        keyVaultUrl: secret.secretUri
         identity: userAssignedManagedIdentityResourceId
       })
     )
@@ -168,3 +177,36 @@ output CONTAINER_APP_RESOURCE_ID string = containerApp.outputs.resourceId
 output CONTAINER_APP_NAME string = containerApp.outputs.name
 output CONTAINER_APP_FQDN string = 'https://${containerApp.outputs.fqdn}'
 output CONTAINER_APP_AUTHENTICATION_CALLBACK_URI string = 'https://${containerApp.outputs.fqdn}/.auth/login/aad/callback'
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+@export()
+@description('One entry in `definition.settings`. Plain env var (`name` + `value`), Key Vault-backed secret (`name` + `secret: true` + `keyVaultSecretName`), or inline secret stored as a Container Apps secret (`name` + `secret: true` + `secretValue`).')
+type containerAppSetting = {
+  @description('Environment variable name inside the container.')
+  name: string
+
+  @description('Plain value. Omit when this entry is a secret.')
+  value: string?
+
+  @description('When true, the value is sourced from a secret (Key Vault or inline).')
+  secret: bool?
+
+  @description('Key Vault secret name. Mutually exclusive with `secretValue`.')
+  keyVaultSecretName: string?
+
+  @description('Inline secret value, stored as a Container Apps secret. Mutually exclusive with `keyVaultSecretName`. Pass a @secure() param to keep it out of logs.')
+  @secure()
+  secretValue: string?
+
+  @description('Optional mount path. When set, the secret is also mounted as a file under `/run/secrets/<path>` (Key Vault secrets only).')
+  path: string?
+}
+
+@export()
+@description('Shape of the `definition` param passed into this module. Currently just a wrapped `settings` array, kept as an object so future fields can be added without breaking callers.')
+type containerAppDefinition = {
+  @description('App settings — env vars and/or Key Vault-backed secrets.')
+  settings: containerAppSetting[]
+}

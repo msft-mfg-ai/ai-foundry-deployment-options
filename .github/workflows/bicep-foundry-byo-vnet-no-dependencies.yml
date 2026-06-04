@@ -1,16 +1,16 @@
-name: 'Bicep: foundry-byo-vnet'
+name: 'Bicep: foundry-byo-vnet-no-dependencies'
 
 on:
   push:
     branches: [main]
     paths:
-      - 'options-infra/foundry-byo-vnet/**'
+      - 'options-infra/foundry-byo-vnet-no-dependencies/**'
       - 'options-infra/modules/**'
       - '.github/workflows/bicep-validate-reusable.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'options-infra/foundry-byo-vnet/**'
+      - 'options-infra/foundry-byo-vnet-no-dependencies/**'
       - 'options-infra/modules/**'
       - '.github/workflows/bicep-validate-reusable.yml'
 
@@ -19,4 +19,4 @@ jobs:
     uses: ./.github/workflows/bicep-validate-reusable.yml
     with:
       bicep-file: main.bicep
-      working-directory: options-infra/foundry-byo-vnet
+      working-directory: options-infra/foundry-byo-vnet-no-dependencies

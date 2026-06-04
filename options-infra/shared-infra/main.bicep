@@ -18,7 +18,7 @@ param aiServicesPublicName string = 'foundry-landing-zone-${location}-PUBLIC-${r
 // Foundry doesn't support cross-subscription VNet injection or cross subscription resources, so we need to deploy it in the same subscription
 var doesFoundrySupportsCrossSubscriptionVnet = false
 
-module identity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.0' = {
+module identity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.1' = {
   name: 'mgmtidentity-${uniqueString(deployment().name, location)}'
   params: {
     location: location
@@ -27,7 +27,7 @@ module identity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.0
   }
 }
 
-module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.15.0' = {
+module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.15.1' = {
   name: 'log-${resourceToken}'
   params: {
     location: location
@@ -41,7 +41,7 @@ module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.15.0' = 
   }
 }
 
-module appInsights 'br/public:avm/res/insights/component:0.7.1' = {
+module appInsights 'br/public:avm/res/insights/component:0.7.2' = {
   name: 'appinsights-${resourceToken}'
   params: {
     location: location
@@ -170,16 +170,24 @@ module managedEnvironment '../modules/aca/container-app-environment.bicep' = {
   }
 }
 
-module appMcp '../modules/aca/container-app.bicep' = {
-  name: 'app-mcp'
+module teamsProxy '../modules/aca/container-app.bicep' = {
+  name: 'teams-proxy'
   params: {
     location: location
     tags: tags
-    name: 'aca-mcp-${resourceToken}'
+    name: 'teams-proxy-${resourceToken}'
     workloadProfileName: managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
     applicationInsightsConnectionString: appInsights.outputs.connectionString
     definition: {
-      settings: []
+      settings: [
+        {name: 'Foundry__ProjectEndpoint', value: 'https://$FOUNDRY.services.ai.azure.com/api/projects/$PROJECT'}
+        {name: 'Cosmos__Endpoint', value: 'https://$COSMOS.documents.azure.com:443/'}
+        {name: 'MicrosoftAppId', value: '$BOT_UAMI_CLIENT_ID'}
+        {name: 'MicrosoftAppType', value: 'UserAssignedMSI'}
+        {name: 'MicrosoftAppTenantId', value: '$TENANT_ID'}
+        {name: 'BOTSERVICE_UAMI_CLIENTID', value: '$BOT_UAMI_CLIENT_ID'}
+        {name: 'AZURE_CLIENT_ID', value: '$APP_UAMI_CLIENT_ID'}
+      ]
     }
     ingressTargetPort: 3000
     existingImage: 'ghcr.io/karpikpl/sample-mcp-fastmcp-python:main'

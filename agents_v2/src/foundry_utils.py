@@ -44,6 +44,40 @@ async def get_ai_foundry_projects(
     return project_api_endpoints
 
 
+async def get_connection_static_models(
+    client: AIProjectClient, connection_name: str
+) -> list[dict]:
+    """Return the static models list from a gateway connection's metadata.
+
+    The APIM / ModelGateway connections store their static model list in
+    `metadata.models` as a stringified JSON array. Each item looks like:
+        {"name": "gpt-4.1-mini",
+         "properties": {"model": {"format": "OpenAI", "name": "gpt-4.1-mini", "version": "..."}}}
+
+    Returns [] if the connection uses dynamic discovery or cannot be parsed.
+    """
+    import json as _json
+
+    try:
+        conn = await client.connections.get(connection_name)
+    except Exception as e:
+        print(f"  ⚠️  Failed to fetch connection '{connection_name}': {e}")
+        return []
+
+    metadata = getattr(conn, "metadata", None) or {}
+    raw = metadata.get("models")
+    if not raw:
+        return []
+    try:
+        models = _json.loads(raw)
+    except (ValueError, TypeError) as e:
+        print(f"  ⚠️  Failed to parse static models for '{connection_name}': {e}")
+        return []
+    if not isinstance(models, list):
+        return []
+    return models
+
+
 async def get_gateway_connections(client: AIProjectClient):
     model_gateway_connection_static = None
     model_gateway_connection_dynamic = None
