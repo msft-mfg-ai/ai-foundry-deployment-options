@@ -104,7 +104,12 @@ def param(name):
 
 checks = []
 client_secret = pick('clientSecret')
-checks.append(('clientSecret is non-empty', bool(client_secret and str(client_secret).lower() != 'null')))
+# Bot Service redacts clientSecret on GET by design (write-only), so a non-null
+# value here means it was set; a null/empty value is the *expected* read-back
+# even when the secret is correctly stored. We therefore can't actually verify
+# the secret via az; just note its read-back state for the operator.
+secret_state = 'set (read-back)' if client_secret and str(client_secret).lower() != 'null' else 'redacted (expected) — verify via OAuth Connection Test in the portal'
+checks.append((f'clientSecret read-back: {secret_state}', True))
 checks.append(('clientId matches SSO_APP_ID', pick('clientId') == expected_client_id))
 checks.append(('tokenExchangeUrl matches api://botid-<sso-app-id>', (pick('tokenExchangeUrl') or param('tokenExchangeUrl')) == expected_token_exchange_url))
 scopes = str(pick('scopes') or '')

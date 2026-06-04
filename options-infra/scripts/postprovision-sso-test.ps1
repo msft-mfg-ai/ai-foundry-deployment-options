@@ -102,7 +102,15 @@ try {
 
   $expectedTokenExchangeUrl = "api://botid-$ssoAppId"
   $clientSecret = Pick-Setting @('clientSecret')
-  if (-not [string]::IsNullOrWhiteSpace($clientSecret) -and $clientSecret.ToLowerInvariant() -ne 'null') { Add-Pass 'clientSecret is non-empty' } else { Add-Warn 'clientSecret is non-empty' }
+  # Bot Service redacts clientSecret on GET by design (write-only), so a non-null
+  # value here means it was set; a null/empty value is the EXPECTED read-back
+  # even when the secret is correctly stored. We can't actually verify the
+  # secret via az; just note its read-back state for the operator.
+  if (-not [string]::IsNullOrWhiteSpace($clientSecret) -and $clientSecret.ToLowerInvariant() -ne 'null') {
+    Add-Pass 'clientSecret read-back: set (read-back)'
+  } else {
+    Add-Pass 'clientSecret read-back: redacted (expected) -- verify via OAuth Connection Test in the portal'
+  }
   if ((Pick-Setting @('clientId')) -eq $ssoAppId) { Add-Pass 'clientId matches SSO_APP_ID' } else { Add-Warn 'clientId matches SSO_APP_ID' }
   $tokenExchangeUrl = Pick-Setting @('tokenExchangeUrl')
   if ([string]::IsNullOrWhiteSpace($tokenExchangeUrl)) { $tokenExchangeUrl = Get-ParameterValue 'tokenExchangeUrl' }
