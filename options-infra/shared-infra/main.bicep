@@ -180,13 +180,13 @@ module teamsProxy '../modules/aca/container-app.bicep' = {
     applicationInsightsConnectionString: appInsights.outputs.connectionString
     definition: {
       settings: [
-        {name: 'Foundry__ProjectEndpoint', value: "https://$FOUNDRY.services.ai.azure.com/api/projects/$PROJECT"}
-        {name: 'Cosmos__Endpoint', value: "https://$COSMOS.documents.azure.com:443/"}
-        {name: 'MicrosoftAppId', value: "$BOT_UAMI_CLIENT_ID"}
-        {name: 'MicrosoftAppType', value: "UserAssignedMSI"}
-        {name: 'MicrosoftAppTenantId', value: "$TENANT_ID"}
-        {name: 'BOTSERVICE_UAMI_CLIENTID', value: "$BOT_UAMI_CLIENT_ID"}
-        {name: 'AZURE_CLIENT_ID', value: "$APP_UAMI_CLIENT_ID"}
+        {name: 'Foundry__ProjectEndpoint', value: 'https://$FOUNDRY.services.ai.azure.com/api/projects/$PROJECT'}
+        {name: 'Cosmos__Endpoint', value: 'https://$COSMOS.documents.azure.com:443/'}
+        {name: 'MicrosoftAppId', value: '$BOT_UAMI_CLIENT_ID'}
+        {name: 'MicrosoftAppType', value: 'UserAssignedMSI'}
+        {name: 'MicrosoftAppTenantId', value: '$TENANT_ID'}
+        {name: 'BOTSERVICE_UAMI_CLIENTID', value: '$BOT_UAMI_CLIENT_ID'}
+        {name: 'AZURE_CLIENT_ID', value: '$APP_UAMI_CLIENT_ID'}
       ]
     }
     ingressTargetPort: 3000
