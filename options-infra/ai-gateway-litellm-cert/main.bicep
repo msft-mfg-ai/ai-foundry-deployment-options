@@ -351,7 +351,7 @@ var phase2 = !empty(liteLlmDomain)
 // publicNetworkAccess: Disabled, so the public staticIp is blackholed and
 // VNet workloads must reach the env via the PE NIC. The ACA frontend then
 // routes by SNI to the LiteLLM container app's custom-domain binding.
-module liteLlmDomainPrivateDnsZone 'br/public:avm/res/network/private-dns-zone:0.8.0' = if (phase2) {
+module liteLlmDomainPrivateDnsZone 'br/public:avm/res/network/private-dns-zone:0.8.1' = if (phase2) {
   name: 'litellm-domain-private-dns-${resourceToken}'
   params: {
     tags: tags
@@ -486,4 +486,5 @@ output LITELLM_UI_URL string = 'http://${publicIpAddress.outputs.ipAddress}/ui/l
 output LITELLM_DOMAIN string = liteLlmDomain
 output LITELLM_PROXY_FQDN string = phase2 ? liteLlmProxy.outputs.proxyFqdn : ''
 output LITELLM_INTERNAL_FQDN string = liteLlm.outputs.liteLlmAcaFqdn
+output LITELLM_KEY string = liteLlmMasterKey
 output PHASE string = phase2 ? 'phase-2 (custom domain bound)' : 'phase-1 (no custom domain — set LITELLM_DOMAIN and rerun azd provision)'

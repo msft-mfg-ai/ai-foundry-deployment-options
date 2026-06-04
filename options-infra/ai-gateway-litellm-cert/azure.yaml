@@ -54,7 +54,7 @@ hooks:
         echo "🎉 ========================================== 🎉"
         echo ""
         echo "🌐 Access LiteLLM:"
-        echo "   👉 ${LITELLM_UI_URL}"
+        echo "   👉 ${LITELLM_UI_URL} using ${LITELLM_KEY}"
         echo ""
         echo "📚 Access LiteLLM Swagger Documentation:"
         echo "   👉 ${LITELLM_SWAGGER_URL}"
