@@ -347,8 +347,10 @@ var phase2 = !empty(liteLlmDomain)
 // and proxy_pass fails before TLS validation can even begin.
 //
 // The zone covers the full FQDN with an A record at the apex (`@`) pointing
-// to the ACA managed environment's static IP. The env routes by Host header
-// to the LiteLLM container app's custom-domain binding.
+// to the ACA managed environment's Private Endpoint IP — the env has
+// publicNetworkAccess: Disabled, so the public staticIp is blackholed and
+// VNet workloads must reach the env via the PE NIC. The ACA frontend then
+// routes by SNI to the LiteLLM container app's custom-domain binding.
 module liteLlmDomainPrivateDnsZone 'br/public:avm/res/network/private-dns-zone:0.8.0' = if (phase2) {
   name: 'litellm-domain-private-dns-${resourceToken}'
   params: {
@@ -367,7 +369,7 @@ module liteLlmDomainPrivateDnsZone 'br/public:avm/res/network/private-dns-zone:0
         ttl: 300
         aRecords: [
           {
-            ipv4Address: liteLlm.outputs.containerAppsEnvironmentStaticIp
+            ipv4Address: liteLlm.outputs.containerAppsEnvironmentPrivateIp
           }
         ]
       }

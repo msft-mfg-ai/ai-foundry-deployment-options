@@ -402,6 +402,10 @@ output liteLlmAcaFqdn string = liteLlmApp.outputs.CONTAINER_APP_FQDN
 output containerAppsEnvironmentId string = managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_ID
 output containerAppsEnvironmentDefaultDomain string = managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN
 output containerAppsEnvironmentStaticIp string = managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_STATIC_IP
+// PE-side IP — the address VNet workloads reach the env on. With
+// publicNetworkAccess: Disabled the public staticIp is blackholed, so
+// custom-domain DNS records must point here, not at staticIp.
+output containerAppsEnvironmentPrivateIp string = acaPrivateEndpoint.outputs.privateIpAddress
 output containerAppsWorkloadProfileName string = managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
 output keyVaultName string = keyVault.outputs.KEY_VAULT_NAME
 output certConfigValid bool = custom_domain_cert_valid
