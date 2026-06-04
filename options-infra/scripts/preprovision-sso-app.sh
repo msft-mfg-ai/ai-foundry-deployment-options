@@ -35,7 +35,7 @@ app_id=$(az ad app list --display-name "$display_name" --query "[0].appId" -o ts
 if [ -z "$app_id" ]; then
   app_id=$(az ad app create \
     --display-name "$display_name" \
-    --sign-in-audience AzureADMultipleOrgs \
+    --sign-in-audience AzureADMyOrg \
     --query appId -o tsv)
   echo "    created appId=$app_id"
 else

@@ -16,7 +16,7 @@ $appId = az ad app list --display-name $displayName --query "[0].appId" -o tsv
 if (-not $appId) {
   $appId = az ad app create `
     --display-name $displayName `
-    --sign-in-audience AzureADMultipleOrgs `
+    --sign-in-audience AzureADMyOrg `
     --query appId -o tsv
   Write-Host "    created appId=$appId"
 } else {
