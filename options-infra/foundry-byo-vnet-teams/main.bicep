@@ -239,6 +239,9 @@ module foundryRoleAssignment '../modules/iam/role-assignment-foundryProject.bice
     roleName: 'Azure AI User'
     servicePrincipalType: 'ServicePrincipal'
   }
+  dependsOn: [
+    projects
+  ]
 }
 
 module botCosmos '../modules/db/cosmos.bicep' = {
@@ -337,6 +340,9 @@ module botServiceForProxy '../modules/bot/bot-service.bicep' = {
     ssoClientSecret:   ssoAppSecret
     ssoTokenExchangeUrl: ssoTokenExchangeResource
   }
+  dependsOn: [
+    projects
+  ]
 }
 
 // ---------------------------------------------------------------------------
