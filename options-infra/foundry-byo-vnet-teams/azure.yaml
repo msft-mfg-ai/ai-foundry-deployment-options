@@ -7,45 +7,51 @@ infra:
   module: main
 
 hooks:
-  # Preprovision: create the AAD app for Teams SSO (proxy bot OBO flow) and
-  # write SSO_APP_ID + SSO_APP_SECRET to the azd env so main.bicepparam can
-  # pick them up via readEnvironmentVariable. Safe to skip — the bicep will
-  # treat empty values as "SSO disabled".
+  # Preprovision: ensure AAD app regs exist for each agent (no secrets — FIC
+  # in bicep handles outbound creds) and one shared `teams-app-backend` app
+  # reg (with secret) used for Teams SSO + OBO to Foundry. Writes
+  # AGENT_APP_REGS_JSON, TEAMS_APP_BACKEND_ID, TEAMS_APP_BACKEND_SECRET to
+  # the azd env. If AGENT_NAMES is empty, exits early (Phase A: Foundry only).
   preprovision:
     windows:
       shell: pwsh
       run: |
-        & '../scripts/preprovision-sso-app.ps1'
+        & '../scripts/preprovision-multi-agent.ps1'
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       interactive: true
       continueOnError: false
     posix:
       shell: sh
       run: |
-        sh ../scripts/preprovision-sso-app.sh
+        sh ../scripts/preprovision-multi-agent.sh
       interactive: true
       continueOnError: false
 
-  # Postprovision: publish the agent to Microsoft 365 + build a Teams app
-  # sideload zip. Shared with foundry-publish-to-teams — keep both options'
-  # Bicep outputs in sync with the contract documented in the script header.
-  # Inline `run:` (vs a path) because azd rejects `path:`/`run:` values that
-  # escape the deployment option's project root. azd runs hooks with CWD =
-  # this folder, so `../scripts/...` resolves correctly at exec time.
+  # Postprovision (multi-agent):
+  #   1. postprovision-multi-agent.sh — creates FICs on each agent app reg
+  #      (subject = container UAMI principalId) so outbound BF token mint
+  #      works with no per-bot secret. Also prints a deploy summary.
+  #   2. publish-teams-agent.sh — calls Foundry /microsoft365/publish per
+  #      agent and builds N×2 sideload zips into ./teams-app/build/.
+  #
+  # Order matters: FICs must exist before the first user message (otherwise
+  # outbound replies fail with "no matching FIC"). publish-teams-agent uses
+  # the developer's user token (not bot identity), so its order is just
+  # "after manifests/outputs are available".
   postprovision:
     windows:
       shell: pwsh
       run: |
-        & '../scripts/publish-teams-agent.ps1'
+        & '../scripts/postprovision-multi-agent.ps1'
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        & '../scripts/postprovision-sso-test.ps1'
+        & '../scripts/publish-teams-agent.ps1'
       interactive: true
       continueOnError: false
     posix:
       shell: sh
       run: |
+        sh ../scripts/postprovision-multi-agent.sh
         sh ../scripts/publish-teams-agent.sh
-        sh ../scripts/postprovision-sso-test.sh
       interactive: true
       continueOnError: false
 

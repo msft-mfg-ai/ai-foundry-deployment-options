@@ -3,11 +3,35 @@ using 'main.bicep'
 var projectsCountValue = readEnvironmentVariable('PROJECTS_COUNT','')
 param projectsCount = empty(projectsCountValue) ? null : int(projectsCountValue)
 
-// Teams SSO inputs — populated by the `preprovision` hook in azure.yaml,
-// which creates a dedicated AAD app and stores its id + secret in the azd
-// environment. Leave blank in azd env to disable SSO.
-param ssoAppId     = readEnvironmentVariable('SSO_APP_ID', '')
-param ssoAppSecret = readEnvironmentVariable('SSO_APP_SECRET', '')
+// Multi-agent Teams proxy inputs — populated by the `preprovision-multi-agent`
+// hook in azure.yaml. Phase A (no agents): leave all of these empty in azd
+// env; bicep deploys Foundry only. Phase B: preprovision creates the AAD
+// app regs and writes these vars so bicep can wire up bots + container.
+//
+//   AGENT_NAMES                — comma-separated list of agent names
+//                                (operator-supplied via `azd env set`)
+//   AGENT_APP_REGS_JSON        — '{"agent1":"<appId>",...}' (preprovision)
+//   AGENT_APP_SECRETS_JSON     — '{"agent1":"<secret>",...}' (preprovision)
+//                                Per-agent SSO secret used by the per-bot
+//                                ABS OAuth connection for OBO swap.
+//   TEAMS_APP_BACKEND_ID       — shared backend app reg id  (preprovision)
+//                                Used for /admin OIDC + OBO only — NO LONGER
+//                                used for bot SSO.
+//   TEAMS_APP_BACKEND_SECRET   — backend app reg client secret (preprovision)
+var agentNamesRaw      = readEnvironmentVariable('AGENT_NAMES', '')
+var agentAppRegsRaw    = readEnvironmentVariable('AGENT_APP_REGS_JSON', '{}')
+var agentAppSecretsRaw = readEnvironmentVariable('AGENT_APP_SECRETS_JSON', '{}')
+
+// AGENT_NAMES accepts BOTH `joe,bob` and JSON-array `["joe","bob"]` forms
+// (some tooling sets the JSON form). Strip the JSON syntax chars before
+// splitting so the deployment name passed to ARM doesn't contain `[`, `]`,
+// or `"` — ARM rejects those.
+var agentNamesClean = replace(replace(replace(replace(agentNamesRaw, ' ', ''), '[', ''), ']', ''), '"', '')
+param agentNames      = empty(agentNamesClean) ? [] : split(agentNamesClean, ',')
+param agentAppRegs    = json(agentAppRegsRaw)
+param agentAppSecrets = json(agentAppSecretsRaw)
+param teamsAppBackendId     = readEnvironmentVariable('TEAMS_APP_BACKEND_ID', '')
+param teamsAppBackendSecret = readEnvironmentVariable('TEAMS_APP_BACKEND_SECRET', '')
 
 param apiServices = [
   {

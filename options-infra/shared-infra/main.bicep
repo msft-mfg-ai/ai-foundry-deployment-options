@@ -14,6 +14,7 @@ param resourceToken string = toLower(uniqueString(resourceGroup().id, location))
 param aiServicesName string = 'foundry-landing-zone-${location}-${resourceToken}'
 param aiServicesName2 string = 'foundry-landing-zone-${foundrySecondaryRegion}-${resourceToken}'
 param aiServicesPublicName string = 'foundry-landing-zone-${location}-PUBLIC-${resourceToken}'
+param mcpEntraAppClientId string = ''
 
 // Foundry doesn't support cross-subscription VNet injection or cross subscription resources, so we need to deploy it in the same subscription
 var doesFoundrySupportsCrossSubscriptionVnet = false
@@ -170,42 +171,41 @@ module managedEnvironment '../modules/aca/container-app-environment.bicep' = {
   }
 }
 
-module teamsProxy '../modules/aca/container-app.bicep' = {
-  name: 'teams-proxy'
+module mcpEntraAuth '../modules/aca/container-app.bicep' = if (!empty(mcpEntraAppClientId)) {
+  name: 'mcp-with-entra-auth'
   params: {
     location: location
     tags: tags
-    name: 'teams-proxy-${resourceToken}'
+    name: 'mcp-with-entra-auth-${resourceToken}'
     workloadProfileName: managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
     applicationInsightsConnectionString: appInsights.outputs.connectionString
     definition: {
       settings: [
-        {name: 'Foundry__ProjectEndpoint', value: 'https://$FOUNDRY.services.ai.azure.com/api/projects/$PROJECT'}
-        {name: 'Cosmos__Endpoint', value: 'https://$COSMOS.documents.azure.com:443/'}
-        {name: 'MicrosoftAppId', value: '$BOT_UAMI_CLIENT_ID'}
-        {name: 'MicrosoftAppType', value: 'UserAssignedMSI'}
-        {name: 'MicrosoftAppTenantId', value: '$TENANT_ID'}
-        {name: 'BOTSERVICE_UAMI_CLIENTID', value: '$BOT_UAMI_CLIENT_ID'}
-        {name: 'AZURE_CLIENT_ID', value: '$APP_UAMI_CLIENT_ID'}
+        { name: 'TENANT_ID', value: tenant().tenantId }
+        { name: 'CLIENT_ID', value: mcpEntraAppClientId }
+        {
+          name: 'RESOURCE_HOST'
+          value: 'https://mcp-with-entra-auth-${resourceToken}.${managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN}'
+        }
       ]
     }
-    ingressTargetPort: 3000
-    existingImage: 'ghcr.io/karpikpl/sample-mcp-fastmcp-python:main'
+    ingressTargetPort: 8000
+    existingImage: 'ghcr.io/karpikpl/mcp-oauth:latest'
     userAssignedManagedIdentityClientId: identity.outputs.clientId
     userAssignedManagedIdentityResourceId: identity.outputs.resourceId
     ingressExternal: true
     cpu: '0.25'
     memory: '0.5Gi'
     scaleMaxReplicas: 1
-    scaleMinReplicas: 1
+    scaleMinReplicas: 0
     containerAppsEnvironmentResourceId: managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_ID
     keyVaultName: null
     probes: [
       {
         type: 'Readiness'
         httpGet: {
-          path: '/health'
-          port: 3000
+          path: '/'
+          port: 8000
         }
       }
     ]

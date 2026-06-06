@@ -53,3 +53,41 @@ Replace [`teams-app/color.png`](./teams-app/color.png) (192×192) and [`teams-ap
 | `TEAMS_MANIFEST_JSON` | Serialized manifest consumed by the postprovision hook |
 | `botResourceId` / `botName` | Azure Bot Service identifiers |
 | `AGENT_NAME` | Agent name configured on Foundry (`Teams Agent`) |
+
+## Troubleshooting
+
+### `Teams silent SSO failed before reaching the bot. {"code":"invokeerror"}`
+
+The per-agent AAD app registration is missing the implicit grant
+issuance flags. Verify with:
+
+```bash
+az ad app show --id <agent-appId> --query "web.implicitGrantSettings"
+```
+
+Both `enableIdTokenIssuance` and `enableAccessTokenIssuance` must be
+`true`. If either is `false`, PATCH them via Graph (the `az ad app
+update --set` form doesn't accept nested `web.*` paths):
+
+```bash
+APP=<agent-appId>
+az rest --method PATCH \
+  --url "https://graph.microsoft.com/v1.0/applications(appId='$APP')" \
+  --headers "Content-Type=application/json" \
+  --body '{"web":{"implicitGrantSettings":{"enableIdTokenIssuance":true,"enableAccessTokenIssuance":true}}}'
+```
+
+`preprovision-multi-agent.{sh,ps1}` step 4b now sets these
+automatically on every per-agent reg, so re-running `azd provision`
+fixes any drift.
+
+### Teams slash-command click pastes a sentence instead of `/cmd`
+
+In M365 Copilot custom-engine-agent context, Teams treats
+`bots[].commandLists` as "Prompt Suggestions" and pastes the
+**description** field into the compose box (not `title`).
+`publish-teams-agent.sh` therefore puts the literal `/cmd` in
+`description` and a human-friendly label in `title`.
+Re-upload the sideloaded `.zip` (Teams caches the manifest
+per install — re-publishing via Foundry won't refresh devices
+that already have the app sideloaded).

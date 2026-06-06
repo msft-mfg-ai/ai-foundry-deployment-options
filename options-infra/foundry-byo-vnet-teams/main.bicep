@@ -1,6 +1,19 @@
 // foundry-byo-vnet-teams
 // ============================================================================
-// BYO VNet deployment with agents published to teams
+// BYO VNet deployment with N Foundry agents published to Teams.
+//
+// Phase A (Foundry only): leave AGENT_NAMES empty in azd env. Bicep deploys
+// the VNet + Foundry stack only, skipping all bot resources.
+// Phase B (multi-agent): preprovision script creates one AAD app reg per
+// agent (no secret) plus a shared `teams-app-backend` reg (with secret).
+// Bicep then provisions:
+//   - 1 Foundry agent per name
+//   - 2 Bot Services per name (direct → activityprotocol, proxy → container)
+//   - 1 shared container app with route-bound JWT validation + OBO via the
+//     backend reg's client secret
+// FICs (no per-bot secrets) are created in `postprovision-multi-agent.sh`
+// after the container UAMI exists.
+// ============================================================================
 
 targetScope = 'resourceGroup'
 
@@ -11,39 +24,57 @@ param projectsCount int = 1
 param apiServices apiType[] = [] // External MCP/OpenAPI services
 
 // ---------------------------------------------------------------------------
-// Teams SSO (optional) — supplied by the `preprovision` hook in azure.yaml
-// after it creates a dedicated AAD app for the proxy bot. When `ssoAppId` is
-// empty the proxy still works, but only with system-managed auth (no
-// on-behalf-of token flow to Foundry).
+// Multi-agent inputs (populated by `preprovision-multi-agent`).
+// All four are empty in Phase A — bicep then skips bot resources entirely.
 // ---------------------------------------------------------------------------
-@description('Client id of the AAD app created by the preprovision script for Teams SSO. Empty disables SSO. The SSO app is assumed to live in the deployment tenant.')
-param ssoAppId string = ''
+@description('Agent names. Empty array → Phase A (Foundry only, no bots).')
+param agentNames string[] = []
+
+// Typed dictionary: keys are agent names, values are AAD application (client)
+// IDs (GUIDs as strings). The preprovision script writes this object to azd
+// env as JSON and bicepparam parses it. Each app reg has NO secret — outbound
+// BF tokens are minted via FIC trusting the container UAMI.
+@description('Map of agent name → AAD app id (the bot identity for proxy bots AND the per-agent Teams SSO target).')
+param agentAppRegs agentAppRegsType = {}
+
+type agentAppRegsType = {
+  *: string
+}
+
+// Per-agent SSO client secrets. Bundled as a single @secure() object so the
+// values are treated as secrets end-to-end (param value, module passthrough,
+// Container App secret). Indexing this object inside a `for` loop returns a
+// secure expression that bicep correctly routes into the bot module's
+// @secure() ssoClientSecret param.
+@secure()
+@description('Map of agent name → AAD app client secret. Used by each per-bot ABS OAuth connection for OBO (Teams SSO token → Foundry user-impersonation token).')
+param agentAppSecrets object = {}
+
+@description('Shared Teams App backend AAD app id — used ONLY for /admin OIDC sign-in + OBO into Foundry. NOT used for bot SSO (each agent reg is its own SSO target).')
+param teamsAppBackendId string = ''
 
 @secure()
-@description('Client secret of the SSO AAD app. Required when `ssoAppId` is set.')
-param ssoAppSecret string = ''
+@description('Client secret of the Teams App backend AAD app. Stored as a Container App secret (no Key Vault).')
+param teamsAppBackendSecret string = ''
 
-var enableSso = !empty(ssoAppId) && !empty(ssoAppSecret)
+var deployBots = !empty(agentNames) && !empty(teamsAppBackendId)
+// Each per-bot OAuth connection uses the same connection name. The connection
+// is parented on each bot resource so they're distinct objects despite the
+// shared name — the proxy's TeamsApp__SsoConnectionName env var stays a single
+// constant.
 var ssoConnectionName = 'foundry-sso'
-
-// Teams Bot SSO requires the AAD app's identifierUri (and the OAuthCard's
-// tokenExchangeResource.Uri) to follow `api://botid-<aad-app-id>` per
-// https://learn.microsoft.com/microsoftteams/platform/bots/how-to/authentication/bot-sso-register-aad.
-// In the Teams docs, {YourBotId} is the Microsoft Entra application ID that
-// owns the SSO scope, which is the SSO AAD app id created by preprovision.
-var ssoTokenExchangeResource = enableSso ? 'api://botid-${ssoAppId}' : ''
+var teamsAppIdentifierUri = empty(teamsAppBackendId) ? '' : 'api://${teamsAppBackendId}'
 
 var tags = {
   'created-by': 'foundry-byo-vnet-teams'
-  'hidden-title': 'Foundry Standard - BYO VNet + Teams Agents'
+  'hidden-title': 'Foundry Standard - BYO VNet + Multi-agent Teams'
 }
 
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
 
-// 2. VNet — uses the shared vnet.bicep module with optional firewall subnet
-//    + route table params (added by this change). All other subnets and NSGs
-//    come from the module's defaults; subnet prefixes for the firewall are
-//    auto-computed by vnet.bicep to avoid overlap with the standard subnets.
+// ---------------------------------------------------------------------------
+// VNet + Log Analytics (always deployed)
+// ---------------------------------------------------------------------------
 module vnet '../modules/networking/vnet.bicep' = {
   name: 'vnet'
   params: {
@@ -53,9 +84,6 @@ module vnet '../modules/networking/vnet.bicep' = {
   }
 }
 
-// 3. Log Analytics workspace — created BEFORE the firewall so its workspace
-//    ID can be wired into the firewall's diagnostic settings. Without this,
-//    Azure Firewall emits no logs by default.
 module logAnalytics '../modules/monitor/loganalytics.bicep' = {
   name: 'log-analytics'
   params: {
@@ -67,7 +95,7 @@ module logAnalytics '../modules/monitor/loganalytics.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
-// Foundry stack — unchanged from foundry-two-projects.
+// Foundry stack (always deployed)
 // ---------------------------------------------------------------------------
 module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
   name: 'ai-dependencies-with-dns'
@@ -157,15 +185,31 @@ module mcp_apis '../modules/apps/apps-private-link.bicep' = {
   }
 }
 
-var agentName = 'Teams-Agent'
+// Foundry private endpoint (+ associated DNS zone records) so the proxy
+// container can reach Foundry over the VNet. Public network access on the
+// Foundry account stays Enabled for now — flip the `publicNetworkAccess`
+// param on the foundry module to 'Disabled' to lock it down once you've
+// verified that all bot/proxy traffic flows through the PE.
+module foundry_pe '../modules/networking/ai-pe-dns.bicep' = {
+  name: 'foundry-pe-${resourceToken}'
+  params: {
+    tags: tags
+    location: location
+    aiAccountName: foundry.outputs.FOUNDRY_NAME
+    peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+    vnetId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
+    resourceToken: resourceToken
+    existingDnsZones: ai_dependencies.outputs.DNS_ZONES
+  }
+}
 
 // ---------------------------------------------------------------------------
-// Foundry agent — created by Bicep so we can read its ServiceIdentity SP
-// appId from the response and bake it into the bot service / Teams manifest.
-// Also enables activityprotocol + BotServiceRbac so Bot Service traffic is
-// accepted by the agent.
+// Phase B: per-agent Foundry agents and Bot Services
+// All resources below this point are skipped when AGENT_NAMES is empty.
 // ---------------------------------------------------------------------------
-module teamsAgent '../modules/ai/foundry-agent.bicep' = {
+
+@batchSize(1)
+module teamsAgents '../modules/ai/foundry-agent.bicep' = [for agentName in agentNames: {
   name: 'create-agent-${agentName}-${resourceToken}'
   params: {
     tags: union(tags, { SecurityControl: 'Ignore' })
@@ -181,27 +225,40 @@ module teamsAgent '../modules/ai/foundry-agent.bicep' = {
   dependsOn: [
     projects
   ]
-}
+}]
 
-module botService '../modules/bot/bot-service.bicep' = {
-  name: 'bot-service-${resourceToken}'
+// Direct bot — Foundry's auto-created ServiceIdentity SP appId is the
+// bot's msaAppId. BF channels mint tokens with aud = msaAppId; Foundry's
+// activityprotocol validates against this same appId. No FIC needed: the
+// Foundry SP already exists with whatever credentials Foundry uses internally.
+//
+// Endpoint goes through the proxy container's /api/passthrough/* route, which
+// is a pure YARP reverse proxy that forwards the request 1:1 to Foundry's
+// activityprotocol URL — same body, same JWT, same query string. This lets
+// Foundry have public network access disabled while still serving Bot Service
+// traffic, because all inbound HTTPS flows hit the container (which has VNet
+// connectivity to Foundry's private endpoint) instead of Foundry directly.
+// See proxy repo src/AgentChat/Passthrough/ for the implementation.
+module botServicesDirect '../modules/bot/bot-service.bicep' = [for (agentName, i) in agentNames: if (deployBots) {
+  name: 'bot-direct-${agentName}-${resourceToken}'
   params: {
     tags: tags
     location: location
-    name: 'bot-service-${resourceToken}'
+    name: 'bot-direct-${agentName}-${resourceToken}'
     displayName: agentName
-    endpoint: 'https://${foundry.outputs.FOUNDRY_NAME}.services.ai.azure.com/api/projects/${projectNames[0]}/agents/${agentName}/endpoint/protocols/activityprotocol?api-version=2025-11-15-preview'
+    endpoint: '${teamsProxy!.outputs.CONTAINER_APP_FQDN}/api/passthrough/${foundry.outputs.FOUNDRY_NAME}/${projectNames[0]}/${agentName}?api-version=2025-11-15-preview'
     disableLocalAuth: false
-    // Use the agent's auto-created ServiceIdentity SP appId as msaAppId.
-    // BF channels mint tokens with aud = msaAppId; Foundry's activityprotocol
-    // validates aud against this same appId, so they match without any extra
-    // configuration (no UAMI, no role assignment, no Graph lookup).
     msaAppType: 'SingleTenant'
-    msaAppId: teamsAgent.outputs.agentIdentityAppId
+    msaAppId: teamsAgents[i].outputs.agentIdentityAppId
     logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
   }
-}
+}]
 
+// ---------------------------------------------------------------------------
+// Container App environment + UAMI + Cosmos (proxy infra)
+// Always deployed even in Phase A so that re-running with agents added
+// doesn't have to recreate them. (Cheap to keep idle; UAMI has no cost.)
+// ---------------------------------------------------------------------------
 module managedEnvironment '../modules/aca/container-app-environment.bicep' = {
   name: 'managed-environment'
   params: {
@@ -216,32 +273,18 @@ module managedEnvironment '../modules/aca/container-app-environment.bicep' = {
   }
 }
 
-// Single UAMI shared by the proxy container AND every bot service
-// registration that targets it. Bot Framework's default JWT validator
-// compares the inbound token's `appid` to the container's MicrosoftAppId
-// and uses the same UAMI (via IMDS) to mint outbound replies — so the
-// container identity and the bot identity must be one and the same.
-module botSharedIdentity '../modules/iam/identity.bicep' = {
-  name: 'bot-shared-identity-deployment'
+// Compute identity for the proxy container: Cosmos data-plane access,
+// App Insights, and the FIC subject for outbound BF token exchange. NOT
+// used as a bot msaAppId — each bot has its own SingleTenant app reg.
+// (FIC: subject = principalId of this UAMI, audience = api://AzureADTokenExchange.
+// FICs are created in postprovision-multi-agent.sh after this UAMI exists.)
+module teamsProxyIdentity '../modules/iam/identity.bicep' = {
+  name: 'teams-proxy-identity-deployment'
   params: {
     tags: tags
     location: location
-    identityName: 'bot-shared-identity-${resourceToken}'
+    identityName: 'teams-proxy-identity-${resourceToken}'
   }
-}
-
-module foundryRoleAssignment '../modules/iam/role-assignment-foundryProject.bicep' = {
-  name: 'ra-foundry-${resourceToken}'
-  params: {
-    accountName: foundry.outputs.FOUNDRY_NAME
-    projectName: projectNames[0]
-    principalId: botSharedIdentity.outputs.MANAGED_IDENTITY_PRINCIPAL_ID
-    roleName: 'Azure AI User'
-    servicePrincipalType: 'ServicePrincipal'
-  }
-  dependsOn: [
-    projects
-  ]
 }
 
 module botCosmos '../modules/db/cosmos.bicep' = {
@@ -250,13 +293,36 @@ module botCosmos '../modules/db/cosmos.bicep' = {
     location: location
     tags: tags
     accountName: 'bot-cosmosdb-${resourceToken}'
-    appPrincipalId: botSharedIdentity.outputs.MANAGED_IDENTITY_PRINCIPAL_ID
+    appPrincipalId: teamsProxyIdentity.outputs.MANAGED_IDENTITY_PRINCIPAL_ID
     privateEndpointSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
     cosmosDbPrivateDnsZoneResourceId: ai_dependencies.outputs.DNS_ZONES['privatelink.documents.azure.com'].resourceId
   }
 }
 
-module teamsProxy '../modules/aca/container-app.bicep' = {
+// ---------------------------------------------------------------------------
+// Bots__Routes — JSON array of {AgentName, ProxyAppId, DirectAppId} used by
+// the container:
+//   - JWT middleware: binds incoming URL path → expected `aud` (ProxyAppId)
+//     so a token issued for bot A can't be replayed against bot B's URL.
+//   - FIC factory: allow-list of valid proxy appIds for outbound BF auth.
+//   - ManifestController: renders two download buttons per agent — one for
+//     the direct bot (Foundry SP identity) and one for the proxy bot
+//     (our pre-created reg).
+//
+// Built by `bots-routes.bicep` (a module — required because Bicep refuses
+// runtime-derived for-expressions inside `var`s and property values; module
+// outputs ARE legal runtime values in upstream properties).
+// ---------------------------------------------------------------------------
+module botsRoutes 'bots-routes.bicep' = if (deployBots) {
+  name: 'bots-routes-json'
+  params: {
+    agentNames: agentNames
+    proxyAppIds: [for n in agentNames: agentAppRegs[n]]
+    directAppIds: [for (n, i) in agentNames: teamsAgents[i].outputs.agentIdentityAppId]
+  }
+}
+
+module teamsProxy '../modules/aca/container-app.bicep' = if (deployBots) {
   name: 'teams-proxy'
   params: {
     location: location
@@ -271,30 +337,54 @@ module teamsProxy '../modules/aca/container-app.bicep' = {
           value: 'https://${foundry.outputs.FOUNDRY_NAME}.services.ai.azure.com/api/projects/${projectNames[0]}'
         }
         { name: 'Cosmos__Endpoint', value: botCosmos.outputs.endpoint }
-        { name: 'MicrosoftAppId', value: botSharedIdentity.outputs.MANAGED_IDENTITY_CLIENT_ID }
-        { name: 'MicrosoftAppType', value: 'UserAssignedMSI' }
+        // Compute identity. Used for IMDS-based UAMI assertions in the
+        // FIC token-exchange flow (per-bot outbound BF creds) AND for
+        // Cosmos / App Insights data-plane access. NOT a bot identity.
+        { name: 'AZURE_CLIENT_ID', value: teamsProxyIdentity.outputs.MANAGED_IDENTITY_CLIENT_ID }
         { name: 'MicrosoftAppTenantId', value: tenant().tenantId }
-        { name: 'BOTSERVICE_UAMI_CLIENTID', value: botSharedIdentity.outputs.MANAGED_IDENTITY_CLIENT_ID }
-        // Teams SSO — the C# proxy enables OBO when ConnectionName is set.
-        { name: 'TeamsSso__ConnectionName', value: enableSso ? ssoConnectionName : '' }
-        // AadAppId + Resource are required by the manifest builder to emit
-        // webApplicationInfo. Without them Teams silent SSO returns
-        // resourcematchfailed because the manifest has nothing to match.
-        { name: 'TeamsSso__AadAppId', value: enableSso ? ssoAppId : '' }
-        { name: 'TeamsSso__Resource', value: ssoTokenExchangeResource }
-        // Inline Container Apps secret — only referenced when SSO is enabled.
-        // Stored as a Container App secret rather than a plain env value.
-        ...(enableSso ? [{
-          name: 'TeamsSso__ClientSecret'
+        // Route-bound auth: middleware extracts {agent} from URL path
+        // /api/messages/{foundry}/{project}/{agent} and validates JWT aud
+        // against this map. Issuer accepted: the customer's tenant
+        // (SingleTenant bots) — both v1 and v2 forms.
+        { name: 'Bots__Routes', value: botsRoutes!.outputs.json }
+        // Shared backend app reg — Teams SSO + OBO target for ALL bots.
+        { name: 'TeamsApp__BackendAppId',    value: teamsAppBackendId }
+        { name: 'TeamsApp__IdentifierUri',   value: teamsAppIdentifierUri }
+        { name: 'TeamsApp__SsoConnectionName', value: ssoConnectionName }
+        // The ONE secret in the system. OBO requires a client secret.
+        // Stored as a Container Apps secret — no Key Vault.
+        {
+          name: 'TeamsApp__BackendSecret'
           secret: true
-          secretValue: ssoAppSecret
-        }] : [])
+          secretValue: teamsAppBackendSecret
+        }
+        // Enable AAD auth on /admin so we can drop the "Azure AI User" RBAC
+        // from the UAMI: every Foundry call that backs an /admin endpoint
+        // runs as the signed-in user via OBO. Reuses the same backend
+        // app reg + secret as the bot OBO path.
+        { name: 'AdminChatAuth__Enabled',   value: 'true' }
+        { name: 'AdminChatAuth__TenantId',  value: tenant().tenantId }
+        { name: 'AdminChatAuth__ClientId',  value: teamsAppBackendId }
+        {
+          name: 'AdminChatAuth__ClientSecret'
+          secret: true
+          secretValue: teamsAppBackendSecret
+        }
+        { name: 'AZURE_TENANT_ID',          value: tenant().tenantId }
+        // Container Apps ingress terminates TLS and forwards as plain HTTP
+        // on :8080. Without this, ASP.NET Core sees scheme=http and OIDC
+        // builds the redirect URI as `http://<fqdn>/signin-oidc`, which
+        // Entra rejects (AADSTS50011 — only the https variant is registered
+        // on the backend app reg). Enabling the built-in ForwardedHeaders
+        // middleware makes the app honor X-Forwarded-Proto from the ingress
+        // and emit `https://...` in redirect URIs.
+        { name: 'ASPNETCORE_FORWARDEDHEADERS_ENABLED', value: 'true' }
       ]
     }
     ingressTargetPort: 8080
-    existingImage: 'ghcr.io/karpikpl/foundry-teams-bot-service-proxy:0.7.0'
-    userAssignedManagedIdentityClientId: botSharedIdentity.outputs.MANAGED_IDENTITY_CLIENT_ID
-    userAssignedManagedIdentityResourceId: botSharedIdentity.outputs.MANAGED_IDENTITY_RESOURCE_ID
+    existingImage: 'ghcr.io/karpikpl/foundry-teams-bot-service-proxy:0.11.0'
+    userAssignedManagedIdentityClientId: teamsProxyIdentity.outputs.MANAGED_IDENTITY_CLIENT_ID
+    userAssignedManagedIdentityResourceId: teamsProxyIdentity.outputs.MANAGED_IDENTITY_RESOURCE_ID
     ingressExternal: true
     cpu: '0.25'
     memory: '0.5Gi'
@@ -314,105 +404,57 @@ module teamsProxy '../modules/aca/container-app.bicep' = {
   }
 }
 
-module botServiceForProxy '../modules/bot/bot-service.bicep' = {
-  name: 'bot-service-proxy--${resourceToken}'
+// Proxy bot — one per agent. msaAppId = the agent's dedicated app reg
+// (SingleTenant, FIC-based outbound BF auth). The ABS OAuth connection on
+// each bot points at the SAME app reg as the bot identity — that's the
+// per-agent SSO target, with identifierUri `api://botid-<thisAppId>` so
+// Teams' silent SSO resource-match check passes for THIS bot. Each bot
+// has its own client secret used for OBO.
+module botServicesForProxy '../modules/bot/bot-service.bicep' = [for (agentName, i) in agentNames: if (deployBots) {
+  name: 'bot-proxy-${agentName}-${resourceToken}'
   params: {
     tags: tags
     location: 'global'
-    name: 'bot-service-proxy-${resourceToken}'
+    name: 'bot-proxy-${agentName}-${resourceToken}'
     displayName: agentName
     sku: 'F0'
-    endpoint: '${teamsProxy.outputs.CONTAINER_APP_FQDN}/api/messages/${foundry.outputs.FOUNDRY_NAME}/${projectNames[0]}/${agentName}'
+    endpoint: '${teamsProxy!.outputs.CONTAINER_APP_FQDN}/api/messages/${foundry.outputs.FOUNDRY_NAME}/${projectNames[0]}/${agentName}'
     disableLocalAuth: false
-    // Shared UAMI: every bot service that targets teamsProxy mints tokens with
-    // aud = botSharedIdentity.clientId, matching the proxy's BOTSERVICE_UAMI_CLIENTID.
-    msaAppType: 'UserAssignedMSI'
-    existingMsiResourceId: botSharedIdentity.outputs.MANAGED_IDENTITY_RESOURCE_ID
-    existingMsiClientId:   botSharedIdentity.outputs.MANAGED_IDENTITY_CLIENT_ID
+    msaAppType: 'SingleTenant'
+    msaAppId: agentAppRegs[agentName]
     enableTeamsChannel: true
     enableDirectLineChannel: true
     appInsightsName: logAnalytics.outputs.APPLICATION_INSIGHTS_NAME
-    // SSO OAuth connection — created only when the preprovision script
-    // populated an SSO AAD app. The C# proxy reads the connection name and
-    // exchanges the user token for a Foundry data-plane token via Bot Service.
-    ssoConnectionName: enableSso ? ssoConnectionName : ''
-    ssoClientId:       ssoAppId
-    ssoClientSecret:   ssoAppSecret
-    ssoTokenExchangeUrl: ssoTokenExchangeResource
+    // Per-agent SSO: each bot's OAuth connection points at the bot's OWN
+    // app reg. tokenExchangeUrl uses the `api://botid-<botId>` form so Teams'
+    // resource-match check passes. clientSecret comes from the per-agent
+    // entry in the secure agentAppSecrets map.
+    ssoConnectionName: ssoConnectionName
+    ssoClientId: agentAppRegs[agentName]
+    ssoClientSecret: agentAppSecrets[agentName]
+    ssoTokenExchangeUrl: 'api://botid-${agentAppRegs[agentName]}'
   }
   dependsOn: [
     projects
   ]
-}
+}]
 
 // ---------------------------------------------------------------------------
-// Teams app manifest
-// ---------------------------------------------------------------------------
-// The manifest is built here in Bicep so that botId / appId stay in sync
-// with the bot service. The postprovision hook (azure.yaml) reads the
-// TEAMS_MANIFEST_JSON output, drops it next to color.png/outline.png in
-// ./teams-app/, and zips the result into ./teams-app/build/teams-app.zip
-// which can be sideloaded into Teams.
+// Teams app manifests — 2 per agent (direct + proxy). Each entry contains
+// both manifests for one agent so publish-teams-agent can build two .zip
+// files per agent. Both share webApplicationInfo.id = teamsAppBackendId so
+// all bots use the SAME silent SSO target.
 //
+// Emitted as a typed object array output (NOT a var) because each manifest
+// references runtime outputs from teamsAgents[i] — Bicep `var`s can only
+// contain values known at deployment start.
+// ---------------------------------------------------------------------------
+// Move manifests to the output section (for-expressions with runtime values
+// are permitted in outputs). See `output TEAMS_MANIFESTS array` below.
 
-var teamsManifest = {
-  '$schema': 'https://developer.microsoft.com/json-schemas/teams/v1.22/MicrosoftTeams.schema.json'
-  manifestVersion: '1.22'
-  version: '1.0.0'
-  id: teamsAgent.outputs.agentIdentityAppId
-  //packageName: 'com.microsoft.foundry.${teamsAgentNameSanitized}'
-  developer: {
-    name: 'AI Foundry'
-    websiteUrl: 'https://learn.microsoft.com/azure/ai-foundry/'
-    privacyUrl: 'https://learn.microsoft.com/azure/ai-foundry/'
-    termsOfUseUrl: 'https://learn.microsoft.com/azure/ai-foundry/'
-  }
-  name: {
-    short: agentName
-    full: '${agentName} (Foundry)'
-  }
-  description: {
-    short: 'AI Foundry agent published to Microsoft Teams.'
-    full: 'Conversational interface for the AI Foundry agent "${agentName}", exposed via Azure Bot Service.'
-  }
-  icons: {
-    color: 'default-color-icon.png'
-    outline: 'default-outline-icon.png'
-  }
-  accentColor: '#0078D4'
-  validDomains: [
-    'token.botframework.com'
-  ]
-  webApplicationInfo: {
-    id: teamsAgent.outputs.agentIdentityAppId
-    resource: 'https://ai.azure.com'
-  }
-  bots: [
-    {
-      botId: teamsAgent.outputs.agentIdentityAppId
-      scopes: [
-        'personal'
-        'team'
-        'groupChat'
-        'copilot'
-      ]
-      supportsFiles: true
-      isNotificationOnly: false
-    }
-  ]
-  copilotAgents: {
-    customEngineAgents: [
-      {
-        id: teamsAgent.outputs.agentIdentityAppId
-        type: 'bot'
-        disclaimer: {
-          text: 'This agent uses AI. Please verify important information.'
-        }
-      }
-    ]
-  }
-}
-
+// ---------------------------------------------------------------------------
+// Outputs
+// ---------------------------------------------------------------------------
 output project_connection_strings string[] = [
   for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_CONNECTION_STRING
 ]
@@ -423,89 +465,142 @@ output PROJECT_NAME string = projectNames[0]
 output LOCATION string = location
 output AZURE_OPENAI_CHAT_DEPLOYMENT_NAME string = 'gpt-5.2'
 output OPENAPI_URL string = first(filter(apiServices, api => api.name == 'weather-openapi')).?uri ?? ''
-output botResourceId string = botService.outputs.botResourceId
-output botName string = botService.outputs.botName
-output BOT_APP_ID string = teamsAgent.outputs.agentIdentityAppId
-output AGENT_NAME string = agentName
-output AGENT_ID string = teamsAgent.outputs.agentId
-output AGENT_VERSION string = teamsAgent.outputs.agentVersion
-output AGENT_GUID string = teamsAgent.outputs.agentGuid
-output AGENT_IDENTITY_APP_ID string = teamsAgent.outputs.agentIdentityAppId
-output AGENT_IDENTITY_OBJECT_ID string = teamsAgent.outputs.agentIdentityObjectId
-output AGENT_BLUEPRINT_APP_ID string = teamsAgent.outputs.agentBlueprintAppId
-output AGENT_BLUEPRINT_OBJECT_ID string = teamsAgent.outputs.agentBlueprintObjectId
-output TEAMS_APP_ID string = teamsAgent.outputs.agentIdentityAppId
-output TEAMS_MANIFEST_JSON string = string(teamsManifest)
 
-// ---------------------------------------------------------------------------
-// Second Teams manifest — for the proxy bot (botServiceForProxy).
-// Same shape as the agent manifest, but pointed at the shared bot UAMI
-// (which is the proxy bot's `msaAppId`) and, when SSO is enabled, advertises
-// the SSO AAD app via `webApplicationInfo` so Teams will request a token
-// from `api://<ssoAppId>` and forward it to the bot.
-// ---------------------------------------------------------------------------
-var teamsManifestProxy = {
-  '$schema': 'https://developer.microsoft.com/json-schemas/teams/v1.22/MicrosoftTeams.schema.json'
-  manifestVersion: '1.22'
-  version: '1.0.0'
-  id: botSharedIdentity.outputs.MANAGED_IDENTITY_CLIENT_ID
-  developer: {
-    name: 'AI Foundry'
-    websiteUrl: 'https://learn.microsoft.com/azure/ai-foundry/'
-    privacyUrl: 'https://learn.microsoft.com/azure/ai-foundry/'
-    termsOfUseUrl: 'https://learn.microsoft.com/azure/ai-foundry/'
-  }
-  name: {
-    short: '${agentName}-proxy'
-    full: '${agentName} (Foundry — proxy)'
-  }
-  description: {
-    short: 'AI Foundry agent via proxy bot.'
-    full: 'Proxy bot fronting the Foundry agent "${agentName}" with optional Teams SSO.'
-  }
-  icons: {
-    color: 'default-color-icon.png'
-    outline: 'default-outline-icon.png'
-  }
-  accentColor: '#0078D4'
-  validDomains: [
-    'token.botframework.com'
-  ]
-  webApplicationInfo: enableSso ? {
-    id: ssoAppId
-    resource: ssoTokenExchangeResource
-  } : {
-    id: botSharedIdentity.outputs.MANAGED_IDENTITY_CLIENT_ID
-    resource: 'https://ai.azure.com'
-  }
-  bots: [
-    {
-      botId: botSharedIdentity.outputs.MANAGED_IDENTITY_CLIENT_ID
-      scopes: [
-        'personal'
-        'team'
-        'groupChat'
-        'copilot'
-      ]
-      supportsFiles: true
-      isNotificationOnly: false
+// Multi-agent outputs (consumed by postprovision-multi-agent + publish-teams-agent)
+output AGENT_NAMES string[] = agentNames
+output DEPLOY_BOTS bool = deployBots
+output TEAMS_APP_BACKEND_ID string = teamsAppBackendId
+output TEAMS_APP_IDENTIFIER_URI string = teamsAppIdentifierUri
+output SSO_CONNECTION_NAME string = ssoConnectionName
+
+// UAMI principalId — postprovision uses this as the FIC subject when
+// creating federated credentials on each agent app reg.
+output TEAMS_PROXY_IDENTITY_PRINCIPAL_ID string = teamsProxyIdentity.outputs.MANAGED_IDENTITY_PRINCIPAL_ID
+output TEAMS_PROXY_IDENTITY_CLIENT_ID string = teamsProxyIdentity.outputs.MANAGED_IDENTITY_CLIENT_ID
+output TEAMS_PROXY_IDENTITY_RESOURCE_ID string = teamsProxyIdentity.outputs.MANAGED_IDENTITY_RESOURCE_ID
+
+// Each entry: { agentName, direct: <manifest>, proxy: <manifest> }
+// publish-teams-agent reads this output and writes 2 .zip files per entry.
+output TEAMS_MANIFESTS array = [for (agentName, i) in agentNames: {
+  agentName: agentName
+  direct: {
+    '$schema': 'https://developer.microsoft.com/json-schemas/teams/v1.22/MicrosoftTeams.schema.json'
+    manifestVersion: '1.22'
+    version: '1.0.0'
+    id: teamsAgents[i].outputs.agentIdentityAppId
+    developer: {
+      name: 'AI Foundry'
+      websiteUrl: 'https://learn.microsoft.com/azure/ai-foundry/'
+      privacyUrl: 'https://learn.microsoft.com/azure/ai-foundry/'
+      termsOfUseUrl: 'https://learn.microsoft.com/azure/ai-foundry/'
     }
-  ]
-  copilotAgents: {
-    customEngineAgents: [
+    name: {
+      short: agentName
+      full: '${agentName} (Foundry)'
+    }
+    description: {
+      short: 'AI Foundry agent published to Microsoft Teams.'
+      full: 'Conversational interface for the AI Foundry agent "${agentName}", exposed via Azure Bot Service activityprotocol.'
+    }
+    icons: {
+      color: 'default-color-icon.png'
+      outline: 'default-outline-icon.png'
+    }
+    accentColor: '#0078D4'
+    validDomains: ['token.botframework.com']
+    webApplicationInfo: {
+      id: teamsAgents[i].outputs.agentIdentityAppId
+      resource: 'https://ai.azure.com'
+    }
+    bots: [
       {
-        id: botSharedIdentity.outputs.MANAGED_IDENTITY_CLIENT_ID
-        type: 'bot'
-        disclaimer: {
-          text: 'This agent uses AI. Please verify important information.'
-        }
+        botId: teamsAgents[i].outputs.agentIdentityAppId
+        scopes: ['personal', 'team', 'groupChat', 'copilot']
+        supportsFiles: true
+        isNotificationOnly: false
       }
     ]
+    copilotAgents: {
+      customEngineAgents: [
+        {
+          id: teamsAgents[i].outputs.agentIdentityAppId
+          type: 'bot'
+          disclaimer: { text: 'This agent uses AI. Please verify important information.' }
+        }
+      ]
+    }
   }
-}
+  proxy: {
+    '$schema': 'https://developer.microsoft.com/json-schemas/teams/v1.22/MicrosoftTeams.schema.json'
+    manifestVersion: '1.22'
+    version: '1.0.0'
+    id: agentAppRegs[agentName]
+    developer: {
+      name: 'AI Foundry'
+      websiteUrl: 'https://learn.microsoft.com/azure/ai-foundry/'
+      privacyUrl: 'https://learn.microsoft.com/azure/ai-foundry/'
+      termsOfUseUrl: 'https://learn.microsoft.com/azure/ai-foundry/'
+    }
+    name: {
+      short: '${agentName}-proxy'
+      full: '${agentName} (Foundry — proxy)'
+    }
+    description: {
+      short: 'AI Foundry agent via proxy bot.'
+      full: 'Proxy bot fronting the Foundry agent "${agentName}" with Teams SSO + OBO to Foundry.'
+    }
+    icons: {
+      color: 'default-color-icon.png'
+      outline: 'default-outline-icon.png'
+    }
+    accentColor: '#0078D4'
+    validDomains: ['token.botframework.com']
+    // Per-agent SSO: webApplicationInfo.id = botId (this agent's app reg),
+    // resource = `api://botid-<botId>`. Teams enforces that the resource
+    // URI encode the botId before silently issuing an SSO token for it —
+    // this is the rule that broke the previous "one shared backend reg
+    // for every bot" design with `resourcematchfailed`.
+    webApplicationInfo: {
+      id: agentAppRegs[agentName]
+      resource: 'api://botid-${agentAppRegs[agentName]}'
+    }
+    bots: [
+      {
+        botId: agentAppRegs[agentName]
+        scopes: ['personal', 'team', 'groupChat', 'copilot']
+        supportsFiles: true
+        isNotificationOnly: false
+      }
+    ]
+    copilotAgents: {
+      customEngineAgents: [
+        {
+          id: agentAppRegs[agentName]
+          type: 'bot'
+          disclaimer: { text: 'This agent uses AI. Please verify important information.' }
+        }
+      ]
+    }
+  }
+}]
 
-output TEAMS_MANIFEST_PROXY_JSON string = string(teamsManifestProxy)
-output SSO_CONNECTION_NAME string = enableSso ? ssoConnectionName : ''
-output SSO_APP_ID string = ssoAppId
-output PROXY_BOT_APP_ID string = botSharedIdentity.outputs.MANAGED_IDENTITY_CLIENT_ID
-output PROXY_BOT_NAME string = botServiceForProxy.outputs.botName
+// Per-agent publish info (used by publish-teams-agent to call the Foundry
+// /microsoft365/publish API). agentGuid + blueprintAppId come from the
+// foundry-agent module's deploymentScript output.
+output AGENT_PUBLISH_INFO array = [for (agentName, i) in agentNames: {
+  agentName: agentName
+  agentGuid: teamsAgents[i].outputs.agentGuid
+  blueprintAppId: teamsAgents[i].outputs.agentBlueprintAppId
+}]
+
+// Map agentName → bot identity appIds (direct = Foundry SP appId; proxy = our app reg).
+output AGENT_DIRECT_APP_IDS array = [for (agentName, i) in agentNames: {
+  agentName: agentName
+  appId: teamsAgents[i].outputs.agentIdentityAppId
+}]
+output AGENT_PROXY_APP_IDS array = [for agentName in agentNames: {
+  agentName: agentName
+  appId: agentAppRegs[agentName]
+}]
+
+output PROXY_FQDN string = deployBots ? teamsProxy!.outputs.CONTAINER_APP_FQDN : ''

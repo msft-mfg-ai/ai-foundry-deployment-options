@@ -99,8 +99,22 @@ if (-not $existingScopes) {
   $preauthBody = @{
     api = @{
       preAuthorizedApplications = @(
+        # Teams mobile or desktop application
         @{ appId = '1fec8e78-bce4-4aaf-ab1b-5451cc387264'; delegatedPermissionIds = @($scopeId) }
+        # Teams web client
         @{ appId = '5e3ce6c0-2b1f-4285-8d4b-75ee78787346'; delegatedPermissionIds = @($scopeId) }
+        # Microsoft 365 web application
+        @{ appId = '4765445b-32c6-49b0-83e6-1d93765276ca'; delegatedPermissionIds = @($scopeId) }
+        # Microsoft 365 desktop application
+        @{ appId = '0ec893e0-5785-4de6-99da-4ed124e5296c'; delegatedPermissionIds = @($scopeId) }
+        # Microsoft 365 mobile application Outlook desktop application
+        @{ appId = 'd3590ed6-52b3-4102-aeff-aad2292ab01c'; delegatedPermissionIds = @($scopeId) }
+        # Outlook web application
+        @{ appId = 'bc59ab01-8403-45c6-8796-ac3ef710b3e3'; delegatedPermissionIds = @($scopeId) }
+        # Outlook mobile application
+        @{ appId = '27922004-5251-4030-b22d-91ecd9a37ea4'; delegatedPermissionIds = @($scopeId) }
+        # Microsoft Edge
+        @{ appId = 'c0ab8ce9-e9a0-42e7-b064-33d422df41f1'; delegatedPermissionIds = @($scopeId) }
       )
     }
   } | ConvertTo-Json -Depth 10
