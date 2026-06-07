@@ -2,6 +2,14 @@
 
 Publishes an **existing** Microsoft Foundry agent to Microsoft Teams via Azure Bot Service. Assumes the Foundry account, project, and agent already exist (created via the Foundry portal, the `foundry-agent.bicep` module, the SDK, or another deployment).
 
+This is the **minimal, single-agent, no-SSO** pattern:
+
+- **One bot** per agent (no proxy, no per-agent app registrations).
+- The Bot Service uses the **agent's own ServiceIdentity SP** as `msaAppId` — no new AAD app is created.
+- **No Teams SSO** — the manifest omits `webApplicationInfo`, so the bot never calls `getAuthToken`. Conversations are pure activity-protocol traffic between Bot Service and Foundry.
+
+If you need multi-agent, private VNet, a reverse proxy with Teams SSO/OBO into Foundry, or per-agent AAD app registrations, use [`foundry-byo-vnet-teams`](../foundry-byo-vnet-teams) instead.
+
 ## What it deploys
 
 | Step | Resource | Why |

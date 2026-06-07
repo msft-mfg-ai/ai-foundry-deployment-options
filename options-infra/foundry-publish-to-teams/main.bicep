@@ -65,9 +65,6 @@ param privacyUrl string = 'https://learn.microsoft.com/azure/ai-foundry/'
 @description('Terms-of-use URL.')
 param termsOfUseUrl string = 'https://learn.microsoft.com/azure/ai-foundry/'
 
-@description('Optional proxy URL for teams that translates between activity protocol and responses API.')
-param teamsProxyUrl string = ''
-
 param location string = resourceGroup().location
 
 var tags = {
@@ -117,7 +114,6 @@ module logAnalytics '../modules/monitor/loganalytics.bicep' = {
 // (lowercased, sanitized) agent name to leave room for the prefix + token.
 var botNameSafe = take(toLower(replace(replace(agentName, '_', '-'), '.', '-')), 25)
 var botResourceName = take('bot-${botNameSafe}-${resourceToken}', 42)
-var botProxyResourceName = take('bot-${botNameSafe}-${resourceToken}', 42)
 
 module botService '../modules/bot/bot-service.bicep' = {
   name: 'bot-service-${resourceToken}'
@@ -126,39 +122,11 @@ module botService '../modules/bot/bot-service.bicep' = {
     location: 'global'
     name: botResourceName
     displayName: agentDisplayName
-    sku: 'F0'
+    // SKU MUST be S1 (Standard) for the Microsoft Teams channel to deliver
+    // traffic. On F0 (Free) the channel shows as enabled but Teams events
+    // never reach the bot.
+    sku: 'S1'
     endpoint: 'https://${aiFoundryName}.services.ai.azure.com/api/projects/${aiFoundryProjectName}/agents/${agentName}/endpoint/protocols/activityprotocol?api-version=2025-11-15-preview'
-    disableLocalAuth: false
-    // Use the agent's auto-created ServiceIdentity SP appId as msaAppId.
-    // BF channels mint tokens with aud = msaAppId; Foundry's activityprotocol
-    // (with the BotServiceRbac auth scheme enabled by `enableActivity` above)
-    // validates aud against the same appId, so they match.
-    msaAppType: 'SingleTenant'
-    msaAppId: enableActivity.outputs.agentIdentityAppId
-    enableTeamsChannel: true
-    enableDirectLineChannel: true
-    appInsightsName: logAnalytics.outputs.APPLICATION_INSIGHTS_NAME
-  }
-}
-
-module identity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.1' = {
-  name: 'mgmtidentity-${uniqueString(deployment().name, location)}'
-  params: {
-    location: location
-    tags: tags
-    name: 'teams-proxy-identity-${resourceToken}'
-  }
-}
-
-module botServiceForProxy '../modules/bot/bot-service.bicep' = if (!empty(teamsProxyUrl)) {
-  name: 'bot-proxy-service--${resourceToken}'
-  params: {
-    tags: tags
-    location: 'global'
-    name: botProxyResourceName
-    displayName: agentDisplayName
-    sku: 'F0'
-    endpoint: '${teamsProxyUrl}/api/messages/${aiFoundryName}/${aiFoundryProjectName}/${agentName}'
     disableLocalAuth: false
     // Use the agent's auto-created ServiceIdentity SP appId as msaAppId.
     // BF channels mint tokens with aud = msaAppId; Foundry's activityprotocol
@@ -204,10 +172,6 @@ var teamsManifest = {
   }
   accentColor: '#0078D4'
   validDomains: []
-  webApplicationInfo: {
-    id: enableActivity.outputs.agentIdentityAppId
-    resource: 'https://ai.azure.com'
-  }
   bots: [
     {
       botId: enableActivity.outputs.agentIdentityAppId
