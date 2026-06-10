@@ -1,5 +1,5 @@
 locals {
-  # Flatten all deployments across instances
+  # Flatten all deployments across instances — one entry per (instance, model)
   all_deployments = flatten([
     for instance in var.foundry_instances : [
       for dep in instance.deployments : {
@@ -7,6 +7,8 @@ locals {
         endpoint         = instance.endpoint
         is_ptu           = instance.is_ptu
         model_name       = dep.model_name
+        model_clean      = replace(replace(dep.model_name, ".", ""), "-", "")
+        backend_name     = "${instance.name}-${replace(replace(dep.model_name, ".", ""), "-", "")}-backend"
         ptu_capacity_tpm = dep.ptu_capacity_tpm
         priority         = instance.priority
         weight           = instance.weight
@@ -20,11 +22,11 @@ locals {
   # Sanitize model names for pool naming (remove dots and hyphens)
   model_clean = { for m in local.unique_models : m => replace(replace(m, ".", ""), "-", "") }
 
-  # Group PTU backends per model
+  # Group PTU backends per model — references per-(instance, model) backend
   ptu_backends_by_model = {
     for model in local.unique_models : model => [
       for d in local.all_deployments : {
-        id       = "${d.instance_name}-backend"
+        id       = d.backend_name
         priority = d.priority != null ? d.priority : 1
         weight   = d.weight
       } if d.model_name == model && d.is_ptu
@@ -35,7 +37,7 @@ locals {
   payg_backends_by_model = {
     for model in local.unique_models : model => [
       for d in local.all_deployments : {
-        id       = "${d.instance_name}-backend"
+        id       = d.backend_name
         priority = d.priority != null ? d.priority : 1
         weight   = d.weight
       } if d.model_name == model && !d.is_ptu
@@ -49,23 +51,30 @@ locals {
     ]))
   }
 
-  # Unique instance backends (deduplicated)
-  unique_instances = { for inst in var.foundry_instances : inst.name => inst }
+  # Backend map keyed by "{instance}-{model_clean}" for for_each iteration.
+  # One backend per (instance, model) pair so circuit-breaker state is scoped
+  # to a single model — a throttled model can't disable other models on the
+  # same Foundry instance.
+  per_model_backends = {
+    for d in local.all_deployments : "${d.instance_name}-${d.model_clean}" => d
+  }
 }
 
-# Create individual backends (one per instance)
-# Circuit breaker on PTU backends: trips on 429/503, respects Retry-After header
+# Create individual backends — one per (instance, model) pair.
+# Circuit breaker on PTU backends: trips on 429/503, respects Retry-After header.
+# URL stays at {endpoint}/openai; the /deployments/{model}/... path segment
+# is forwarded from the request unchanged.
 resource "azapi_resource" "backend" {
-  for_each = local.unique_instances
+  for_each = local.per_model_backends
 
   type                      = "Microsoft.ApiManagement/service/backends@2024-05-01"
-  name                      = "${each.key}-backend"
+  name                      = each.value.backend_name
   parent_id                 = var.apim_id
   schema_validation_enabled = true
   body = {
     properties = merge(
       {
-        description = "Backend for ${each.key}"
+        description = "${each.value.is_ptu ? "PTU" : "Paygo"} backend: ${each.value.instance_name} — model ${each.value.model_name}"
         type        = "single"
         protocol    = "http"
         url         = "${trimsuffix(each.value.endpoint, "/")}/openai"
@@ -82,7 +91,7 @@ resource "azapi_resource" "backend" {
                   { min = 503, max = 503 }
                 ]
               }
-              name             = "breakOnThrottle"
+              name             = "${each.value.model_clean}-breaker"
               tripDuration     = "PT10S"
               acceptRetryAfter = true
             }

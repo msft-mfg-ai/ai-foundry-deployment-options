@@ -39,7 +39,7 @@ resource "azapi_resource" "appinsights_logger" {
 
   body = {
     properties = {
-      loggerType = "applicationInsights"
+      loggerType  = "applicationInsights"
       description = "APIM Logger for Application Insights"
       resourceId  = var.application_insights_id
       credentials = {
@@ -201,7 +201,7 @@ resource "azurerm_api_management_api_diagnostic" "inference_diag" {
   }
 
   backend_response {
-    body_bytes = 0
+    body_bytes     = 0
     headers_to_log = []
   }
 }
@@ -345,9 +345,9 @@ resource "azurerm_portal_dashboard" "ai_gateway" {
   tags                = var.tags
 
   dashboard_properties = templatefile("${path.module}/dashboard/dashboard.tftpl.json", {
-    subscription_id    = var.subscription_id
-    resource_group     = data.azurerm_resource_group.existing.name
-    law_name           = split("/", var.log_analytics_workspace_id)[8]
-    law_id             = var.log_analytics_workspace_id
+    subscription_id = var.subscription_id
+    resource_group  = data.azurerm_resource_group.existing.name
+    law_name        = split("/", var.log_analytics_workspace_id)[8]
+    law_id          = var.log_analytics_workspace_id
   })
 }

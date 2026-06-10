@@ -65,6 +65,33 @@ var deployBots = !empty(agentNames) && !empty(teamsAppBackendId)
 var ssoConnectionName = 'foundry-sso'
 var teamsAppIdentifierUri = empty(teamsAppBackendId) ? '' : 'api://${teamsAppBackendId}'
 
+// ---------------------------------------------------------------------------
+// Direct-bot endpoint mode
+// ---------------------------------------------------------------------------
+// The "direct" bot's msaAppId is the Foundry agent's ServiceIdentity SP, and
+// Bot Service POSTs each activity to whatever URL we configure here. Two
+// strategies:
+//
+//   'foundry'      → endpoint = Foundry's activityprotocol URL directly.
+//                    Simplest topology; requires Foundry public network
+//                    access = Enabled (BF channels live on the public
+//                    internet and must reach the endpoint).
+//
+//   'passthrough'  → endpoint = container app /api/passthrough/* route,
+//                    which is a YARP reverse proxy that forwards 1:1 to the
+//                    same Foundry activityprotocol URL (same body, same JWT,
+//                    same query string). Required when Foundry public access
+//                    is Disabled: BF traffic terminates on the container
+//                    (which reaches Foundry over the private endpoint) so
+//                    Foundry itself stays unreachable from the internet.
+//
+// Default is 'passthrough' because the whole point of this template is the
+// PE-ready topology. Flip to 'foundry' for simpler debugging or when you
+// know public access will remain enabled.
+@allowed(['foundry', 'passthrough'])
+@description('Endpoint the direct bot points at: "foundry" = activityprotocol URL directly (needs Foundry public access); "passthrough" = via container YARP route (works with PE-only Foundry).')
+param directBotEndpointMode string = 'passthrough'
+
 var tags = {
   'created-by': 'foundry-byo-vnet-teams'
   'hidden-title': 'Foundry Standard - BYO VNet + Multi-agent Teams'
@@ -232,13 +259,16 @@ module teamsAgents '../modules/ai/foundry-agent.bicep' = [for agentName in agent
 // activityprotocol validates against this same appId. No FIC needed: the
 // Foundry SP already exists with whatever credentials Foundry uses internally.
 //
-// Endpoint goes through the proxy container's /api/passthrough/* route, which
-// is a pure YARP reverse proxy that forwards the request 1:1 to Foundry's
-// activityprotocol URL — same body, same JWT, same query string. This lets
-// Foundry have public network access disabled while still serving Bot Service
-// traffic, because all inbound HTTPS flows hit the container (which has VNet
-// connectivity to Foundry's private endpoint) instead of Foundry directly.
-// See proxy repo src/AgentChat/Passthrough/ for the implementation.
+// Endpoint is chosen by `directBotEndpointMode`:
+//   - 'passthrough' (default) → container's /api/passthrough/* YARP route,
+//     which forwards 1:1 to Foundry's activityprotocol URL. Lets Foundry
+//     have public network access disabled while still serving BF traffic,
+//     because all inbound HTTPS terminates on the container (which has VNet
+//     connectivity to Foundry's PE) instead of Foundry directly.
+//     See proxy repo src/AgentChat/Passthrough/ for the implementation.
+//   - 'foundry' → straight at Foundry's activityprotocol URL. Requires
+//     Foundry public access = Enabled. No container app dependency for the
+//     direct bot path (proxy bot still needs it for /api/messages/*).
 module botServicesDirect '../modules/bot/bot-service.bicep' = [for (agentName, i) in agentNames: if (deployBots) {
   name: 'bot-direct-${agentName}-${resourceToken}'
   params: {
@@ -246,7 +276,9 @@ module botServicesDirect '../modules/bot/bot-service.bicep' = [for (agentName, i
     location: location
     name: 'bot-direct-${agentName}-${resourceToken}'
     displayName: agentName
-    endpoint: '${teamsProxy!.outputs.CONTAINER_APP_FQDN}/api/passthrough/${foundry.outputs.FOUNDRY_NAME}/${projectNames[0]}/${agentName}?api-version=2025-11-15-preview'
+    endpoint: directBotEndpointMode == 'foundry'
+      ? 'https://${foundry.outputs.FOUNDRY_NAME}.services.ai.azure.com/api/projects/${projectNames[0]}/agents/${agentName}/endpoint/protocols/activityprotocol?api-version=2025-11-15-preview'
+      : '${teamsProxy!.outputs.CONTAINER_APP_FQDN}/api/passthrough/${foundry.outputs.FOUNDRY_NAME}/${projectNames[0]}/${agentName}?api-version=2025-11-15-preview'
     disableLocalAuth: false
     msaAppType: 'SingleTenant'
     msaAppId: teamsAgents[i].outputs.agentIdentityAppId
