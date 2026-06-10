@@ -1,66 +1,98 @@
 using 'main.bicep'
 
 // ============================================================================
-// Foundry Instances — existing backends to register with APIM
+// SELF-CONTAINED MODE (default):
+//   No env vars set → deploy a Foundry account in this RG with gpt-4.1-mini
+//   and use 2 PAYG-only access contracts referencing that model.
+//
+// BYO MODE:
+//   Set FOUNDRY_PTU_RESOURCE_ID / FOUNDRY_ONE_RESOURCE_ID / FOUNDRY_TWO_RESOURCE_ID
+//   (with matching _ENDPOINT vars) to register existing Foundry accounts as
+//   backends instead. Self-hosted Foundry is skipped when any BYO instance is
+//   provided.
+// ============================================================================
+
+var ptuResourceId = readEnvironmentVariable('FOUNDRY_PTU_RESOURCE_ID', '')
+var oneResourceId = readEnvironmentVariable('FOUNDRY_ONE_RESOURCE_ID', '')
+var twoResourceId = readEnvironmentVariable('FOUNDRY_TWO_RESOURCE_ID', '')
+
+var hasBYO = !empty(ptuResourceId) || !empty(oneResourceId) || !empty(twoResourceId)
+
+// ============================================================================
+// Foundry Instances — existing backends to register with APIM (BYO mode)
 // ============================================================================
 // Each instance is PTU-only or paygo-only (do NOT mix).
 // Deployment names MUST match modelName (enforced — no deploymentName override).
 //
 // `isPtu` determines pool ordering automatically (PTU=1, PAYG=2).
-//
 // Circuit breaker trips on 429 → future requests go to next priority tier.
 // APIM policy handles instant retry for the current request.
 // ============================================================================
 
-param foundryInstances = [
-  // -- PTU instance (eastus2) ------------------------------------------------
-  {
-    name: 'foundry-eastus2-ptu'
-    resourceId: readEnvironmentVariable(
-      'FOUNDRY_PTU_RESOURCE_ID',
-      '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-ai/providers/Microsoft.CognitiveServices/accounts/foundry-eastus-ptu'
-    )
-    endpoint: readEnvironmentVariable('FOUNDRY_PTU_ENDPOINT', 'https://foundry-eastus-ptu.openai.azure.com/')
-    location: 'eastus2'
-    isPtu: true
-    deployments: [
-      { modelName: 'gpt-4.1-mini', ptuCapacityTpm: 2000 }
-      { modelName: 'gpt-4.1', ptuCapacityTpm: 1000 }
+var ptuInstance = !empty(ptuResourceId)
+  ? [
+      {
+        name: 'foundry-eastus2-ptu'
+        resourceId: ptuResourceId
+        endpoint: readEnvironmentVariable('FOUNDRY_PTU_ENDPOINT', '')
+        location: 'eastus2'
+        isPtu: true
+        deployments: [
+          { modelName: 'gpt-4.1-mini', ptuCapacityTpm: 2000 }
+          { modelName: 'gpt-4.1', ptuCapacityTpm: 1000 }
+        ]
+      }
     ]
-  }
-  // -- Paygo instance (eastus2) ----------------------------------------------
-  {
-    name: 'foundry-eastus2-paygo'
-    resourceId: readEnvironmentVariable(
-      'FOUNDRY_ONE_RESOURCE_ID',
-      '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-ai/providers/Microsoft.CognitiveServices/accounts/foundry-eastus'
-    )
-    endpoint: readEnvironmentVariable('FOUNDRY_ONE_ENDPOINT', 'https://foundry-eastus.openai.azure.com/')
-    location: 'eastus2'
-    isPtu: false
-    deployments: [
-      { modelName: 'gpt-4.1-mini' }
-      { modelName: 'gpt-4.1' }
-      { modelName: 'gpt-5.1-chat' }
-      { modelName: 'gpt-oss-120b' }
+  : []
+
+var oneInstance = !empty(oneResourceId)
+  ? [
+      {
+        name: 'foundry-eastus2-paygo'
+        resourceId: oneResourceId
+        endpoint: readEnvironmentVariable('FOUNDRY_ONE_ENDPOINT', '')
+        location: 'eastus2'
+        isPtu: false
+        deployments: [
+          { modelName: 'gpt-4.1-mini' }
+          { modelName: 'gpt-4.1' }
+          { modelName: 'gpt-5.1-chat' }
+          { modelName: 'gpt-oss-120b' }
+        ]
+      }
     ]
-  }
-  // -- Paygo instance (westus) -----------------------------------------------
-  {
-    name: 'foundry-westus-paygo'
-    resourceId: readEnvironmentVariable(
-      'FOUNDRY_TWO_RESOURCE_ID',
-      '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-ai/providers/Microsoft.CognitiveServices/accounts/foundry-westus'
-    )
-    endpoint: readEnvironmentVariable('FOUNDRY_TWO_ENDPOINT', 'https://foundry-westus.openai.azure.com/')
-    location: 'westus'
-    isPtu: false
-    deployments: [
-      { modelName: 'gpt-4.1-mini' }
-      { modelName: 'gpt-oss-120b' }
+  : []
+
+var twoInstance = !empty(twoResourceId)
+  ? [
+      {
+        name: 'foundry-westus-paygo'
+        resourceId: twoResourceId
+        endpoint: readEnvironmentVariable('FOUNDRY_TWO_ENDPOINT', '')
+        location: 'westus'
+        isPtu: false
+        deployments: [
+          { modelName: 'gpt-4.1-mini' }
+          { modelName: 'gpt-oss-120b' }
+        ]
+      }
     ]
-  }
-]
+  : []
+
+param foundryInstances = union(ptuInstance, oneInstance, twoInstance)
+
+// Self-contained: deploy a Foundry with gpt-4.1-mini unless any BYO is set.
+param createFoundryDeployments = hasBYO
+  ? []
+  : [
+      {
+        name: 'gpt-4.1-mini'
+        properties: {
+          model: { format: 'OpenAI', name: 'gpt-4.1-mini', version: '2025-04-14' }
+        }
+        sku: { name: 'GlobalStandard', capacity: 20 }
+      }
+    ]
 
 // ============================================================================
 // Access Contracts — team identities, priorities, and quotas
@@ -93,7 +125,8 @@ var currentUser = readEnvironmentVariable('CURRENT_USER_OBJECT_ID', '') != ''
   ? [{ value: readEnvironmentVariable('CURRENT_USER_OBJECT_ID', ''), displayName: 'Current User', claimName: 'oid' }]
   : []
 
-param accessContracts = [
+// BYO mode: 3 teams with mixed PTU/PAYG models.
+var byoContracts = [
   {
     name: 'Team Alpha'
     identities: union(teamAlpha, currentUser)
@@ -108,7 +141,7 @@ param accessContracts = [
   }
   {
     name: 'Team Beta'
-    identities: [] // auto-create Entra app
+    identities: []
     priority: 2
     models: [
       { name: 'gpt-4.1-mini', tpm: 400, ptuTpm: 200 }
@@ -119,7 +152,7 @@ param accessContracts = [
   }
   {
     name: 'Team Gamma'
-    identities: [] // auto-create Entra app
+    identities: []
     priority: 2
     models: [
       { name: 'gpt-4.1-mini', tpm: 300 }
@@ -129,5 +162,32 @@ param accessContracts = [
     environment: 'PROD'
   }
 ]
+
+// Self-contained mode: 2 PAYG-only teams against gpt-4.1-mini (the only deployment).
+var selfContainedContracts = [
+  {
+    name: 'Team Alpha'
+    identities: union(teamAlpha, currentUser)
+    priority: 2
+    models: [
+      { name: 'gpt-4.1-mini', tpm: 5000 }
+    ]
+    monthlyQuota: 500000
+    environment: 'PROD'
+  }
+  {
+    name: 'Team Beta'
+    identities: []
+    priority: 2
+    models: [
+      { name: 'gpt-4.1-mini', tpm: 1000 }
+    ]
+    monthlyQuota: 100000
+    environment: 'DEV'
+  }
+]
+
+param accessContracts = hasBYO ? byoContracts : selfContainedContracts
+
 
 

@@ -4,8 +4,15 @@
 // Accepts an array of existing Foundry instances (PTU-only or paygo-only) and
 // creates APIM backends + mixed (PTU+PAYG) and PAYG-only pools per model.
 //
+// Backend naming convention:
+//   {instance}-{model-clean}-backend — one backend per (instance, model) pair.
+//   The URL is still {endpoint}/openai (the deployment segment is forwarded
+//   as-is from the request path), but each backend has its OWN circuit-breaker
+//   state, so a single throttled model can't disable other models on the same
+//   Foundry instance.
+//
 // Pool naming convention:
-//   {model-clean}-pool      — Mixed pool: PTU at priority 1, PAYG at priority 2
+//   {model-clean}-ptu-pool  — Mixed pool: PTU at priority 1, PAYG at priority 2
 //                              Circuit breaker on PTU backends handles failover.
 //   {model-clean}-payg-pool — PAYG backends only (used by Standard callers)
 //
@@ -26,19 +33,39 @@ param configureCircuitBreaker bool = true
 @description('Array of existing Foundry instances to register as backends. Each must be PTU-only or paygo-only.')
 param foundryInstances foundryInstanceType[]
 
-// -- Individual Backends (one per Foundry instance) ---------------------------
 resource apimService 'Microsoft.ApiManagement/service@2024-06-01-preview' existing = {
   name: apimServiceName
 }
 
+// -- Flatten deployments with instance metadata -------------------------------
+// One entry per (instance, model) pair. Each becomes its own APIM backend so
+// circuit-breaker state is scoped to a single model.
+var allDeployments = flatten(map(
+  foundryInstances,
+  instance =>
+    map(instance.deployments, dep => {
+      instanceName: instance.name
+      endpoint: instance.endpoint
+      modelName: dep.modelName
+      modelClean: replace(replace(dep.modelName, '.', ''), '-', '')
+      backendName: '${instance.name}-${replace(replace(dep.modelName, '.', ''), '-', '')}-backend'
+      isPtu: instance.isPtu
+      ptuCapacityTpm: dep.?ptuCapacityTpm ?? 0
+      priority: instance.?priority ?? (instance.isPtu ? 1 : 2)
+      weight: instance.?weight ?? 1
+      location: instance.location
+    })
+))
+
+// -- Individual Backends (one per (instance, model) pair) ---------------------
 @batchSize(1)
 resource backends 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' = [
-  for (instance, i) in foundryInstances: {
+  for (dep, i) in allDeployments: {
     parent: apimService
-    name: '${instance.name}-backend'
+    name: dep.backendName
     properties: {
-      description: '${instance.isPtu ? 'PTU' : 'Paygo'} backend: ${instance.name} (${instance.location}) — ${length(instance.deployments)} model(s)'
-      url: '${instance.endpoint}openai'
+      description: '${dep.isPtu ? 'PTU' : 'Paygo'} backend: ${dep.instanceName} (${dep.location}) — model ${dep.modelName}'
+      url: '${dep.endpoint}openai'
       protocol: 'http'
       credentials: {
         #disable-next-line BCP037
@@ -50,7 +77,7 @@ resource backends 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' 
         ? {
             rules: [
               {
-                name: '${instance.name}-breaker'
+                name: '${dep.modelClean}-breaker'
                 failureCondition: {
                   count: 1
                   errorReasons: ['Server errors']
@@ -67,41 +94,45 @@ resource backends 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' 
   }
 ]
 
-// -- Flatten deployments with instance metadata -------------------------------
-var allDeployments = flatten(map(foundryInstances, instance =>
-  map(instance.deployments, dep => {
-    instanceName: instance.name
-    modelName: dep.modelName
-    isPtu: instance.isPtu
-    ptuCapacityTpm: dep.?ptuCapacityTpm ?? 0
-    priority: instance.?priority ?? (instance.isPtu ? 1 : 2)
-    weight: instance.?weight ?? 1
-    location: instance.location
-  })
-))
-
 // -- Discover unique models across all instances ------------------------------
-var uniqueModels = reduce(allDeployments, [], (acc, dep) =>
-  contains(acc, dep.modelName) ? acc : concat(acc, [dep.modelName])
+var uniqueModels = reduce(
+  allDeployments,
+  [],
+  (acc, dep) => contains(acc, dep.modelName) ? acc : concat(acc, [dep.modelName])
 )
 
 // -- Sum PTU capacity per model -----------------------------------------------
-var ptuCapacityPerModel = reduce(uniqueModels, {}, (acc, model) => union(acc, {
-  '${model}': reduce(
-    filter(allDeployments, d => d.modelName == model && d.isPtu),
-    0,
-    (sum, d) => sum + d.ptuCapacityTpm
-  )
-}))
+var ptuCapacityPerModel = reduce(
+  uniqueModels,
+  {},
+  (acc, model) =>
+    union(acc, {
+      '${model}': reduce(
+        filter(allDeployments, d => d.modelName == model && d.isPtu),
+        0,
+        (sum, d) => sum + d.ptuCapacityTpm
+      )
+    })
+)
 
 // -- Helper: count PTU and paygo backends per model ---------------------------
-var ptuCountPerModel = reduce(uniqueModels, {}, (acc, model) => union(acc, {
-  '${model}': length(filter(allDeployments, d => d.modelName == model && d.isPtu))
-}))
+var ptuCountPerModel = reduce(
+  uniqueModels,
+  {},
+  (acc, model) =>
+    union(acc, {
+      '${model}': length(filter(allDeployments, d => d.modelName == model && d.isPtu))
+    })
+)
 
-var paygoCountPerModel = reduce(uniqueModels, {}, (acc, model) => union(acc, {
-  '${model}': length(filter(allDeployments, d => d.modelName == model && !d.isPtu))
-}))
+var paygoCountPerModel = reduce(
+  uniqueModels,
+  {},
+  (acc, model) =>
+    union(acc, {
+      '${model}': length(filter(allDeployments, d => d.modelName == model && !d.isPtu))
+    })
+)
 
 // -- Mixed Pools (PTU at priority 1 + PAYG at priority 2) ---------------------
 // Used by Production callers. Circuit breaker on PTU backends handles failover
@@ -118,12 +149,12 @@ resource mixedPools 'Microsoft.ApiManagement/service/backends@2024-06-01-preview
       pool: {
         services: concat(
           map(filter(allDeployments, d => d.modelName == model && d.isPtu), d => {
-            id: '/backends/${d.instanceName}-backend'
+            id: '/backends/${d.backendName}'
             priority: 1
             weight: d.weight
           }),
           map(filter(allDeployments, d => d.modelName == model && !d.isPtu), d => {
-            id: '/backends/${d.instanceName}-backend'
+            id: '/backends/${d.backendName}'
             priority: 2
             weight: d.weight
           })
@@ -146,7 +177,7 @@ resource paygoOnlyPools 'Microsoft.ApiManagement/service/backends@2024-06-01-pre
       type: 'Pool'
       pool: {
         services: map(filter(allDeployments, d => d.modelName == model && !d.isPtu), d => {
-          id: '/backends/${d.instanceName}-backend'
+          id: '/backends/${d.backendName}'
           priority: 1
           weight: d.weight
         })
@@ -156,14 +187,16 @@ resource paygoOnlyPools 'Microsoft.ApiManagement/service/backends@2024-06-01-pre
 ]
 
 // -- Outputs ------------------------------------------------------------------
-output backendNames array = [for (instance, i) in foundryInstances: backends[i].name]
-output poolNames array = [for (model, i) in uniqueModels: {
-  model: model
-  mixedPool: '${replace(replace(model, '.', ''), '-', '')}-ptu-pool'
-  paygoPool: '${replace(replace(model, '.', ''), '-', '')}-payg-pool'
-  hasPtu: length(filter(allDeployments, d => d.modelName == model && d.isPtu)) > 0
-  hasPaygo: paygoCountPerModel[model] > 0
-}]
+output backendNames array = [for (dep, i) in allDeployments: backends[i].name]
+output poolNames array = [
+  for (model, i) in uniqueModels: {
+    model: model
+    mixedPool: '${replace(replace(model, '.', ''), '-', '')}-ptu-pool'
+    paygoPool: '${replace(replace(model, '.', ''), '-', '')}-payg-pool'
+    hasPtu: length(filter(allDeployments, d => d.modelName == model && d.isPtu)) > 0
+    hasPaygo: paygoCountPerModel[model] > 0
+  }
+]
 output uniqueModels array = uniqueModels
 output hasPtuDeployments bool = length(filter(allDeployments, d => d.isPtu)) > 0
 output ptuCapacityPerModel object = ptuCapacityPerModel
