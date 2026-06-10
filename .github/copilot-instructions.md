@@ -2,7 +2,19 @@
 
 ## Project Overview
 
-This repository provides **Bicep templates for deploying Microsoft Azure AI Foundry** with various network and infrastructure configurations. It includes 30+ deployment options covering private networking, multi-region, multi-subscription, AI Gateway (APIM), and shared resource patterns.
+This repository provides **Bicep templates for deploying Microsoft Azure AI Foundry** with various network and infrastructure configurations. It includes 35+ deployment options covering private networking, multi-region, multi-subscription, AI Gateway (APIM), and shared resource patterns.
+
+### Nested instruction files — read these when working in scope
+
+Several subprojects have their own copilot/agent guides with scope-specific gotchas. **Always read the nested file first** when working under that path:
+
+| Path | File |
+|---|---|
+| `options-infra/foundry-byo-vnet-teams/` | `.github/copilot-instructions.md` — Teams bots, ABS auth, per-agent app regs, proxy contract |
+| `options-infra/ai-gateway-quota/` | `AGENTS.md` — APIM access contracts, PTU/PAYG spillover, policy XML placeholder system |
+| `subscription-manager/` | `.github/copilot-instructions.md` — FastAPI app commands, architecture, tests |
+
+The companion C# proxy for `foundry-byo-vnet-teams` is a separate repo cloned locally at `/home/pkarpala/projects/medline/foundry-teams-bot-service-proxy` (remote: `github.com/karpikpl/foundry-teams-bot-service-proxy`).
 
 ## Repository Structure
 
@@ -58,12 +70,31 @@ uv run python create_agents.py
 
 ```bash
 cd options-infra/<option>
-azd up
+# IMPORTANT: when running azd from Copilot CLI / other AI agents, prefix with
+# AZD_DISABLE_AGENT_DETECT=1 — azd auto-detects coding agents and silently
+# switches to --no-prompt, which breaks interactive flows (login, env init).
+AZD_DISABLE_AGENT_DETECT=1 azd up
+
 # Or with az CLI:
 az deployment group create \
   --resource-group "<rg-name>" \
   --template-file main.bicep \
   --parameters main.bicepparam
+```
+
+## Cross-cutting deployment scripts (`options-infra/scripts/`)
+
+azd hooks (referenced from individual options' `azure.yaml`) shared across deployments:
+
+- `preprovision-multi-agent.{sh,ps1}` — creates per-agent AAD app regs + secrets, writes them back to azd env vars (`AGENT_APP_REGS_JSON`, `AGENT_APP_SECRETS_JSON`) for bicepparam consumption. Used by `foundry-byo-vnet-teams`.
+- `postprovision-multi-agent.{sh,ps1}` — creates FICs on per-agent regs, registers OIDC reply URLs.
+- `preprovision-litellm-cert.{sh,ps1}` — generates TLS cert material for LiteLLM gateway.
+- `preprovision-sso-app.{sh,ps1}` / `postprovision-sso-test.{sh,ps1}` — shared SSO app reg setup + smoke test.
+- `publish-teams-agent.{sh,ps1}` — calls Foundry's `/microsoft365/publish` API; **requires a user-delegated AAD token** (managed identities fail with "Underlying error while obtaining user token"), so it runs as an azd postprovision hook against the developer's `az login` context, not from inside a Bicep `deploymentScript`.
+
+**Shell idempotency gotcha**: `azd env get-value <missing-key>` writes its "key not found" error to **stdout** (not stderr) and exits 1. Always check the exit code, not whether stdout is non-empty:
+```bash
+val=$(azd env get-value FOO 2>/dev/null) || val=""
 ```
 
 ## Bicep Conventions
