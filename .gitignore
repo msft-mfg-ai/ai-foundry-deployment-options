@@ -843,3 +843,6 @@ options-infra/ai-gateway-litellm/gateway/data
 options-infra/modules/apim/ai-gateway-advanced.json
 agents_v2_maf/maf_apim_agent_test_results.csv
 agents_anthropic/.env
+
+# Compiled Bicep artifacts (output of `az bicep build`)
+options-infra/**/main.json
