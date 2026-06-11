@@ -7,16 +7,18 @@
 targetScope = 'resourceGroup'
 
 import { apiType } from '../modules/apps/apps-private-link.bicep'
+import { foundryInstanceType } from '../modules/apim/advanced/types.bicep'
+import { ModelType } from '../modules/ai/connection-apim-gateway.bicep'
 
 param location string = resourceGroup().location
-param openAiApiBase string
-param openAiResourceId string
-param openAiLocation string = location
 param projectsCount int = 3
-param apiServices apiType[] = [] // Array of MCP service definitions
+param apiServices apiType[] = []
 
-var valid_config = empty(openAiApiBase) || empty(openAiResourceId)
-  ? fail('OPENAI_API_BASE and OPENAI_RESOURCE_ID environment variables must be set.')
+@description('Existing Foundry / AI Services instances to front with the gateway. Discovered by the `preprovision-list-foundry-models` hook (FOUNDRY_INSTANCES_JSON) from EXISTING_FOUNDRY_RESOURCE_IDS / OPENAI_RESOURCE_ID. At least one instance is required.')
+param foundryInstances foundryInstanceType[]
+
+var valid_config = empty(foundryInstances)
+  ? fail('No Foundry instances configured. Set EXISTING_FOUNDRY_RESOURCE_IDS (or OPENAI_RESOURCE_ID) and run the `preprovision-list-foundry-models` hook so FOUNDRY_INSTANCES_JSON is populated.')
   : true
 
 var tags = {
@@ -27,10 +29,27 @@ var tags = {
 }
 
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
-var openAiParts = split(openAiResourceId, '/')
-var openAiName = last(openAiParts)
-var openAiSubscriptionId = openAiParts[2]
-var openAiResourceGroupName = openAiParts[4]
+
+// Dedupe model deployments across all instances → ModelType[] for the Foundry
+// connection's portal model picker.
+var allDeployments = flatten(map(foundryInstances, inst => inst.deployments))
+var dedupedDeployments = reduce(
+  allDeployments,
+  [],
+  (acc, d) => contains(map(acc, x => x.modelName), d.modelName) ? acc : concat(acc, [d])
+)
+var staticModels ModelType[] = [
+  for d in dedupedDeployments: {
+    name: d.modelName
+    properties: {
+      model: {
+        name: d.modelName
+        version: d.?modelVersion ?? '2025-01-01-preview'
+        format: d.?modelFormat ?? 'OpenAI'
+      }
+    }
+  }
+]
 
 module foundry_identity '../modules/iam/identity.bicep' = {
   name: 'foundry-identity-deployment'
@@ -66,20 +85,24 @@ module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
   }
 }
 
-// Private endpoint for external OpenAI
-module openai_private_endpoint '../modules/networking/ai-pe-dns.bicep' = {
-  name: 'openai-private-endpoint-and-dns-deployment'
-  params: {
-    tags: tags
-    location: location
-    aiAccountName: openAiName
-    aiAccountNameResourceGroup: openAiResourceGroupName
-    aiAccountSubscriptionId: openAiSubscriptionId
-    peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
-    resourceToken: resourceToken
-    existingDnsZones: ai_dependencies.outputs.DNS_ZONES
+// Private endpoint per backing Foundry instance (each may live in a different
+// subscription/RG). The PE goes into THIS deployment's VNet so the internal
+// APIM can reach the upstream models.
+module openai_private_endpoints '../modules/networking/ai-pe-dns.bicep' = [
+  for (instance, i) in foundryInstances: {
+    name: 'openai-pe-${i}-${resourceToken}'
+    params: {
+      tags: tags
+      location: location
+      aiAccountName: last(split(instance.resourceId, '/'))
+      aiAccountNameResourceGroup: split(instance.resourceId, '/')[4]
+      aiAccountSubscriptionId: split(instance.resourceId, '/')[2]
+      peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+      resourceToken: '${resourceToken}-${i}'
+      existingDnsZones: ai_dependencies.outputs.DNS_ZONES
+    }
   }
-}
+]
 
 // --------------------------------------------------------------------------------------------------------------
 // -- Log Analytics Workspace and App Insights ------------------------------------------------------------------
@@ -156,80 +179,40 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
   }
 ]
 
-module ai_gateway '../modules/apim/ai-gateway-internal.bicep' = {
+module ai_gateway '../modules/apim/per-model-gateway.bicep' = {
   name: 'ai-gateway-deployment-${resourceToken}'
   params: {
     tags: tags
     location: location
     resourceToken: resourceToken
     aiFoundryName: foundry.outputs.FOUNDRY_NAME
-    subnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.apimSubnet.resourceId
-    logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
-    appInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
-    appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
     aiFoundryProjectNames: [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
-    staticModels: [
-      {
-        name: 'gpt-4.1-mini'
-        properties: {
-          model: {
-            name: 'gpt-4.1-mini'
-            version: '2025-01-01-preview'
-            format: 'OpenAI'
-          }
-        }
-      }
-      {
-        name: 'gpt-4o'
-        properties: {
-          model: {
-            name: 'gpt-4o'
-            version: '2025-01-01-preview'
-            format: 'OpenAI'
-          }
-        }
-      }
-      {
-        name: 'gpt-5-mini'
-        properties: {
-          model: {
-            name: 'gpt-5-mini'
-            version: '2025-04-01-preview'
-            format: 'OpenAI'
-          }
-        }
-      }
-      {
-        name: 'o3-mini'
-        properties: {
-          model: {
-            name: 'o3-mini'
-            version: '2025-01-01-preview'
-            format: 'OpenAI'
-          }
-        }
-      }
-    ]
-    aiServicesConfig: [
-      {
-        name: openAiName
-        resourceId: openAiResourceId
-        endpoint: openAiApiBase
-        location: openAiLocation
-      }
-    ]
+    logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
+    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
+    gatewayAuthenticationType: 'ProjectManagedIdentity'
+    foundryInstances: foundryInstances
+    staticModels: staticModels
+    // Internal VNet injection - APIM lives inside the VNet, no public network access
+    apimSku: 'Developer'
+    virtualNetworkType: 'Internal'
+    subnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.apimSubnet.resourceId
   }
 }
 
-module apim_role_assignment '../modules/iam/role-assignment-cognitiveServices.bicep' = {
-  name: 'apim-role-assignment-deployment-${resourceToken}'
-  scope: resourceGroup(openAiSubscriptionId, openAiResourceGroupName)
-  params: {
-    accountName: openAiName
-    principalId: ai_gateway.outputs.apimPrincipalId
-    roleName: 'Cognitive Services User'
+// Grant APIM's managed identity Cognitive Services User on every backing
+// Foundry instance — each instance may live in a different RG/subscription.
+module apim_role_assignments '../modules/iam/role-assignment-cognitiveServices.bicep' = [
+  for (instance, i) in foundryInstances: {
+    name: 'apim-role-${i}-${resourceToken}'
+    scope: resourceGroup(split(instance.resourceId, '/')[2], split(instance.resourceId, '/')[4])
+    params: {
+      accountName: last(split(instance.resourceId, '/'))
+      principalId: ai_gateway.outputs.apimPrincipalId
+      roleName: 'Cognitive Services User'
+    }
   }
-}
+]
 
 module dashboard_setup '../modules/dashboard/dashboard-setup.bicep' = {
   name: 'dashboard-setup-deployment-${resourceToken}'

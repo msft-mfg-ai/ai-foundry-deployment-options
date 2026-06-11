@@ -1,11 +1,10 @@
 using 'main.bicep'
 
-// Parameters for the main Bicep template
-param openAiApiBase = readEnvironmentVariable('OPENAI_API_BASE', '')
-param openAiResourceId = readEnvironmentVariable('OPENAI_RESOURCE_ID', '')
-
-var openAiLocationValue = readEnvironmentVariable('OPENAI_LOCATION', '')
-param openAiLocation = empty(openAiLocationValue) ? null : openAiLocationValue
+// Foundry instances discovered by the `preprovision-list-foundry-models` hook
+// (reads EXISTING_FOUNDRY_RESOURCE_IDS / OPENAI_RESOURCE_ID and writes
+// FOUNDRY_INSTANCES_JSON). At least one instance with at least one deployment
+// is required — main.bicep fails the deployment otherwise.
+param foundryInstances = json(readEnvironmentVariable('FOUNDRY_INSTANCES_JSON', '[]'))
 
 var apimLocationValue = readEnvironmentVariable('APIM_LOCATION', '')
 param apimLocation = empty(apimLocationValue) ? null : apimLocationValue

@@ -7,6 +7,26 @@ infra:
   module: main
 
 hooks:
+  # Preprovision: discover model deployments on the existing Foundry
+  # instance(s) (EXISTING_FOUNDRY_RESOURCE_IDS / EXISTING_FOUNDRY_RESOURCE_ID
+  # / OPENAI_RESOURCE_ID fallback) and write them to FOUNDRY_INSTANCES_JSON in
+  # the foundryInstanceType[] shape main.bicepparam consumes. If no inputs are
+  # set, the script writes [] and main.bicep fails with a clear error.
+  preprovision:
+    windows:
+      shell: pwsh
+      run: |
+        & '../scripts/preprovision-list-foundry-models.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      interactive: false
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        sh ../scripts/preprovision-list-foundry-models.sh
+      interactive: false
+      continueOnError: false
+
   postprovision:
     shell: sh
     run: |

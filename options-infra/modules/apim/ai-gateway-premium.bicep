@@ -1,3 +1,9 @@
+// _DEPRECATED: use modules/apim/per-model-gateway.bicep instead. This legacy
+// orchestrator implements the older "single backend pool + static-models inline"
+// pattern. per-model-gateway.bicep covers the same SKUs / networking variants
+// (public, Internal VNet, External+PE, Premium custom domain) plus per-(instance,
+// model) backends with smart routing and dynamic discovery.
+
 import { aiServiceConfigType } from 'v2/inference-api.bicep'
 import { ModelType } from '../ai/connection-apim-gateway.bicep'
 import { subscriptionType, hostnameConfigurationType } from 'v2/apim.bicep'

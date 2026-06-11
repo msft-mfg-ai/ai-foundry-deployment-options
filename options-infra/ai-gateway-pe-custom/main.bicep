@@ -7,10 +7,12 @@
 targetScope = 'resourceGroup'
 
 import { apiType } from '../modules/apps/apps-private-link.bicep'
+import { foundryInstanceType } from '../modules/apim/advanced/types.bicep'
+import { ModelType } from '../modules/ai/connection-apim-gateway.bicep'
 
 param location string = resourceGroup().location
 param projectsCount int = 3
-param apiServices apiType[] = [] // Array of MCP service definitions
+param apiServices apiType[] = []
 param apimPublicEnabled bool = false
 param openAiLocation string = resourceGroup().location
 
@@ -21,6 +23,29 @@ var tags = {
 }
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
 
+// Model deployments to provision on the in-deployment OpenAI account.
+// The same list seeds the gateway's foundryInstances + staticModels so per-model
+// routing knows the (instance, model) pairs and the Foundry connection's
+// portal can render its model picker.
+var openAiDeploymentSpecs = [
+  {
+    name: 'test-gpt-4.1'
+    format: 'OpenAI'
+    model: 'gpt-4.1'
+    version: '2025-04-14'
+    apiVersion: '2025-01-01-preview'
+    capacity: 20
+  }
+  {
+    name: 'test-gpt-5.2'
+    format: 'OpenAI'
+    model: 'gpt-5.2'
+    version: '2025-12-11'
+    apiVersion: '2025-12-11'
+    capacity: 20
+  }
+]
+
 module openai_with_models '../modules/ai/ai-foundry.bicep' = {
   name: 'azure-openai'
   params: {
@@ -30,37 +55,57 @@ module openai_with_models '../modules/ai/ai-foundry.bicep' = {
     kind: 'OpenAI'
     publicNetworkAccess: 'Disabled'
     deployments: [
-      {
-        name: 'test-gpt-4.1'
+      for d in openAiDeploymentSpecs: {
+        name: d.name
         properties: {
           model: {
-            format: 'OpenAI'
-            name: 'gpt-4.1'
-            version: '2025-04-14'
+            format: d.format
+            name: d.model
+            version: d.version
           }
         }
         sku: {
           name: 'GlobalStandard'
-          capacity: 20
-        }
-      }
-      {
-        name: 'test-gpt-5.2'
-        properties: {
-          model: {
-            format: 'OpenAI'
-            name: 'gpt-5.2'
-            version: '2025-12-11'
-          }
-        }
-        sku: {
-          name: 'GlobalStandard'
-          capacity: 20
+          capacity: d.capacity
         }
       }
     ]
   }
 }
+
+// Synthesise the single-instance foundryInstances[] from the in-deployment
+// OpenAI account — no preprovision hook needed because the account is owned
+// by this template.
+var localFoundryDeployments = [
+  for d in openAiDeploymentSpecs: {
+    modelName: d.name
+    modelVersion: d.apiVersion
+    modelFormat: d.format
+  }
+]
+var foundryInstances foundryInstanceType[] = [
+  {
+    name: openai_with_models.outputs.FOUNDRY_NAME
+    resourceId: openai_with_models.outputs.FOUNDRY_RESOURCE_ID
+    endpoint: openai_with_models.outputs.FOUNDRY_ENDPOINT
+    location: openAiLocation
+    isPtu: false
+    deployments: localFoundryDeployments
+  }
+]
+
+var staticModels ModelType[] = [
+  for d in openAiDeploymentSpecs: {
+    name: d.name
+    properties: {
+      model: {
+        name: d.model
+        version: d.apiVersion
+        format: d.format
+      }
+    }
+  }
+]
 
 module foundry_identity '../modules/iam/identity.bicep' = {
   name: 'foundry-identity-deployment'
@@ -186,50 +231,25 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
   }
 ]
 
-module ai_gateway '../modules/apim/ai-gateway-pe.bicep' = {
+module ai_gateway '../modules/apim/per-model-gateway.bicep' = {
   name: 'ai-gateway-deployment-${resourceToken}'
   params: {
     tags: tags
     location: location
-    apimPublicEnabled: apimPublicEnabled
     resourceToken: resourceToken
     aiFoundryName: foundry.outputs.FOUNDRY_NAME
+    aiFoundryProjectNames: [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
+    logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
+    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
+    gatewayAuthenticationType: 'ProjectManagedIdentity'
+    foundryInstances: foundryInstances
+    staticModels: staticModels
+    apimSku: 'Standardv2'
+    virtualNetworkType: 'External'
     subnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.apimv2Subnet.resourceId
     peSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
-    logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
-    appInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
-    appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
-    aiFoundryProjectNames: [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
-    staticModels: [
-      {
-        name: 'test-gpt-4.1'
-        properties: {
-          model: {
-            name: 'gpt-4.1'
-            version: '2025-01-01-preview'
-            format: 'OpenAI'
-          }
-        }
-      }
-      {
-        name: 'test-gpt-5.2'
-        properties: {
-          model: {
-            format: 'OpenAI'
-            name: 'gpt-5.2'
-            version: '2025-12-11'
-          }
-        }
-      }
-    ]
-    aiServicesConfig: [
-      {
-        name: openai_with_models.outputs.FOUNDRY_NAME
-        resourceId: openai_with_models.outputs.FOUNDRY_RESOURCE_ID
-        endpoint: openai_with_models.outputs.FOUNDRY_ENDPOINT
-        location: openAiLocation
-      }
-    ]
+    publicNetworkAccess: apimPublicEnabled ? 'Enabled' : 'Disabled'
   }
 }
 

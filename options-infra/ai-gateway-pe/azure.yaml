@@ -7,6 +7,21 @@ infra:
   module: main
 
 hooks:
+  preprovision:
+    windows:
+      shell: pwsh
+      run: |
+        & '../scripts/preprovision-list-foundry-models.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      interactive: false
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        sh ../scripts/preprovision-list-foundry-models.sh
+      interactive: false
+      continueOnError: false
+
   postprovision:
     shell: sh
     run: |
