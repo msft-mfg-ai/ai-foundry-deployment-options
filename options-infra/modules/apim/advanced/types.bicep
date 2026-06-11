@@ -14,6 +14,12 @@ type foundryDeploymentType = {
 
   @description('PTU capacity in tokens per minute for this deployment. Required on PTU instances. Multiple PTU deployments for the same model across instances are summed.')
   ptuCapacityTpm: int?
+
+  @description('Model version (e.g. "2025-01-01-preview"). Optional — captured by the discovery script so APIM connections can advertise the same `version` the backing Foundry serves.')
+  modelVersion: string?
+
+  @description('Model format / publisher namespace (e.g. "OpenAI", "Cohere", "DeepSeek"). Optional — captured by the discovery script for the same reason as `modelVersion`.')
+  modelFormat: string?
 }
 
 // -- Foundry Instance (existing, passed as parameter) -------------------------

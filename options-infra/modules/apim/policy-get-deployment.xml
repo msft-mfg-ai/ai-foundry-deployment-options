@@ -1,0 +1,63 @@
+<!--
+    Get Deployment By Name operation policy.
+    =========================================
+    Returns metadata for a single deployment from the static list captured at
+    IaC deploy time. No upstream call.
+
+    The full deployments JSON (same one served by GET /deployments) is baked
+    into a context variable, then we look up the requested name with
+    Newtonsoft.Json.Linq and stash the result. Status/reason/body all read
+    that same variable.
+
+    NOTE: deliberately NOT inheriting `<base />` so the API-level per-model
+    routing fragment (which would route the request to a backend pool we never
+    use here) doesn't fire.
+-->
+<policies>
+    <inbound>
+        <cors allow-credentials="true">
+            <allowed-origins>
+                <origin>https://ai.azure.com</origin>
+            </allowed-origins>
+            <allowed-methods preflight-result-max-age="300">
+                <method>*</method>
+            </allowed-methods>
+            <allowed-headers>
+                <header>*</header>
+            </allowed-headers>
+            <expose-headers>
+                <header>*</header>
+            </expose-headers>
+        </cors>
+        <set-variable name="deployments-json" value="{DEPLOYMENTS_LIST_JSON}" />
+        <set-variable name="matched-deployment" value="@{
+            var name = (string)context.Request.MatchedParameters[&quot;deploymentName&quot;];
+            var doc  = Newtonsoft.Json.Linq.JObject.Parse((string)context.Variables[&quot;deployments-json&quot;]);
+            var match = ((Newtonsoft.Json.Linq.JArray)doc[&quot;value&quot;])
+                .FirstOrDefault(d => (string)d[&quot;name&quot;] == name);
+            return match != null ? match.ToString(Newtonsoft.Json.Formatting.None) : string.Empty;
+        }" />
+        <return-response>
+            <set-status code="@(string.IsNullOrEmpty((string)context.Variables[&quot;matched-deployment&quot;]) ? 404 : 200)"
+                        reason="@(string.IsNullOrEmpty((string)context.Variables[&quot;matched-deployment&quot;]) ? &quot;Not Found&quot; : &quot;OK&quot;)" />
+            <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+            </set-header>
+            <set-body>@{
+                var match = (string)context.Variables["matched-deployment"];
+                if (!string.IsNullOrEmpty(match)) { return match; }
+                var name = (string)context.Request.MatchedParameters["deploymentName"];
+                return "{\"error\": \"deployment not found: " + name + "\"}";
+            }</set-body>
+        </return-response>
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>
