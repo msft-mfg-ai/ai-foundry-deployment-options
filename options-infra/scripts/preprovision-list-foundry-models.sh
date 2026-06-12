@@ -147,6 +147,121 @@ process_instance() {
   instance_count=$((instance_count + 1))
 }
 
+# Process an EXISTING APIM gateway that already follows our per-model-gateway
+# convention (passthrough at `/inference/openai/*` + the static-discovery ops).
+# Identified by its gateway URL — no ARM resource id needed, so this works
+# across tenants where the developer can hit the endpoint but doesn't have ARM
+# perms (or doesn't have `az login` for that tenant in their shell).
+#
+# We treat each model exposed by the downstream as an (instance, model) pair
+# backed by `{apim-gateway-url}/inference/openai`. The upstream caller-side
+# gateway then load-balances + circuit-breaks across chained APIMs the same
+# way it does across Foundries.
+#
+# Auth: the discovery call uses the developer's `az` AAD token (audience
+# cognitiveservices.azure.com). The downstream APIM's validate-jwt must accept
+# the developer's tenant. At runtime the upstream APIM's MI presents its own
+# bearer (same audience); the downstream must accept the upstream APIM's MI
+# tenant too — typically the same tenant in a single-org chain.
+process_apim() {
+  url=$1
+
+  # Normalise: strip any path/query so `url` is just `scheme://host[:port]`.
+  base=$(printf '%s' "$url" | awk -F/ '{print $1"//"$3}')
+  host=$(printf '%s' "$base" | awk -F/ '{print $3}')
+
+  if [ -z "$host" ]; then
+    err "Malformed APIM URL (expected https://<host>[/...]): $url"
+    exit 1
+  fi
+
+  # Derive a short, deterministic instance name from the host so the upstream
+  # backend names (`{instance}-{model-clean}-backend`) stay readable. Default
+  # to the first hostname label, fall back to a hash if it's empty.
+  name=$(printf '%s' "$host" | awk -F. '{print $1}')
+  [ -z "$name" ] && name=$(printf '%s' "$host" | tr -c '[:alnum:]' '-' | sed 's/-\+/-/g;s/^-//;s/-$//')
+
+  step "🔗 ${name} — chained APIM"
+  field "🌐" "Gateway URL" "$base"
+
+  # Fetch the downstream's static deployments listing. Uses the developer's
+  # AAD token; the downstream must accept this tenant in its `acceptedTenantIds`.
+  token=$(az account get-access-token --resource https://cognitiveservices.azure.com --query accessToken -o tsv 2>/dev/null) || token=""
+  if [ -z "$token" ]; then
+    err "Failed to acquire an AAD token for cognitiveservices.azure.com."
+    exit 1
+  fi
+
+  listing_url="${base}/inference/openai/deployments"
+  listing=$(curl -sS -H "Authorization: Bearer $token" "$listing_url" 2>/dev/null) || listing=""
+
+  if [ -z "$listing" ] || ! printf '%s' "$listing" | grep -q '"value"'; then
+    err "Downstream APIM discovery call failed: $listing_url"
+    [ -n "$listing" ] && printf '%s   response: %s%s\n' "$C_DIM" "$(printf '%s' "$listing" | head -c 200)" "$C_RESET" >&2
+    exit 1
+  fi
+
+  # Project the downstream's static `{ "value": [{ name, properties.model.{name,version,format} }] }`
+  # into our `foundryDeploymentType` shape.
+  deps_json=$(printf '%s' "$listing" | python3 -c '
+import json, sys
+src = json.load(sys.stdin).get("value", [])
+out = [
+    {
+        "modelName":    d["name"],
+        "modelVersion": d["properties"]["model"].get("version", ""),
+        "modelFormat":  d["properties"]["model"].get("format", "OpenAI"),
+    }
+    for d in src
+]
+print(json.dumps(out, separators=(",", ":")))
+' 2>/dev/null) || deps_json="[]"
+
+  dep_count=$(printf '%s' "$deps_json" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null || echo 0)
+
+  if [ "$dep_count" -gt 0 ]; then
+    printf '%s' "$listing" | python3 -c '
+import json, sys
+src = json.load(sys.stdin).get("value", [])
+rows = [("Name", "Model", "Version", "Format")]
+for d in src:
+    m = d["properties"]["model"]
+    rows.append((d["name"], m.get("name", ""), m.get("version", ""), m.get("format", "")))
+widths = [max(len(r[i]) for r in rows) for i in range(4)]
+for i, r in enumerate(rows):
+    line = "  ".join(c.ljust(widths[j]) for j, c in enumerate(r))
+    print("   " + line)
+    if i == 0:
+        print("   " + "  ".join("-" * widths[j] for j in range(4)))
+' 2>/dev/null
+  else
+    warn "Downstream APIM exposed no deployments."
+  fi
+
+  total_deployments=$((total_deployments + dep_count))
+
+  # Endpoint = gateway URL with trailing /. Bicep appends `inference/openai`
+  # for APIM-flagged instances (see multi-foundry-backends.bicep), so the
+  # backend URL becomes `{gateway}/inference/openai` regardless of model format.
+  gateway_url="${base}/"
+
+  # resourceId is intentionally the URL — keeps the foundryInstanceType shape
+  # consistent (string), works as a unique key for dedup, and we never use it
+  # for ARM operations on isApim=true entries (main.bicep skips role assignment
+  # for those).
+  # location: 'external' is a deliberate placeholder. We don't have ARM access,
+  # and the upstream gateway only uses location for backend descriptions.
+  instance_json=$(printf '{"name":"apim-%s","resourceId":"%s","endpoint":"%s","location":"%s","isPtu":false,"isApim":true,"deployments":%s}' \
+    "$name" "$base" "$gateway_url" "external" "$deps_json")
+
+  if [ -z "$instances_json" ]; then
+    instances_json="[$instance_json"
+  else
+    instances_json="$instances_json,$instance_json"
+  fi
+  instance_count=$((instance_count + 1))
+}
+
 banner "Foundry instance discovery"
 
 # --- resolve input list ------------------------------------------------------
@@ -163,19 +278,29 @@ if [ -z "$raw_ids" ]; then
   [ -n "$raw_ids" ] && source_var="OPENAI_RESOURCE_ID (fallback)"
 fi
 
-if [ -z "$raw_ids" ]; then
-  skip "No existing Foundry instances configured."
+# Chained-APIM gateways (optional; appended to the Foundry list). Identified
+# by URL (not ARM resource id) so cross-tenant chains work without ARM perms.
+apim_urls=$(get_env EXISTING_APIM_URLS)
+
+if [ -z "$raw_ids" ] && [ -z "$apim_urls" ]; then
+  skip "No existing Foundry or APIM instances configured."
   printf '%s   Set one of:%s\n' "$C_DIM" "$C_RESET"
   printf '%s     • EXISTING_FOUNDRY_RESOURCE_IDS (comma-separated, multi-instance)%s\n' "$C_DIM" "$C_RESET"
   printf '%s     • EXISTING_FOUNDRY_RESOURCE_ID  (single instance)%s\n'                  "$C_DIM" "$C_RESET"
   printf '%s     • OPENAI_RESOURCE_ID            (AI Gateway sample fallback)%s\n'       "$C_DIM" "$C_RESET"
+  printf '%s     • EXISTING_APIM_URLS            (comma-separated gateway URLs — chained per-model-gateway APIMs)%s\n' "$C_DIM" "$C_RESET"
   azd env set FOUNDRY_INSTANCES_JSON "[]" >/dev/null
   printf '\n'
   ok "Wrote FOUNDRY_INSTANCES_JSON=[] (deployment will fail with a clear 'no instances' message)"
   exit 0
 fi
 
-field "📥" "Source" "$source_var"
+if [ -n "$raw_ids" ]; then
+  field "📥" "Foundry source" "$source_var"
+fi
+if [ -n "$apim_urls" ]; then
+  field "📥" "APIM source" "EXISTING_APIM_URLS"
+fi
 
 # --- iterate -----------------------------------------------------------------
 instances_json=""
@@ -194,8 +319,22 @@ for rid in "$@"; do
   process_instance "$rid"
 done
 
+# Chained APIMs (optional, processed after Foundries so they appear after in the array).
+if [ -n "$apim_urls" ]; then
+  old_ifs=$IFS
+  IFS=','
+  # shellcheck disable=SC2086
+  set -- $apim_urls
+  IFS=$old_ifs
+  for url in "$@"; do
+    url=$(printf '%s' "$url" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [ -z "$url" ] && continue
+    process_apim "$url"
+  done
+fi
+
 if [ "$instance_count" -eq 0 ]; then
-  err "EXISTING_FOUNDRY_RESOURCE_IDS contained no valid ids."
+  err "No valid Foundry or APIM entries found in configured env vars."
   exit 1
 fi
 

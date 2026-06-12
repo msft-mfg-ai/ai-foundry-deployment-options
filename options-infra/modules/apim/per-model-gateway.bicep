@@ -15,7 +15,7 @@
 
 import { foundryInstanceType } from 'advanced/types.bicep'
 import { ModelType } from '../ai/connection-apim-gateway.bicep'
-import { subscriptionType } from 'v2/apim.bicep'
+import { subscriptionType, hostnameConfigurationType } from 'v2/apim.bicep'
 
 // -- Parameters ---------------------------------------------------------------
 param location string = resourceGroup().location
@@ -38,7 +38,7 @@ param staticModels ModelType[] = []
 param gatewayAuthenticationType string = 'ProjectManagedIdentity'
 
 @description('APIM SKU.')
-@allowed(['Basicv2', 'Standardv2', 'Premiumv2'])
+@allowed(['Consumption', 'Developer', 'Basic', 'Basicv2', 'Standard', 'Standardv2', 'Premium', 'Premiumv2'])
 param apimSku string = 'Basicv2'
 
 @description('Also deploy a spec-backed AzureOpenAI inference API (with per-operation definitions, model-discovery endpoints, and the APIM test console) alongside the Foundry-facing passthrough. Both APIs share the same per-model routing fragment, so they hit the same backend pools.')
@@ -47,15 +47,112 @@ param deploySpecApi bool = true
 @description('URL path for the spec-backed AzureOpenAI API. Must not collide with the passthrough path (`inference/openai`). The AzureOpenAI inference-api module appends `/openai`, so a value of `openai` exposes the API at `…/openai/openai/…` — use `azure` (default) for `…/azure/openai/…`.')
 param specApiPath string = 'azure'
 
+@description('Tenant IDs whose Entra ID tokens are accepted as inbound auth. When non-empty, both inference APIs inject a `<validate-jwt>` block that requires `aud=https://cognitiveservices.azure.com` and lists one issuer per tenant (both v1 `sts.windows.net/{tid}/` and v2 `login.microsoftonline.com/{tid}/v2.0`). Empty (default) = no inbound JWT validation — backward-compatible.')
+param acceptedTenantIds string[] = []
+
 param logAnalyticsWorkspaceResourceId string
 param appInsightsInstrumentationKey string = ''
 param appInsightsResourceId string = ''
+
+// -- Networking / SKU-variant params (all optional, pass-through to v2/apim.bicep) -
+// These let per-model-gateway.bicep host the public-only, internal-VNET, External-VNET+PE,
+// custom-domain, and Premium variants without forking the orchestrator.
+
+@description('VNet integration mode for the APIM service. None (default) = public, External = injected with internet ingress, Internal = injected with no public endpoint.')
+@allowed(['None', 'External', 'Internal'])
+param virtualNetworkType string = 'None'
+
+@description('Subnet resource ID for the APIM injection. Required when virtualNetworkType is External or Internal.')
+param subnetResourceId string?
+
+@description('Public network access on the APIM service. Leave Enabled for public deployments. When opting into PE attachment (peSubnetResourceId), pass Disabled to trigger the post-PE flip step.')
+@allowed(['Enabled', 'Disabled'])
+param publicNetworkAccess string = 'Enabled'
+
+@description('Subnet resource ID hosting the APIM private endpoint. When non-empty, the module attaches a private endpoint (with the privatelink.azure-api.net DNS zone) and — if publicNetworkAccess=Disabled — runs a follow-up APIM deploy to flip public access off. Service-creation itself uses publicNetworkAccess=null in that case (Azure blocks setting Disabled on initial create).')
+param peSubnetResourceId string = ''
+
+@description('Custom hostname configurations for the APIM gateway (e.g. proxy custom domain backed by a Key Vault cert). Empty = use the default *.azure-api.net hostname.')
+param hostnameConfigurations hostnameConfigurationType[] = []
+
+@description('APIM managed-identity mode. UserAssigned is required when hostnameConfigurations reference a Key Vault cert.')
+@allowed(['SystemAssigned', 'UserAssigned', 'SystemAssigned, UserAssigned'])
+param apimManagedIdentityType string = 'SystemAssigned'
+
+@description('User-assigned managed identity resource ID. Required when apimManagedIdentityType includes UserAssigned (KV-cert custom domain).')
+param apimUserAssignedManagedIdentityResourceId string?
+
+// -- Custom domain (Internal VNet variants like Premium) --------------------
+@description('Custom apex domain (e.g. "cloud.example.com"). When set, the gateway is exposed at https://apim.{customDomain}/… via a Key Vault-sourced certificate. Requires keyVaultName + certificateKeyVaultUri + a UAMI with KV Certificate User + Secrets User. Leave empty to use the default *.azure-api.net hostname.')
+param customDomain string = ''
+
+@description('Key Vault name holding the custom-domain certificate. Required when customDomain is set — the gateway grants its UAMI Certificate User + Secrets User on this vault.')
+param keyVaultName string = ''
+
+@description('Key Vault secret URI of the custom-domain certificate (e.g. https://kv-xxx.vault.azure.net/secrets/customdomaincert). Required when customDomain is set.')
+param certificateKeyVaultUri string = ''
+
+@description('Extra VNet resource IDs to link to the privatelink.azure-api.net (and customDomain) DNS zones — useful when APIM lives in its own VNet but callers live in a peered one. Only applied when virtualNetworkType=Internal.')
+param vnetResourceIdsForDnsLink string[] = []
 
 // -- Constants ----------------------------------------------------------------
 // Passthrough API resource name. Must match what we pass to the v2 module
 // below so the discovery operations (added via `existing` references) can find
 // it deterministically.
 var passthroughApiName = 'inference-api'
+
+// -- Multi-tenant inbound JWT validation -------------------------------------
+// Replaces the `{JWT_VALIDATION}` token in policy-per-model.xml. When the
+// caller passes no tenants we emit a comment so the policy stays open (current
+// behaviour). Each accepted tenant contributes BOTH the v1 (`sts.windows.net`)
+// and v2 (`login.microsoftonline.com/.../v2.0`) issuer URLs since AAD tokens
+// can carry either depending on how the caller acquired them.
+var issuersXml = empty(acceptedTenantIds)
+  ? ''
+  : join(map(acceptedTenantIds, tid => '<issuer>https://sts.windows.net/${tid}/</issuer><issuer>https://login.microsoftonline.com/${tid}/v2.0</issuer>'), '')
+var jwtValidationXml = empty(acceptedTenantIds)
+  ? '<!-- multi-tenant JWT validation disabled (acceptedTenantIds is empty) -->'
+  : '<validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized"><openid-config url="https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration" /><audiences><audience>https://cognitiveservices.azure.com</audience><audience>https://cognitiveservices.azure.com/</audience></audiences><issuers>${issuersXml}</issuers></validate-jwt>'
+
+var policyPerModelXml = replace(loadTextContent('policy-per-model.xml'), '{JWT_VALIDATION}', jwtValidationXml)
+
+// -- Custom domain validation + synthesis -----------------------------------
+// When customDomain is set, every dependency (cert URI + KV name + UAMI) must
+// also be set — fail fast with a clear error so the caller can't silently
+// deploy a half-configured custom-domain gateway.
+var customDomainEnabled = !empty(customDomain)
+var customDomainValid = customDomainEnabled && (empty(certificateKeyVaultUri) || empty(keyVaultName) || empty(apimUserAssignedManagedIdentityResourceId))
+  ? fail('customDomain requires certificateKeyVaultUri, keyVaultName, and apimUserAssignedManagedIdentityResourceId to all be set.')
+  : true
+
+// PremiumV2 only supports 'Proxy' and 'DeveloperPortal' hostname types for
+// custom domains — Proxy is what gateway clients hit, so we register that one.
+// Callers can still override by passing hostnameConfigurations explicitly.
+var synthesizedHostnameConfigurations hostnameConfigurationType[] = customDomainEnabled
+  ? [
+      {
+        type: 'Proxy'
+        hostName: 'apim.${customDomain}'
+        certificateSource: 'KeyVault'
+        keyVaultId: certificateKeyVaultUri
+      }
+    ]
+  : []
+
+var effectiveHostnameConfigurations = !empty(hostnameConfigurations)
+  ? hostnameConfigurations
+  : synthesizedHostnameConfigurations
+
+// Internal VNet variant: derive the gateway's own VNet (parent of subnetResourceId)
+// so the apim-dns module can link the *.azure-api.net (and customDomain) zones
+// to it. Other variants ignore these.
+var internalVnetMode = virtualNetworkType == 'Internal' && !empty(subnetResourceId)
+var subnetIdParts = internalVnetMode ? split(subnetResourceId!, '/') : []
+var subnetNameForDns = internalVnetMode ? last(subnetIdParts) : ''
+var apimOwnVnetResourceId = internalVnetMode
+  ? substring(subnetResourceId!, 0, length(subnetResourceId!) - length('/subnets/${subnetNameForDns}'))
+  : ''
+var dnsLinkVnetResourceIds = internalVnetMode ? union(vnetResourceIdsForDnsLink, [apimOwnVnetResourceId]) : []
 
 // -- Derived ------------------------------------------------------------------
 var connectionPerProject = !empty(aiFoundryProjectNames)
@@ -74,6 +171,15 @@ var subscriptions subscriptionType[] = connectionPerProject
 // ============================================================================
 // -- APIM service
 // ============================================================================
+// When peSubnetResourceId is set AND the caller wants publicNetworkAccess=Disabled
+// (private-only), Azure rejects setting Disabled on initial creation
+// ("Blocking all public network access ... is not enabled during service creation").
+// We mirror the legacy ai-gateway-pe.bicep dance: create with the field null,
+// attach the PE, then re-deploy with publicNetworkAccess=Disabled.
+var attachingPrivateEndpoint = !empty(peSubnetResourceId)
+var deferPublicAccessFlip = attachingPrivateEndpoint && publicNetworkAccess == 'Disabled'
+var initialPublicNetworkAccess = deferPublicAccessFlip ? null : publicNetworkAccess
+
 module apimService 'v2/apim.bicep' = {
   name: 'apim-deployment'
   params: {
@@ -85,6 +191,53 @@ module apimService 'v2/apim.bicep' = {
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
     appInsightsId: appInsightsResourceId
     apimSubscriptionsConfig: subscriptions
+    virtualNetworkType: virtualNetworkType
+    subnetResourceId: subnetResourceId
+    #disable-next-line BCP036
+    publicNetworkAccess: initialPublicNetworkAccess
+    hostnameConfigurations: effectiveHostnameConfigurations
+    apimManagedIdentityType: apimManagedIdentityType
+    apimUserAssignedManagedIdentityResourceId: apimUserAssignedManagedIdentityResourceId
+  }
+}
+
+// ============================================================================
+// -- Internal-VNet DNS linking (privatelink.azure-api.net + custom domain)
+// ============================================================================
+// Required when virtualNetworkType=Internal: APIM has no public endpoint, so
+// callers in the VNet resolve `*.azure-api.net` via a private DNS zone linked
+// to the gateway's VNet (and any peered VNets the caller passes in).
+module apimDns 'apim-dns.bicep' = if (internalVnetMode) {
+  name: 'apim-dns-configuration'
+  params: {
+    tags: tags
+    apimIpAddress: apimService.outputs.apimPrivateIp
+    vnetResourceIds: dnsLinkVnetResourceIds
+    apimName: apimService.outputs.name
+  }
+}
+
+module apimCustomDns 'apim-dns.bicep' = if (internalVnetMode && customDomainEnabled) {
+  name: 'apim-custom-dns-configuration'
+  params: {
+    tags: tags
+    apimIpAddress: apimService.outputs.apimPrivateIp
+    vnetResourceIds: dnsLinkVnetResourceIds
+    apimName: 'apim'
+    zoneName: customDomain
+  }
+}
+
+// ============================================================================
+// -- APIM private endpoint (opt-in via peSubnetResourceId)
+// ============================================================================
+module apimPrivateEndpoint 'apim-pe.bicep' = if (attachingPrivateEndpoint) {
+  name: 'apim-pe-deployment'
+  params: {
+    tags: tags
+    location: location
+    apimName: apimService.outputs.name
+    peSubnetResourceId: peSubnetResourceId
   }
 }
 
@@ -137,7 +290,7 @@ module inferenceApi 'v2/inference-api.bicep' = {
   name: 'inference-api-deployment'
   dependsOn: [foundryBackends, callerIdentityFragment, perModelRoutingFragment]
   params: {
-    policyXml: loadTextContent('policy-per-model.xml')
+    policyXml: policyPerModelXml
     apiManagementName: apimService.outputs.name
     apimLoggerId: apimService.outputs.loggerId
     aiServicesConfig: []
@@ -165,7 +318,7 @@ module inferenceApiSpec 'v2/inference-api.bicep' = if (deploySpecApi) {
   name: 'inference-api-spec-deployment'
   dependsOn: [inferenceApi, foundryBackends, callerIdentityFragment, perModelRoutingFragment]
   params: {
-    policyXml: loadTextContent('policy-per-model.xml')
+    policyXml: policyPerModelXml
     apiManagementName: apimService.outputs.name
     apimLoggerId: apimService.outputs.loggerId
     aiServicesConfig: []
@@ -270,10 +423,93 @@ module aiGatewayProjectConnectionStatic '../ai/connection-apim-gateway.bicep' = 
   }
 ]
 
+// ============================================================================
+// -- Post-PE: flip publicNetworkAccess to Disabled
+// ============================================================================
+// Azure rejects publicNetworkAccess=Disabled on the initial APIM create when a
+// private endpoint is being attached. We deferred the flag and now re-deploy
+// the same APIM resource with it Disabled — after every child resource has
+// been created (and so could still be reached over the public endpoint).
+// This is intentionally a no-op when peSubnetResourceId is empty OR when the
+// caller wants the gateway to keep public access (publicNetworkAccess=Enabled).
+module apimServiceUpdate 'v2/apim.bicep' = if (deferPublicAccessFlip) {
+  name: 'apim-update-deployment'
+  dependsOn: [
+    apimPrivateEndpoint
+    callerIdentityFragment
+    perModelRoutingFragment
+    foundryBackends
+    inferenceApi
+    inferenceApiSpec
+    passthroughDiscovery
+    specApiDiscovery
+    aiGatewayConnectionStatic
+    aiGatewayProjectConnectionStatic
+  ]
+  params: {
+    location: location
+    tags: tags
+    resourceSuffix: resourceToken
+    apimSku: apimSku
+    lawId: logAnalyticsWorkspaceResourceId
+    appInsightsInstrumentationKey: appInsightsInstrumentationKey
+    appInsightsId: appInsightsResourceId
+    apimSubscriptionsConfig: subscriptions
+    virtualNetworkType: virtualNetworkType
+    subnetResourceId: subnetResourceId
+    publicNetworkAccess: 'Disabled'
+    hostnameConfigurations: effectiveHostnameConfigurations
+    apimManagedIdentityType: apimManagedIdentityType
+    apimUserAssignedManagedIdentityResourceId: apimUserAssignedManagedIdentityResourceId
+  }
+}
+
+// ============================================================================
+// -- Custom-domain hostname update (Internal VNet variants)
+// ============================================================================
+// Mirrors ai-gateway-premium.bicep's `apim_update` step: a lightweight
+// re-deploy that only touches the hostname configurations (and grants the
+// APIM UAMI Certificate User + Secrets User on the KV holding the cert), so
+// we don't have to re-deploy the full APIM resource with all its APIs.
+// Gated on customDomainEnabled — irrelevant for public / PE variants whose
+// custom hostnames (if any) are applied during the initial create.
+module apimHostnameUpdate 'apim-hostname-update.bicep' = if (customDomainEnabled && internalVnetMode) {
+  name: 'apim-hostname-update-deployment'
+  dependsOn: [
+    apimDns
+    apimCustomDns
+    callerIdentityFragment
+    perModelRoutingFragment
+    foundryBackends
+    inferenceApi
+    inferenceApiSpec
+    passthroughDiscovery
+    specApiDiscovery
+    aiGatewayConnectionStatic
+    aiGatewayProjectConnectionStatic
+  ]
+  params: {
+    tags: tags
+    location: location
+    resourceSuffix: resourceToken
+    apimSku: apimSku
+    virtualNetworkType: virtualNetworkType
+    subnetResourceId: subnetResourceId
+    #disable-next-line BCP036
+    publicNetworkAccess: null
+    apimUserAssignedManagedIdentityResourceId: apimUserAssignedManagedIdentityResourceId
+    apimManagedIdentityType: apimManagedIdentityType
+    apimPrincipalId: apimService.outputs.principalId
+    hostnameConfigurations: effectiveHostnameConfigurations
+    keyVaultName: keyVaultName
+  }
+}
+
 // -- Outputs ------------------------------------------------------------------
 output apimResourceId string = apimService.outputs.id
 output apimName string = apimService.outputs.name
 output apimPrincipalId string = apimService.outputs.principalId
 output apimGatewayUrl string = apimService.outputs.gatewayUrl
+output apimAppInsightsLoggerId string = apimService.outputs.loggerId
 output backendNames array = foundryBackends.outputs.backendNames
 output poolNames array = foundryBackends.outputs.poolNames

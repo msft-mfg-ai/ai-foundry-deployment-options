@@ -107,6 +107,69 @@ function Get-FoundryInstance {
   }
 }
 
+# Process a chained APIM that already follows our per-model-gateway convention
+# (passthrough at `/inference/openai/*` + static-discovery operations). Identified
+# by its gateway URL — no ARM resource id needed, so this works across tenants
+# where the developer can hit the endpoint but doesn't have ARM perms.
+function Get-ApimInstance {
+  param([Parameter(Mandatory)][string]$Url)
+
+  # Normalise to scheme://host[:port] (strip any path the caller appended).
+  if ($Url -notmatch '^[a-z]+://[^/]+') {
+    throw "Malformed APIM URL (expected https://<host>[/...]): $Url"
+  }
+  $base = $Matches[0]
+  $host = ($base -split '/')[2]
+
+  # Short instance name from the first hostname label (keeps backend names readable).
+  $name = ($host -split '\.')[0]
+  if (-not $name) { $name = ($host -replace '[^A-Za-z0-9]', '-').Trim('-') }
+
+  Write-Step "🔗 $name — chained APIM"
+  Write-Field '🌐' 'Gateway URL' $base
+
+  $token = az account get-access-token --resource https://cognitiveservices.azure.com --query accessToken -o tsv 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not $token) {
+    throw 'Failed to acquire an AAD token for cognitiveservices.azure.com.'
+  }
+
+  $listingUrl = "$base/inference/openai/deployments"
+  try {
+    $listing = Invoke-RestMethod -Uri $listingUrl -Headers @{ Authorization = "Bearer $token" } -Method Get
+  } catch {
+    throw "Downstream APIM discovery call failed: $listingUrl  ($($_.Exception.Message))"
+  }
+
+  $deployments = @()
+  if ($listing.value) {
+    $deployments = @($listing.value | ForEach-Object {
+      [PSCustomObject]@{
+        modelName    = $_.name
+        modelVersion = $_.properties.model.version
+        modelFormat  = if ($_.properties.model.format) { $_.properties.model.format } else { 'OpenAI' }
+      }
+    })
+    foreach ($d in $listing.value) {
+      Write-Host ("   {0,-30}  {1,-22}  {2,-10}  {3}" -f $d.name, $d.properties.model.name, $d.properties.model.version, $d.properties.model.format)
+    }
+  } else {
+    Write-Warn 'Downstream APIM exposed no deployments.'
+  }
+
+  return [PSCustomObject]@{
+    name        = "apim-$name"
+    # resourceId carries the URL — keeps foundryInstanceType.resourceId a non-empty
+    # string and acts as a unique key. main.bicep skips ARM operations for isApim=true.
+    resourceId  = $base
+    endpoint    = "$base/"
+    location    = 'external'
+    isPtu       = $false
+    isApim      = $true
+    deployments = $deployments
+    _depCount   = $deployments.Count
+  }
+}
+
 Write-Banner 'Foundry instance discovery'
 
 $rawIds    = Get-AzdEnv 'EXISTING_FOUNDRY_RESOURCE_IDS'
@@ -120,31 +183,43 @@ if (-not $rawIds) {
   if ($rawIds) { $sourceVar = 'OPENAI_RESOURCE_ID (fallback)' }
 }
 
-if (-not $rawIds) {
-  Write-Skip 'No existing Foundry instances configured.'
+$apimUrls = Get-AzdEnv 'EXISTING_APIM_URLS'
+
+if (-not $rawIds -and -not $apimUrls) {
+  Write-Skip 'No existing Foundry or APIM instances configured.'
   Write-Dim '   Set one of:'
   Write-Dim '     • EXISTING_FOUNDRY_RESOURCE_IDS (comma-separated, multi-instance)'
   Write-Dim '     • EXISTING_FOUNDRY_RESOURCE_ID  (single instance)'
   Write-Dim '     • OPENAI_RESOURCE_ID            (AI Gateway sample fallback)'
+  Write-Dim '     • EXISTING_APIM_URLS            (comma-separated gateway URLs — chained per-model-gateway APIMs)'
   azd env set FOUNDRY_INSTANCES_JSON '[]' | Out-Null
   Write-Host ''
   Write-Ok "Wrote FOUNDRY_INSTANCES_JSON=[] (deployment will fail with a clear 'no instances' message)"
   return
 }
 
-Write-Field '📥' 'Source' $sourceVar
+if ($rawIds)   { Write-Field '📥' 'Foundry source' $sourceVar }
+if ($apimUrls) { Write-Field '📥' 'APIM source'    'EXISTING_APIM_URLS' }
 
-$ids = $rawIds.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
 $instances = @()
 $totalDeployments = 0
-foreach ($rid in $ids) {
-  $inst = Get-FoundryInstance -ResourceId $rid
-  $totalDeployments += $inst._depCount
-  $instances += $inst
+if ($rawIds) {
+  foreach ($rid in ($rawIds.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+    $inst = Get-FoundryInstance -ResourceId $rid
+    $totalDeployments += $inst._depCount
+    $instances += $inst
+  }
+}
+if ($apimUrls) {
+  foreach ($url in ($apimUrls.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+    $inst = Get-ApimInstance -Url $url
+    $totalDeployments += $inst._depCount
+    $instances += $inst
+  }
 }
 
 if ($instances.Count -eq 0) {
-  Write-Err 'EXISTING_FOUNDRY_RESOURCE_IDS contained no valid ids.'
+  Write-Err 'No valid Foundry or APIM ids found in configured env vars.'
   exit 1
 }
 

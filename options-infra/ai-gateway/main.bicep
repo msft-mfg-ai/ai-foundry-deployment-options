@@ -2,15 +2,22 @@
 // 1. Foundry dependencies, such as VNet and
 //    private endpoints for AI Search, Azure Storage and Cosmos DB
 // 2. Foundry account and projects
-// 3. APIM as AI Gateway to allow Foundry Agent Service to use models from APIM
+// 3. APIM as AI Gateway (per-model routing) in front of one or more EXISTING
+//    Foundry / AI Services instances — see modules/apim/per-model-gateway.bicep.
 // 4. Projects with capability hosts - in Foundry Standard mode
 targetScope = 'resourceGroup'
 
+import { foundryInstanceType } from '../modules/apim/advanced/types.bicep'
+import { ModelType } from '../modules/ai/connection-apim-gateway.bicep'
+
 param location string = resourceGroup().location
-param openAiApiBase string
-param openAiResourceId string
-param openAiLocation string = location
 param projectsCount int = 3
+
+@description('Existing Foundry / AI Services instances to front with the gateway. Discovered by the `preprovision-list-foundry-models` hook (FOUNDRY_INSTANCES_JSON) from EXISTING_FOUNDRY_RESOURCE_IDS / OPENAI_RESOURCE_ID. At least one instance is required.')
+param foundryInstances foundryInstanceType[]
+
+@description('Tenant IDs whose Entra ID tokens the gateway should accept on inbound calls. Empty (default) = no inbound JWT validation — callers reach the gateway anonymously and APIM\'s managed identity authenticates to Foundry. When set, the inbound policy requires a valid bearer token with `aud=https://cognitiveservices.azure.com` issued by one of these tenants.')
+param acceptedTenantIds string[] = []
 
 var tags = {
   'created-by': 'option-ai-gateway'
@@ -18,15 +25,33 @@ var tags = {
   SecurityControl: 'Ignore'
 }
 
-var valid_config = empty(openAiApiBase) || empty(openAiResourceId)
-  ? fail('OPENAI_API_BASE and OPENAI_RESOURCE_ID environment variables must be set.')
+var valid_config = empty(foundryInstances)
+  ? fail('No Foundry instances configured. Set EXISTING_FOUNDRY_RESOURCE_IDS (or OPENAI_RESOURCE_ID) and run the `preprovision-list-foundry-models` hook so FOUNDRY_INSTANCES_JSON is populated.')
   : true
 
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
-var openAiParts = split(openAiResourceId, '/')
-var openAiName = last(openAiParts)
-var openAiSubscriptionId = openAiParts[2]
-var openAiResourceGroupName = openAiParts[4]
+
+// Union of all deployments across all instances → ModelType[] for the Foundry
+// connection's portal model picker. Dedupes by modelName (first wins when
+// multiple instances serve the same model).
+var allDeployments = flatten(map(foundryInstances, inst => inst.deployments))
+var dedupedDeployments = reduce(
+  allDeployments,
+  [],
+  (acc, d) => contains(map(acc, x => x.modelName), d.modelName) ? acc : concat(acc, [d])
+)
+var staticModels ModelType[] = [
+  for d in dedupedDeployments: {
+    name: d.modelName
+    properties: {
+      model: {
+        name: d.modelName
+        version: d.?modelVersion ?? '2025-01-01-preview'
+        format: d.?modelFormat ?? 'OpenAI'
+      }
+    }
+  }
+]
 
 module foundry_identity '../modules/iam/identity.bicep' = {
   name: 'foundry-identity-deployment'
@@ -144,7 +169,7 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
   }
 ]
 
-module ai_gateway '../modules/apim/ai-gateway.bicep' = {
+module ai_gateway '../modules/apim/per-model-gateway.bicep' = {
   name: 'ai-gateway-deployment-${resourceToken}'
   params: {
     tags: tags
@@ -155,68 +180,32 @@ module ai_gateway '../modules/apim/ai-gateway.bicep' = {
     logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
     appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
     appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
-    staticModels: [
-      {
-        name: 'gpt-4.1-mini'
-        properties: {
-          model: {
-            name: 'gpt-4.1-mini'
-            version: '2025-01-01-preview'
-            format: 'OpenAI'
-          }
-        }
-      }
-      {
-        name: 'gpt-4o'
-        properties: {
-          model: {
-            name: 'gpt-4o'
-            version: '2025-01-01-preview'
-            format: 'OpenAI'
-          }
-        }
-      }
-      {
-        name: 'gpt-5-mini'
-        properties: {
-          model: {
-            name: 'gpt-5-mini'
-            version: '2025-04-01-preview'
-            format: 'OpenAI'
-          }
-        }
-      }
-      {
-        name: 'o3-mini'
-        properties: {
-          model: {
-            name: 'o3-mini'
-            version: '2025-01-01-preview'
-            format: 'OpenAI'
-          }
-        }
-      }
-    ]
-    aiServicesConfig: [
-      {
-        name: openAiName
-        resourceId: openAiResourceId
-        endpoint: openAiApiBase
-        location: openAiLocation
-      }
-    ]
+    gatewayAuthenticationType: 'ProjectManagedIdentity'
+    foundryInstances: foundryInstances
+    staticModels: staticModels
+    acceptedTenantIds: acceptedTenantIds
   }
 }
 
-module apim_role_assignment '../modules/iam/role-assignment-cognitiveServices.bicep' = {
-  name: 'apim-role-assignment-deployment-${resourceToken}'
-  scope: resourceGroup(openAiSubscriptionId, openAiResourceGroupName)
-  params: {
-    accountName: openAiName
-    principalId: ai_gateway.outputs.apimPrincipalId
-    roleName: 'Cognitive Services User'
+// Grant APIM's managed identity Cognitive Services User on every backing
+// Foundry instance — each instance may live in a different RG (and even a
+// different subscription) so we scope per-resourceId.
+//
+// Skip chained-APIM instances (isApim=true): they authenticate inbound
+// via JWT (the downstream's `validate-jwt` checks our MI token's tenant),
+// not via RBAC. They also typically live outside our subscription/tenant,
+// so the role assignment would fail anyway.
+module apim_role_assignments '../modules/iam/role-assignment-cognitiveServices.bicep' = [
+  for (instance, i) in foundryInstances: if (!(instance.?isApim ?? false)) {
+    name: 'apim-role-${i}-${resourceToken}'
+    scope: resourceGroup(split(instance.resourceId, '/')[2], split(instance.resourceId, '/')[4])
+    params: {
+      accountName: last(split(instance.resourceId, '/'))
+      principalId: ai_gateway.outputs.apimPrincipalId
+      roleName: 'Cognitive Services User'
+    }
   }
-}
+]
 
 module dashboard_setup '../modules/dashboard/dashboard-setup.bicep' = {
   name: 'dashboard-setup-deployment-${resourceToken}'

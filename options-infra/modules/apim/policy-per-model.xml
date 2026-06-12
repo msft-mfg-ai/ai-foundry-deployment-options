@@ -2,6 +2,14 @@
     <inbound>
         <base />
 
+        <!-- ================================================================ -->
+        <!-- Optional: multi-tenant inbound JWT validation                    -->
+        <!-- Replaced by per-model-gateway.bicep with a `<validate-jwt>` block -->
+        <!-- listing one issuer per accepted tenant, or a comment when no     -->
+        <!-- tenants are configured (backward-compatible default).            -->
+        <!-- ================================================================ -->
+        {JWT_VALIDATION}
+
         <!-- Caller identity: x-caller-name, x-caller-id, x-caller-foundry, x-caller-project -->
         <include-fragment fragment-id="caller-identity" />
 
