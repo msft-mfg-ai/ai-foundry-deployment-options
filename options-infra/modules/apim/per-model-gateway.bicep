@@ -47,6 +47,9 @@ param deploySpecApi bool = true
 @description('URL path for the spec-backed AzureOpenAI API. Must not collide with the passthrough path (`inference/openai`). The AzureOpenAI inference-api module appends `/openai`, so a value of `openai` exposes the API at `…/openai/openai/…` — use `azure` (default) for `…/azure/openai/…`.')
 param specApiPath string = 'azure'
 
+@description('Tenant IDs whose Entra ID tokens are accepted as inbound auth. When non-empty, both inference APIs inject a `<validate-jwt>` block that requires `aud=https://cognitiveservices.azure.com` and lists one issuer per tenant (both v1 `sts.windows.net/{tid}/` and v2 `login.microsoftonline.com/{tid}/v2.0`). Empty (default) = no inbound JWT validation — backward-compatible.')
+param acceptedTenantIds string[] = []
+
 param logAnalyticsWorkspaceResourceId string
 param appInsightsInstrumentationKey string = ''
 param appInsightsResourceId string = ''
@@ -97,6 +100,21 @@ param vnetResourceIdsForDnsLink string[] = []
 // below so the discovery operations (added via `existing` references) can find
 // it deterministically.
 var passthroughApiName = 'inference-api'
+
+// -- Multi-tenant inbound JWT validation -------------------------------------
+// Replaces the `{JWT_VALIDATION}` token in policy-per-model.xml. When the
+// caller passes no tenants we emit a comment so the policy stays open (current
+// behaviour). Each accepted tenant contributes BOTH the v1 (`sts.windows.net`)
+// and v2 (`login.microsoftonline.com/.../v2.0`) issuer URLs since AAD tokens
+// can carry either depending on how the caller acquired them.
+var issuersXml = empty(acceptedTenantIds)
+  ? ''
+  : join(map(acceptedTenantIds, tid => '<issuer>https://sts.windows.net/${tid}/</issuer><issuer>https://login.microsoftonline.com/${tid}/v2.0</issuer>'), '')
+var jwtValidationXml = empty(acceptedTenantIds)
+  ? '<!-- multi-tenant JWT validation disabled (acceptedTenantIds is empty) -->'
+  : '<validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized"><openid-config url="https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration" /><audiences><audience>https://cognitiveservices.azure.com</audience><audience>https://cognitiveservices.azure.com/</audience></audiences><issuers>${issuersXml}</issuers></validate-jwt>'
+
+var policyPerModelXml = replace(loadTextContent('policy-per-model.xml'), '{JWT_VALIDATION}', jwtValidationXml)
 
 // -- Custom domain validation + synthesis -----------------------------------
 // When customDomain is set, every dependency (cert URI + KV name + UAMI) must
@@ -272,7 +290,7 @@ module inferenceApi 'v2/inference-api.bicep' = {
   name: 'inference-api-deployment'
   dependsOn: [foundryBackends, callerIdentityFragment, perModelRoutingFragment]
   params: {
-    policyXml: loadTextContent('policy-per-model.xml')
+    policyXml: policyPerModelXml
     apiManagementName: apimService.outputs.name
     apimLoggerId: apimService.outputs.loggerId
     aiServicesConfig: []
@@ -300,7 +318,7 @@ module inferenceApiSpec 'v2/inference-api.bicep' = if (deploySpecApi) {
   name: 'inference-api-spec-deployment'
   dependsOn: [inferenceApi, foundryBackends, callerIdentityFragment, perModelRoutingFragment]
   params: {
-    policyXml: loadTextContent('policy-per-model.xml')
+    policyXml: policyPerModelXml
     apiManagementName: apimService.outputs.name
     apimLoggerId: apimService.outputs.loggerId
     aiServicesConfig: []

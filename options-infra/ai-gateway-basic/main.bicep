@@ -14,6 +14,9 @@ param projectsCount int = 3
 @description('Existing Foundry / AI Services instances to front with the gateway. Discovered by the `preprovision-list-foundry-models` hook (FOUNDRY_INSTANCES_JSON) from EXISTING_FOUNDRY_RESOURCE_IDS / OPENAI_RESOURCE_ID. At least one instance is required.')
 param foundryInstances foundryInstanceType[]
 
+@description('Tenant IDs whose Entra ID tokens the gateway should accept on inbound calls. Empty (default) = no inbound JWT validation — callers reach the gateway anonymously and APIM’s managed identity authenticates to Foundry. When set, the inbound policy requires a valid bearer token with `aud=https://cognitiveservices.azure.com` issued by one of these tenants.')
+param acceptedTenantIds string[] = []
+
 var tags = {
   'created-by': 'option-ai-gateway'
   'hidden-title': 'Foundry Basic (no VNET) - APIM v2 Basic Public'
@@ -133,14 +136,20 @@ module ai_gateway '../modules/apim/per-model-gateway.bicep' = {
     gatewayAuthenticationType: 'ProjectManagedIdentity'
     foundryInstances: foundryInstances
     staticModels: staticModels
+    acceptedTenantIds: acceptedTenantIds
   }
 }
 
 // Grant APIM's managed identity Cognitive Services User on every backing
 // Foundry instance — each instance may live in a different RG (and even a
 // different subscription) so we scope per-resourceId.
+//
+// Skip chained-APIM instances (isApim=true): they authenticate inbound
+// via JWT (the downstream's `validate-jwt` checks our MI token's tenant),
+// not via RBAC. They also typically live outside our subscription/tenant,
+// so the role assignment would fail anyway.
 module apim_role_assignments '../modules/iam/role-assignment-cognitiveServices.bicep' = [
-  for (instance, i) in foundryInstances: {
+  for (instance, i) in foundryInstances: if (!(instance.?isApim ?? false)) {
     name: 'apim-role-${i}-${resourceToken}'
     scope: resourceGroup(split(instance.resourceId, '/')[2], split(instance.resourceId, '/')[4])
     params: {
