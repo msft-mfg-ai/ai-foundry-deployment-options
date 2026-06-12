@@ -54,6 +54,20 @@ var allDeployments = flatten(map(
       priority: instance.?priority ?? (instance.isPtu ? 1 : 2)
       weight: instance.?weight ?? 1
       location: instance.location
+      // Foundry exposes Anthropic models under /anthropic/* and everything
+      // else (OpenAI, AzureML, Cohere, DeepSeek, OpenAI-OSS) under /openai/*.
+      // The backend URL just needs the right base path — APIM appends the
+      // remainder of the inbound URL as-is, so the same gateway API serves
+      // both `/deployments/{name}/chat/completions` (OpenAI shape) and
+      // `/v1/messages` (Anthropic shape) transparently.
+      //
+      // For chained-APIM instances (isApim=true) the suffix is always
+      // `inference/openai` because the downstream APIM's passthrough catch-all
+      // lives at that path and routes by model name internally — the
+      // model-format split is the downstream's concern, not ours.
+      backendBasePath: (instance.?isApim ?? false)
+        ? 'inference/openai'
+        : (dep.?modelFormat == 'Anthropic' ? 'anthropic' : 'openai')
     })
 ))
 
@@ -65,7 +79,7 @@ resource backends 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' 
     name: dep.backendName
     properties: {
       description: '${dep.isPtu ? 'PTU' : 'Paygo'} backend: ${dep.instanceName} (${dep.location}) — model ${dep.modelName}'
-      url: '${dep.endpoint}openai'
+      url: '${dep.endpoint}${dep.backendBasePath}'
       protocol: 'http'
       credentials: {
         #disable-next-line BCP037

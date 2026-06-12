@@ -1,0 +1,50 @@
+<!--
+    List Deployments operation policy.
+    ===================================
+    Returns the static deployment list captured at IaC deploy time. No upstream
+    call — Foundry / clients see exactly the models the gateway is configured
+    to route. The body is rendered from `staticModels` in
+    per-model-gateway.bicep and injected as a single replacement token.
+
+    Wrapped as `{ "value": [...] }` to mirror the ARM
+    `Microsoft.CognitiveServices/accounts/deployments` list response shape that
+    the legacy ARM-proxy implementation produced.
+
+    NOTE: deliberately NOT inheriting `<base />` so the API-level per-model
+    routing fragment (which expects a `/deployments/{name}/...` URL) doesn't
+    fire on the listing path.
+-->
+<policies>
+    <inbound>
+        <cors allow-credentials="true">
+            <allowed-origins>
+                <origin>https://ai.azure.com</origin>
+            </allowed-origins>
+            <allowed-methods preflight-result-max-age="300">
+                <method>*</method>
+            </allowed-methods>
+            <allowed-headers>
+                <header>*</header>
+            </allowed-headers>
+            <expose-headers>
+                <header>*</header>
+            </expose-headers>
+        </cors>
+        <return-response>
+            <set-status code="200" reason="OK" />
+            <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+            </set-header>
+            <set-body>{DEPLOYMENTS_LIST_JSON}</set-body>
+        </return-response>
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>

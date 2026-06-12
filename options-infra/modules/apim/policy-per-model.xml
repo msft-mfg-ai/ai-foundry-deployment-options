@@ -1,0 +1,96 @@
+<policies>
+    <inbound>
+        <base />
+
+        <!-- ================================================================ -->
+        <!-- Optional: multi-tenant inbound JWT validation                    -->
+        <!-- Replaced by per-model-gateway.bicep with a `<validate-jwt>` block -->
+        <!-- listing one issuer per accepted tenant, or a comment when no     -->
+        <!-- tenants are configured (backward-compatible default).            -->
+        <!-- ================================================================ -->
+        {JWT_VALIDATION}
+
+        <!-- Caller identity: x-caller-name, x-caller-id, x-caller-foundry, x-caller-project -->
+        <include-fragment fragment-id="caller-identity" />
+
+        <cors allow-credentials="true">
+            <allowed-origins>
+                <origin>https://ai.azure.com</origin>
+            </allowed-origins>
+            <allowed-methods preflight-result-max-age="300">
+                <method>*</method>
+            </allowed-methods>
+            <allowed-headers>
+                <header>*</header>
+            </allowed-headers>
+            <expose-headers>
+                <header>*</header>
+            </expose-headers>
+        </cors>
+
+        <!-- ================================================================ -->
+        <!-- Routing: extract requested model + select per-model PAYG pool    -->
+        <!-- Sets context.Variables: requestedModel, model-clean, backend-pool -->
+        <!-- ================================================================ -->
+        <include-fragment fragment-id="per-model-routing" />
+
+        <!-- Authenticate to backend with APIM's managed identity -->
+        <authentication-managed-identity resource="https://cognitiveservices.azure.com" output-token-variable-name="managed-id-access-token" ignore-error="false" />
+        <set-header name="Authorization" exists-action="override">
+            <value>@("Bearer " + (string)context.Variables["managed-id-access-token"])</value>
+        </set-header>
+
+        <!-- Tracing headers for backend + outbound observability -->
+        <set-header name="x-caller-id" exists-action="override">
+            <value>@((string)context.Variables["caller-id"])</value>
+        </set-header>
+        <set-header name="x-caller-name" exists-action="override">
+            <value>@((string)context.Variables["caller-name"])</value>
+        </set-header>
+        <set-header name="x-requested-model" exists-action="override">
+            <value>@((string)context.Variables["requestedModel"])</value>
+        </set-header>
+        <set-header name="x-backend-pool" exists-action="override">
+            <value>@((string)context.Variables["backend-pool"])</value>
+        </set-header>
+
+        <!-- Emit token metric (matches policy.xml dimensions for dashboard reuse) -->
+        <azure-openai-emit-token-metric namespace="openai">
+            <dimension name="Caller Name" value="@((string)context.Variables[&quot;caller-name&quot;])" />
+            <dimension name="Foundry" value="@((string)context.Variables[&quot;caller-foundry&quot;])" />
+            <dimension name="Project" value="@((string)context.Variables[&quot;caller-project&quot;])" />
+            <dimension name="API ID" value="@(context.Api.Id)" />
+            <dimension name="Model" value="@((string)context.Variables[&quot;requestedModel&quot;])" />
+        </azure-openai-emit-token-metric>
+    </inbound>
+
+    <backend>
+        <!-- Per-model pool has circuit breaker on each backend; one throttled (instance, model)
+             pair fails over to the next backend in the pool without disabling other models. -->
+        <forward-request buffer-request-body="true" />
+    </backend>
+
+    <outbound>
+        <base />
+        <set-header name="x-backend-id" exists-action="override">
+            <value>@(context.Backend?.Id ?? "unknown")</value>
+        </set-header>
+        <set-header name="x-backend-pool" exists-action="override">
+            <value>@((string)context.Variables["backend-pool"])</value>
+        </set-header>
+        <set-header name="x-requested-model" exists-action="override">
+            <value>@((string)context.Variables["requestedModel"])</value>
+        </set-header>
+    </outbound>
+
+    <on-error>
+        <base />
+        <choose>
+            <when condition="@(context.Response.StatusCode == 503)">
+                <return-response>
+                    <set-status code="503" reason="Service Unavailable" />
+                </return-response>
+            </when>
+        </choose>
+    </on-error>
+</policies>
