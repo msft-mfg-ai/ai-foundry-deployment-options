@@ -16,6 +16,9 @@ param apiServices apiType[] = []
 param apimPublicEnabled bool = false
 param openAiLocation string = resourceGroup().location
 
+@description('Tenant IDs whose Entra ID tokens the gateway should accept on inbound calls. Empty (default) = no inbound JWT validation — callers reach the gateway anonymously and APIM\'s managed identity authenticates to Foundry. When set, the inbound policy requires a valid bearer token with `aud=https://cognitiveservices.azure.com` issued by one of these tenants.')
+param acceptedTenantIds string[] = []
+
 var tags = {
   'created-by': 'option-ai-gateway-custom'
   'hidden-title': 'Foundry - APIM v2 Standard with PE Custom'
@@ -245,6 +248,7 @@ module ai_gateway '../modules/apim/per-model-gateway.bicep' = {
     gatewayAuthenticationType: 'ProjectManagedIdentity'
     foundryInstances: foundryInstances
     staticModels: staticModels
+    acceptedTenantIds: acceptedTenantIds
     apimSku: 'Standardv2'
     virtualNetworkType: 'External'
     subnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.apimv2Subnet.resourceId

@@ -15,6 +15,9 @@ param apiServices apiType[] = []
 @description('Existing Foundry / AI Services instances to front with the gateway. Discovered by the `preprovision-list-foundry-models` hook (FOUNDRY_INSTANCES_JSON). At least one instance is required.')
 param foundryInstances foundryInstanceType[]
 
+@description('Tenant IDs whose Entra ID tokens the gateway should accept on inbound calls. Empty (default) = no inbound JWT validation — callers reach the gateway anonymously and APIM\'s managed identity authenticates to Foundry. When set, the inbound policy requires a valid bearer token with `aud=https://cognitiveservices.azure.com` issued by one of these tenants.')
+param acceptedTenantIds string[] = []
+
 var certFilePath = '../../../../../.ssh/cloud.karpala.pfx'
 var certFileBase64 = loadFileAsBase64(certFilePath)
 param customDomain string = 'cloud.karpala.org'
@@ -117,8 +120,11 @@ module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
 // Private endpoint per backing Foundry instance — each may live in a different
 // subscription/RG. The PE goes into THIS deployment's VNet so the Internal-VNet
 // APIM can reach the upstream models.
+//
+// Skip chained-APIM instances (isApim=true) — they're not Cognitive Services
+// accounts; the downstream APIM exposes its own endpoint.
 module openai_private_endpoints '../modules/networking/ai-pe-dns.bicep' = [
-  for (instance, i) in foundryInstances: {
+  for (instance, i) in foundryInstances: if (!(instance.?isApim ?? false)) {
     name: 'openai-pe-${i}-${resourceToken}'
     params: {
       tags: tags
@@ -246,6 +252,7 @@ module ai_gateway '../modules/apim/per-model-gateway.bicep' = {
     gatewayAuthenticationType: 'ProjectManagedIdentity'
     foundryInstances: foundryInstances
     staticModels: staticModels
+    acceptedTenantIds: acceptedTenantIds
     // Premium + Internal VNet + KV-cert custom domain
     apimSku: 'Premiumv2'
     virtualNetworkType: 'Internal'
@@ -260,8 +267,11 @@ module ai_gateway '../modules/apim/per-model-gateway.bicep' = {
   dependsOn: [dns_zone_linking]
 }
 
+// Grant APIM's managed identity Cognitive Services User on every backing
+// Foundry instance. Skip chained-APIM instances (isApim=true): they auth
+// inbound via JWT, not via RBAC.
 module apim_role_assignments '../modules/iam/role-assignment-cognitiveServices.bicep' = [
-  for (instance, i) in foundryInstances: {
+  for (instance, i) in foundryInstances: if (!(instance.?isApim ?? false)) {
     name: 'apim-role-${i}-${resourceToken}'
     scope: resourceGroup(split(instance.resourceId, '/')[2], split(instance.resourceId, '/')[4])
     params: {

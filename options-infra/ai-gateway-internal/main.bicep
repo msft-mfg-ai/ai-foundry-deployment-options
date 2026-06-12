@@ -17,6 +17,9 @@ param apiServices apiType[] = []
 @description('Existing Foundry / AI Services instances to front with the gateway. Discovered by the `preprovision-list-foundry-models` hook (FOUNDRY_INSTANCES_JSON) from EXISTING_FOUNDRY_RESOURCE_IDS / OPENAI_RESOURCE_ID. At least one instance is required.')
 param foundryInstances foundryInstanceType[]
 
+@description('Tenant IDs whose Entra ID tokens the gateway should accept on inbound calls. Empty (default) = no inbound JWT validation — callers reach the gateway anonymously and APIM\'s managed identity authenticates to Foundry. When set, the inbound policy requires a valid bearer token with `aud=https://cognitiveservices.azure.com` issued by one of these tenants.')
+param acceptedTenantIds string[] = []
+
 var valid_config = empty(foundryInstances)
   ? fail('No Foundry instances configured. Set EXISTING_FOUNDRY_RESOURCE_IDS (or OPENAI_RESOURCE_ID) and run the `preprovision-list-foundry-models` hook so FOUNDRY_INSTANCES_JSON is populated.')
   : true
@@ -88,8 +91,12 @@ module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
 // Private endpoint per backing Foundry instance (each may live in a different
 // subscription/RG). The PE goes into THIS deployment's VNet so the internal
 // APIM can reach the upstream models.
+//
+// Skip chained-APIM instances (isApim=true) — they're not Cognitive Services
+// accounts, so no PE is needed; the downstream APIM exposes its own public or
+// private endpoint that our gateway calls over the network.
 module openai_private_endpoints '../modules/networking/ai-pe-dns.bicep' = [
-  for (instance, i) in foundryInstances: {
+  for (instance, i) in foundryInstances: if (!(instance.?isApim ?? false)) {
     name: 'openai-pe-${i}-${resourceToken}'
     params: {
       tags: tags
@@ -193,6 +200,7 @@ module ai_gateway '../modules/apim/per-model-gateway.bicep' = {
     gatewayAuthenticationType: 'ProjectManagedIdentity'
     foundryInstances: foundryInstances
     staticModels: staticModels
+    acceptedTenantIds: acceptedTenantIds
     // Internal VNet injection - APIM lives inside the VNet, no public network access
     apimSku: 'Developer'
     virtualNetworkType: 'Internal'
@@ -202,8 +210,12 @@ module ai_gateway '../modules/apim/per-model-gateway.bicep' = {
 
 // Grant APIM's managed identity Cognitive Services User on every backing
 // Foundry instance — each instance may live in a different RG/subscription.
+//
+// Skip chained-APIM instances (isApim=true): they authenticate inbound
+// via JWT (the downstream's `validate-jwt` checks our MI token's tenant),
+// not via RBAC.
 module apim_role_assignments '../modules/iam/role-assignment-cognitiveServices.bicep' = [
-  for (instance, i) in foundryInstances: {
+  for (instance, i) in foundryInstances: if (!(instance.?isApim ?? false)) {
     name: 'apim-role-${i}-${resourceToken}'
     scope: resourceGroup(split(instance.resourceId, '/')[2], split(instance.resourceId, '/')[4])
     params: {

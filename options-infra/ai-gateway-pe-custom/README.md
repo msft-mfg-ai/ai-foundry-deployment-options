@@ -80,6 +80,18 @@ All gateway variants use [`per-model-gateway.bicep`](../modules/apim/per-model-g
 
 The gateway does not enforce quotas, JWT validation, or access contracts; those controls live in the `ai-gateway-quota` sample. The spec-backed `/azure` API renders the APIM test console and model-discovery endpoints from the synthesized in-deployment OpenAI instance.
 
+## Advanced features
+
+### Anthropic (Claude) models
+
+If you add an Anthropic-format deployment to `openAiDeploymentSpecs` (e.g. `{ name: 'claude-haiku-4-5', format: 'Anthropic', ... }`), [`multi-foundry-backends.bicep`](../modules/apim/advanced/multi-foundry-backends.bicep) automatically routes that backend at `{endpoint}anthropic` instead of `{endpoint}openai`. The same gateway transparently serves both `/deployments/{name}/chat/completions` (OpenAI shape) and `/v1/messages` (Anthropic shape).
+
+### Optional inbound JWT validation (`acceptedTenantIds`)
+
+By default the gateway is open — callers reach it anonymously and APIM's managed identity authenticates outbound to Foundry. Set `acceptedTenantIds` to a non-empty list of tenant IDs to require `Authorization: Bearer <token>` on every inbound call with `aud=https://cognitiveservices.azure.com` and an `iss` matching one of the configured tenants (both v1 `sts.windows.net/{tid}/` and v2 `login.microsoftonline.com/{tid}/v2.0` issuers are accepted). Defaults to `[]` for backward compatibility.
+
+> Note: APIM-to-APIM chaining is not available in this sample because `foundryInstances` is synthesized locally from the in-deployment OpenAI account rather than discovered via `EXISTING_FOUNDRY_RESOURCE_IDS`. Use any other gateway variant for chaining.
+
 ## Deployment
 
 ```bash

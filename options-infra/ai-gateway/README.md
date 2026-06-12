@@ -84,6 +84,30 @@ All gateway variants use [`per-model-gateway.bicep`](../modules/apim/per-model-g
 
 The gateway does not enforce quotas, JWT validation, or access contracts; those controls live in the `ai-gateway-quota` sample. The spec-backed `/azure` API renders the APIM test console and model-discovery endpoints from [`FOUNDRY_INSTANCES_JSON`](../modules/apim/advanced/types.bicep).
 
+## Advanced features
+
+The shared `per-model-gateway` orchestrator supports three opt-in features that work in any sample:
+
+### Anthropic (Claude) models on Foundry
+
+Foundry exposes Claude under `/anthropic/*` instead of `/openai/*`. When a deployment in `FOUNDRY_INSTANCES_JSON` carries `"modelFormat": "Anthropic"`, [`multi-foundry-backends.bicep`](../modules/apim/advanced/multi-foundry-backends.bicep) automatically points that backend at `{endpoint}anthropic` while OpenAI/Cohere/DeepSeek/OpenAI-OSS deployments continue to use `{endpoint}openai`. The same gateway transparently serves both `/deployments/{name}/chat/completions` (OpenAI shape) and `/v1/messages` (Anthropic shape); no separate API is needed.
+
+The discovery script picks up Anthropic deployments natively — no config change required.
+
+### Chaining (APIM-to-APIM)
+
+To front another APIM gateway (one that already follows this per-model-gateway convention) instead of a Cognitive Services account, set `EXISTING_APIM_RESOURCE_IDS` alongside `EXISTING_FOUNDRY_RESOURCE_IDS`. The discovery hook enumerates the downstream APIM's catalog and writes an entry with `"isApim": true` into `FOUNDRY_INSTANCES_JSON`. The orchestrator then:
+
+- Points backends at `{endpoint}inference/openai` (the downstream's passthrough catch-all) regardless of model format — model-format split is the downstream's concern.
+- Skips the per-instance Cognitive Services RBAC role assignment (the downstream authenticates inbound via JWT, not RBAC).
+- Skips per-instance private endpoint creation in network-injected variants (the downstream APIM exposes its own endpoint).
+
+Useful for regional fan-out: one local APIM aggregates several remote APIMs, each fronting their own Foundry accounts.
+
+### Optional inbound JWT validation (`acceptedTenantIds`)
+
+By default the gateway is open — callers reach it anonymously and APIM's managed identity authenticates outbound to Foundry. Set `acceptedTenantIds` to a non-empty list of tenant IDs to require `Authorization: Bearer <token>` on every inbound call with `aud=https://cognitiveservices.azure.com` and an `iss` matching one of the configured tenants (both v1 `sts.windows.net/{tid}/` and v2 `login.microsoftonline.com/{tid}/v2.0` issuers are accepted). Defaults to `[]` for backward compatibility.
+
 ## Deployment
 
 ```bash
