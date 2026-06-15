@@ -67,7 +67,7 @@ param appInsightsId string = ''
   'Late'
   'GenAI'
 ])
-param releaseChannel string = 'Default'
+param releaseChannel string = 'GenAI'
 
 @allowed([
   'External'

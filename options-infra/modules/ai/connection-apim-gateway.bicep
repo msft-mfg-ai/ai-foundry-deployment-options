@@ -46,7 +46,7 @@ type ModelType = {
   name: string
   properties: {
     model: {
-      format: string
+      format: 'OpenAI' | 'Anthropic' | 'OpenAI-OSS' | 'DeepSeek' | 'Cohere' // Extend with other formats as needed
       name: string
       version: string
     }
@@ -199,7 +199,7 @@ var isAccountConnection = !isProjectConnection
 
 // Create the connection with ApiKey authentication
 module connectionApiKeyAccount './connection-account.bicep' = if (authType == 'ApiKey' && isAccountConnection) {
-  name: '${connectionName}-module'
+  name: take('${connectionName}-m', 64)
   params: {
     aiFoundryName: aiFoundryName
     connectionName: connectionName
@@ -214,7 +214,7 @@ module connectionApiKeyAccount './connection-account.bicep' = if (authType == 'A
 
 // Create the connection with ApiKey authentication
 module connectionApiKeyProject './connection-project.bicep' = if (authType == 'ApiKey' && isProjectConnection) {
-  name: '${connectionName}-module'
+  name: take('${connectionName}-m', 64)
   params: {
     aiFoundryName: aiFoundryName
     aiFoundryProjectName: aiFoundryProjectName!
@@ -229,7 +229,7 @@ module connectionApiKeyProject './connection-project.bicep' = if (authType == 'A
 }
 
 module connectionAADProject './connection-project.bicep' = if (authType == 'ProjectManagedIdentity' && isProjectConnection) {
-  name: '${connectionName}-module'
+  name: take('${connectionName}-m', 64)
   params: {
     connectionName: connectionName
     aiFoundryName: aiFoundryName
@@ -243,7 +243,7 @@ module connectionAADProject './connection-project.bicep' = if (authType == 'Proj
 }
 
 module connectionAADAccount './connection-account.bicep' = if (authType == 'ProjectManagedIdentity' && isAccountConnection) {
-  name: '${connectionName}-module'
+  name: take('${connectionName}-m', 64)
   params: {
     aiFoundryName: aiFoundryName
     connectionName: connectionName
@@ -258,7 +258,9 @@ module connectionAADAccount './connection-account.bicep' = if (authType == 'Proj
 // Outputs (only from the created connection)
 output connectionName string = authType == 'ProjectManagedIdentity'
   ? (isAccountConnection ? connectionAADAccount!.outputs.connectionName : connectionAADProject!.outputs.connectionName)
-  : (isAccountConnection ? connectionApiKeyAccount!.outputs.connectionName : connectionApiKeyProject!.outputs.connectionName)
+  : (isAccountConnection
+      ? connectionApiKeyAccount!.outputs.connectionName
+      : connectionApiKeyProject!.outputs.connectionName)
 output connectionId string = authType == 'ProjectManagedIdentity'
   ? (isAccountConnection ? connectionAADAccount!.outputs.connectionId : connectionAADProject!.outputs.connectionId)
   : (isAccountConnection ? connectionApiKeyAccount!.outputs.connectionId : connectionApiKeyProject!.outputs.connectionId)

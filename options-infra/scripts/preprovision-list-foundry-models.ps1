@@ -107,8 +107,8 @@ function Get-FoundryInstance {
   }
 }
 
-# Process a chained APIM that already follows our per-model-gateway convention
-# (passthrough at `/inference/openai/*` + static-discovery operations). Identified
+# Process a chained APIM that exposes AI Gateway discovery at
+# `/inference/deployments`. Identified
 # by its gateway URL — no ARM resource id needed, so this works across tenants
 # where the developer can hit the endpoint but doesn't have ARM perms.
 function Get-ApimInstance {
@@ -119,11 +119,11 @@ function Get-ApimInstance {
     throw "Malformed APIM URL (expected https://<host>[/...]): $Url"
   }
   $base = $Matches[0]
-  $host = ($base -split '/')[2]
+  $apimHost = ($base -split '/')[2]
 
   # Short instance name from the first hostname label (keeps backend names readable).
-  $name = ($host -split '\.')[0]
-  if (-not $name) { $name = ($host -replace '[^A-Za-z0-9]', '-').Trim('-') }
+  $name = ($apimHost -split '\.')[0]
+  if (-not $name) { $name = ($apimHost -replace '[^A-Za-z0-9]', '-').Trim('-') }
 
   Write-Step "🔗 $name — chained APIM"
   Write-Field '🌐' 'Gateway URL' $base
@@ -133,7 +133,7 @@ function Get-ApimInstance {
     throw 'Failed to acquire an AAD token for cognitiveservices.azure.com.'
   }
 
-  $listingUrl = "$base/inference/openai/deployments"
+  $listingUrl = "$base/inference/deployments"
   try {
     $listing = Invoke-RestMethod -Uri $listingUrl -Headers @{ Authorization = "Bearer $token" } -Method Get
   } catch {
@@ -191,7 +191,7 @@ if (-not $rawIds -and -not $apimUrls) {
   Write-Dim '     • EXISTING_FOUNDRY_RESOURCE_IDS (comma-separated, multi-instance)'
   Write-Dim '     • EXISTING_FOUNDRY_RESOURCE_ID  (single instance)'
   Write-Dim '     • OPENAI_RESOURCE_ID            (AI Gateway sample fallback)'
-  Write-Dim '     • EXISTING_APIM_URLS            (comma-separated gateway URLs — chained per-model-gateway APIMs)'
+  Write-Dim '     • EXISTING_APIM_URLS            (comma-separated AI Gateway URLs exposing /inference/deployments)'
   azd env set FOUNDRY_INSTANCES_JSON '[]' | Out-Null
   Write-Host ''
   Write-Ok "Wrote FOUNDRY_INSTANCES_JSON=[] (deployment will fail with a clear 'no instances' message)"

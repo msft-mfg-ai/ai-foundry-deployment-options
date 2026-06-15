@@ -34,6 +34,16 @@
         <!-- ================================================================ -->
         <include-fragment fragment-id="per-model-routing" />
 
+        <!-- Anthropic backend requires anthropic-version. When the routed model
+             is Claude-family and caller did not provide the header, set default. -->
+        <choose>
+            <when condition="@(((string)context.Variables[&quot;requestedModel&quot;]).ToLowerInvariant().StartsWith(&quot;claude-&quot;))">
+                <set-header name="anthropic-version" exists-action="skip">
+                    <value>2023-06-01</value>
+                </set-header>
+            </when>
+        </choose>
+
         <!-- Authenticate to backend with APIM's managed identity -->
         <authentication-managed-identity resource="https://cognitiveservices.azure.com" output-token-variable-name="managed-id-access-token" ignore-error="false" />
         <set-header name="Authorization" exists-action="override">

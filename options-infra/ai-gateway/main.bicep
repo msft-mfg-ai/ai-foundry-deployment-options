@@ -3,7 +3,6 @@
 //    private endpoints for AI Search, Azure Storage and Cosmos DB
 // 2. Foundry account and projects
 // 3. APIM as AI Gateway (per-model routing) in front of one or more EXISTING
-//    Foundry / AI Services instances — see modules/apim/per-model-gateway.bicep.
 // 4. Projects with capability hosts - in Foundry Standard mode
 targetScope = 'resourceGroup'
 

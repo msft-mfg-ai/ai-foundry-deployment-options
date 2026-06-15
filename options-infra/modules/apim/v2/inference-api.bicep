@@ -301,7 +301,7 @@ resource inferenceBackend 'Microsoft.ApiManagement/service/backends@2024-06-01-p
       managedIdentity: empty(backendApiKey) ? {
           resource: 'https://cognitiveservices.azure.com'
       } : null
-      header: !empty(backendApiKey) ? { 'Authorization': ['Bearer ${backendApiKey}'] } : {}
+      header: !empty(backendApiKey) ? { Authorization: ['Bearer ${backendApiKey}'] } : {}
     }
   }
 }]

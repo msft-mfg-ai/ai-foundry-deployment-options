@@ -156,6 +156,8 @@ var dnsLinkVnetResourceIds = internalVnetMode ? union(vnetResourceIdsForDnsLink,
 
 // -- Derived ------------------------------------------------------------------
 var connectionPerProject = !empty(aiFoundryProjectNames)
+var openAIStaticModels = filter(staticModels, m => toLower(m.properties.model.format) != 'anthropic')
+var anthropicStaticModels = filter(staticModels, m => toLower(m.properties.model.format) == 'anthropic')
 var subscriptions subscriptionType[] = connectionPerProject
   ? map(aiFoundryProjectNames, (projectName) => {
       name: 'sub-${projectName}-${resourceToken}'
@@ -180,9 +182,12 @@ var attachingPrivateEndpoint = !empty(peSubnetResourceId)
 var deferPublicAccessFlip = attachingPrivateEndpoint && publicNetworkAccess == 'Disabled'
 var initialPublicNetworkAccess = deferPublicAccessFlip ? null : publicNetworkAccess
 
+var apimServiceName = 'apim-ai-${resourceToken}'
+
 module apimService 'v2/apim.bicep' = {
   name: 'apim-deployment'
   params: {
+    apiManagementName: apimServiceName
     location: location
     tags: tags
     resourceSuffix: resourceToken
@@ -283,9 +288,11 @@ module foundryBackends 'advanced/multi-foundry-backends.bicep' = {
 // inferenceAPIType='Other' loads the PassThrough OpenAPI spec (single `/*`
 // path with all 8 HTTP verbs) — Foundry / clients hit the API transparently
 // and our policy routes to the per-model pool based on the URL segment.
-// We force inferenceAPIPath='inference/openai' so the external URL contract
-// stays `…/inference/openai/deployments/{model}/...` for AzureOpenAI SDK
-// callers and for our policy's URL-segment parsing.
+// API path is `inference`; the inbound `/openai/...` or `/anthropic/...`
+// segment is carried through to the backend so a single API surfaces both
+// AzureOpenAI (`/inference/openai/deployments/{m}/...`) and Anthropic
+// (`/inference/anthropic/v1/messages`) shapes — backwards compatible with
+// the legacy `…/inference/openai/...` URL contract.
 module inferenceApi 'v2/inference-api.bicep' = {
   name: 'inference-api-deployment'
   dependsOn: [foundryBackends, callerIdentityFragment, perModelRoutingFragment]
@@ -295,7 +302,7 @@ module inferenceApi 'v2/inference-api.bicep' = {
     apimLoggerId: apimService.outputs.loggerId
     aiServicesConfig: []
     inferenceAPIType: 'Other'
-    inferenceAPIPath: 'inference/openai'
+    inferenceAPIPath: 'inference'
     inferenceAPIName: passthroughApiName
     configureCircuitBreaker: false
     resourceSuffix: resourceToken
@@ -390,34 +397,69 @@ module specApiDiscovery 'static-discovery-operations.bicep' = if (deploySpecApi)
 // ============================================================================
 // -- Foundry connection(s) — static models drive the portal model picker
 // ============================================================================
-module aiGatewayConnectionStatic '../ai/connection-apim-gateway.bicep' = if (!connectionPerProject && !empty(staticModels)) {
-  name: 'apim-connection-static'
+module aiGatewayConnectionOpenAIStatic '../ai/connection-apim-gateway.bicep' = if (!connectionPerProject && !empty(openAIStaticModels)) {
+  name: 'apim-connection-openai-static'
   params: {
     aiFoundryName: aiFoundryName
-    connectionName: 'apim-${resourceToken}-static'
+    connectionName: 'apim-${resourceToken}-openai-static'
     apimResourceId: apimService.outputs.id
     apiName: inferenceApi.outputs.apiName
     apimSubscriptionName: first(apimService.outputs.apimSubscriptions).name
     isSharedToAll: true
-    staticModels: staticModels
+    staticModels: openAIStaticModels
     inferenceAPIVersion: '2025-03-01-preview'
     authType: gatewayAuthenticationType
   }
 }
 
-module aiGatewayProjectConnectionStatic '../ai/connection-apim-gateway.bicep' = [
-  for projectName in aiFoundryProjectNames: if (connectionPerProject && !empty(staticModels)) {
-    name: 'apim-connection-static-${projectName}'
+module aiGatewayConnectionAnthropicStatic '../ai/connection-apim-gateway.bicep' = if (!connectionPerProject && !empty(anthropicStaticModels)) {
+  name: 'apim-connection-anthropic-static'
+  params: {
+    aiFoundryName: aiFoundryName
+    connectionName: 'apim-${resourceToken}-anthropic-static'
+    apimResourceId: apimService.outputs.id
+    apiName: inferenceApi.outputs.apiName
+    apimSubscriptionName: first(apimService.outputs.apimSubscriptions).name
+    isSharedToAll: true
+    staticModels: anthropicStaticModels
+    inferenceAPIVersion: '2025-03-01-preview'
+    deploymentInPath: 'false'
+    authType: gatewayAuthenticationType
+  }
+}
+
+module aiGatewayProjectConnectionOpenAIStatic '../ai/connection-apim-gateway.bicep' = [
+  for projectName in aiFoundryProjectNames: if (connectionPerProject && !empty(openAIStaticModels)) {
+    name: 'apim-connection-openai-static-${projectName}'
     params: {
       aiFoundryName: aiFoundryName
       aiFoundryProjectName: projectName
-      connectionName: 'apim-${resourceToken}-static-for-${projectName}'
+      connectionName: 'apim-${resourceToken}-openai-static-for-${projectName}'
       apimResourceId: apimService.outputs.id
       apiName: inferenceApi.outputs.apiName
       apimSubscriptionName: first(filter(apimService.outputs.apimSubscriptions, (sub) => contains(sub.name, projectName))).name
       isSharedToAll: false
-      staticModels: staticModels
+      staticModels: openAIStaticModels
       inferenceAPIVersion: '2025-03-01-preview'
+      authType: gatewayAuthenticationType
+    }
+  }
+]
+
+module aiGatewayProjectConnectionAnthropicStatic '../ai/connection-apim-gateway.bicep' = [
+  for projectName in aiFoundryProjectNames: if (connectionPerProject && !empty(anthropicStaticModels)) {
+    name: 'apim-connection-anthropic-static-${projectName}'
+    params: {
+      aiFoundryName: aiFoundryName
+      aiFoundryProjectName: projectName
+      connectionName: 'apim-${resourceToken}-anthropic-static-for-${projectName}'
+      apimResourceId: apimService.outputs.id
+      apiName: inferenceApi.outputs.apiName
+      apimSubscriptionName: first(filter(apimService.outputs.apimSubscriptions, (sub) => contains(sub.name, projectName))).name
+      isSharedToAll: false
+      staticModels: anthropicStaticModels
+      inferenceAPIVersion: '2025-03-01-preview'
+      deploymentInPath: 'false'
       authType: gatewayAuthenticationType
     }
   }
@@ -443,10 +485,13 @@ module apimServiceUpdate 'v2/apim.bicep' = if (deferPublicAccessFlip) {
     inferenceApiSpec
     passthroughDiscovery
     specApiDiscovery
-    aiGatewayConnectionStatic
-    aiGatewayProjectConnectionStatic
+    aiGatewayConnectionOpenAIStatic
+    aiGatewayConnectionAnthropicStatic
+    aiGatewayProjectConnectionOpenAIStatic
+    aiGatewayProjectConnectionAnthropicStatic
   ]
   params: {
+    apiManagementName: apimServiceName
     location: location
     tags: tags
     resourceSuffix: resourceToken
@@ -485,8 +530,10 @@ module apimHostnameUpdate 'apim-hostname-update.bicep' = if (customDomainEnabled
     inferenceApiSpec
     passthroughDiscovery
     specApiDiscovery
-    aiGatewayConnectionStatic
-    aiGatewayProjectConnectionStatic
+    aiGatewayConnectionOpenAIStatic
+    aiGatewayConnectionAnthropicStatic
+    aiGatewayProjectConnectionOpenAIStatic
+    aiGatewayProjectConnectionAnthropicStatic
   ]
   params: {
     tags: tags

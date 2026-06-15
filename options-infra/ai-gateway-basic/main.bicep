@@ -2,17 +2,19 @@
 // 1. Foundry account and projects (capability hosts for Standard mode)
 // 2. APIM as AI Gateway in front of one or more EXISTING Foundry / AI Services
 //    instances, with one APIM backend per (instance, model) and per-model
-//    PAYG pools — see modules/apim/per-model-gateway.bicep.
 targetScope = 'resourceGroup'
 
-import { ModelType } from '../modules/ai/connection-apim-gateway.bicep'
 import { foundryInstanceType } from '../modules/apim/advanced/types.bicep'
+import { subscriptionType } from '../modules/apim/v2/apim.bicep'
 
 param location string = resourceGroup().location
 param projectsCount int = 3
 
 @description('Existing Foundry / AI Services instances to front with the gateway. Discovered by the `preprovision-list-foundry-models` hook (FOUNDRY_INSTANCES_JSON) from EXISTING_FOUNDRY_RESOURCE_IDS / OPENAI_RESOURCE_ID. At least one instance is required.')
 param foundryInstances foundryInstanceType[]
+
+@allowed(['ApiKey', 'ProjectManagedIdentity'])
+param gatewayAuthenticationType string = 'ProjectManagedIdentity'
 
 @description('Tenant IDs whose Entra ID tokens the gateway should accept on inbound calls. Empty (default) = no inbound JWT validation — callers reach the gateway anonymously and APIM’s managed identity authenticates to Foundry. When set, the inbound policy requires a valid bearer token with `aud=https://cognitiveservices.azure.com` issued by one of these tenants.')
 param acceptedTenantIds string[] = []
@@ -28,31 +30,6 @@ var valid_config = empty(foundryInstances)
   : true
 
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
-
-// Union of all deployments across all instances → ModelType[] for the Foundry
-// connection's portal model picker. Dedupes by modelName (first wins when
-// multiple instances serve the same model). modelVersion/modelFormat are
-// captured by the discovery script from `properties.model.{version,format}`
-// on the backing deployment; fall back to AzureOpenAI defaults only when the
-// script ran against an older schema that didn't capture them.
-var allDeployments = flatten(map(foundryInstances, inst => inst.deployments))
-var dedupedDeployments = reduce(
-  allDeployments,
-  [],
-  (acc, d) => contains(map(acc, x => x.modelName), d.modelName) ? acc : concat(acc, [d])
-)
-var staticModels ModelType[] = [
-  for d in dedupedDeployments: {
-    name: d.modelName
-    properties: {
-      model: {
-        name: d.modelName
-        version: d.?modelVersion ?? '2025-01-01-preview'
-        format: d.?modelFormat ?? 'OpenAI'
-      }
-    }
-  }
-]
 
 module foundry_identity '../modules/iam/identity.bicep' = {
   name: 'foundry-identity-deployment'
@@ -90,7 +67,6 @@ module foundry '../modules/ai/ai-foundry.bicep' = {
   }
 }
 
-
 module identities '../modules/iam/identity.bicep' = [
   for i in range(1, projectsCount): {
     name: 'ai-project-${i}-identity-${resourceToken}'
@@ -122,21 +98,69 @@ module projects '../modules/ai/ai-project.bicep' = [
   }
 ]
 
-module ai_gateway '../modules/apim/per-model-gateway.bicep' = {
-  name: 'ai-gateway-deployment-${resourceToken}'
+var connectionPerProject = !empty(projectNames)
+var subscriptions subscriptionType[] = connectionPerProject
+  ? map(projectNames, (projectName) => {
+      name: 'sub-${projectName}-${resourceToken}'
+      displayName: 'Subscription for ${projectName} in ${foundry.outputs.FOUNDRY_NAME}'
+    })
+  : [
+      {
+        name: 'sub-foundry-${foundry.outputs.FOUNDRY_NAME}'
+        displayName: 'Default Subscription for ${foundry.outputs.FOUNDRY_NAME}'
+      }
+    ]
+
+module ai_gateway '../modules/apim/v2/apim.bicep' = {
+  name: 'apim-deployment'
   params: {
-    tags: tags
+    apiManagementName: 'apim-ai-${resourceToken}'
     location: location
-    resourceToken: resourceToken
-    aiFoundryName: foundry.outputs.FOUNDRY_NAME
-    aiFoundryProjectNames: [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
-    logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
-    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    tags: tags
+    resourceSuffix: resourceToken
+    apimSku: 'Basicv2'
+    lawId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
+    appInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
     appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
-    gatewayAuthenticationType: 'ProjectManagedIdentity'
-    foundryInstances: foundryInstances
-    staticModels: staticModels
+    apimSubscriptionsConfig: gatewayAuthenticationType == 'ApiKey' ? subscriptions : []
+    #disable-next-line BCP036
+  }
+}
+
+module common_ai_gateway_setup '../modules/apim/common-apim-setup.bicep' = {
+  name: 'common-ai-gateway-setup'
+  params: {
+    apimName: ai_gateway.outputs.name
+    apimLoggerId: ai_gateway.outputs.loggerId
+    appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
+    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    resourceToken: resourceToken
+    gatewayAuthenticationType: gatewayAuthenticationType
     acceptedTenantIds: acceptedTenantIds
+    foundryInstances: foundryInstances
+  }
+}
+
+module foundry_connections '../modules/ai/connections-apim-gateway.bicep' = {
+  name: 'apim-connections-for-foundry'
+  params: {
+    aiFoundryName: foundry.outputs.FOUNDRY_NAME
+    aiFoundryProjectNames: projectNames
+    resourceToken: resourceToken
+    gatewayAuthenticationType: gatewayAuthenticationType
+    staticModels: common_ai_gateway_setup.outputs.staticModels
+    apimResourceId: ai_gateway.outputs.id
+    apimSubscriptionNames: map(subscriptions, s => s.name)
+    inferenceApiName: common_ai_gateway_setup.outputs.inferenceApiName
+  }
+}
+
+module public_mcps '../modules/apim/public-mcps.bicep' = {
+  name: 'public-mcps-deployment'
+  params: {
+    apimServiceName: ai_gateway.outputs.name
+    aiFoundryName: foundry.outputs.FOUNDRY_NAME
+    apimAppInsightsLoggerId: ai_gateway.outputs.appInsightsLoggerId
   }
 }
 
@@ -154,7 +178,7 @@ module apim_role_assignments '../modules/iam/role-assignment-cognitiveServices.b
     scope: resourceGroup(split(instance.resourceId, '/')[2], split(instance.resourceId, '/')[4])
     params: {
       accountName: last(split(instance.resourceId, '/'))
-      principalId: ai_gateway.outputs.apimPrincipalId
+      principalId: ai_gateway.outputs.principalId
       roleName: 'Cognitive Services User'
     }
   }
@@ -189,6 +213,6 @@ output FOUNDRY_PROJECTS_CONNECTION_STRINGS string[] = [
 output FOUNDRY_PROJECT_NAMES string[] = projectNames
 output CONFIG_VALIDATION_RESULT bool = valid_config
 output FOUNDRY_NAME string = foundry.outputs.FOUNDRY_NAME
-output APIM_GATEWAY_URL string = ai_gateway.outputs.apimGatewayUrl
-output APIM_BACKEND_NAMES array = ai_gateway.outputs.backendNames
-output APIM_POOL_NAMES array = ai_gateway.outputs.poolNames
+output APIM_GATEWAY_URL string = ai_gateway.outputs.gatewayUrl
+output APIM_BACKEND_NAMES array = common_ai_gateway_setup.outputs.backendNames
+output APIM_POOL_NAMES array = common_ai_gateway_setup.outputs.poolNames
