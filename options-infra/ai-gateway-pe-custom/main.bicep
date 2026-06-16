@@ -215,6 +215,8 @@ module identities '../modules/iam/identity.bicep' = [
   }
 ]
 
+var projectNames = [for i in range(1, projectsCount): 'ai-project-${resourceToken}-${i}']
+
 @batchSize(1)
 module projects '../modules/ai/ai-project-with-caphost.bicep' = [
   for i in range(1, projectsCount): {
@@ -223,6 +225,7 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
       tags: tags
       location: location
       foundryName: foundry.outputs.FOUNDRY_NAME
+      project_name: projectNames[i - 1]
       project_description: 'AI Project ${i} ${resourceToken}'
       display_name: 'AI Project ${i} ${resourceToken}'
       projectId: i
@@ -234,35 +237,22 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
   }
 ]
 
-module ai_gateway '../modules/apim/per-model-gateway.bicep' = {
-  name: 'ai-gateway-deployment-${resourceToken}'
+module ai_gateway '../modules/apim/ai-gateway-pe.bicep' = {
+  name: 'ai-gateway-pe-deployment'
   params: {
     tags: tags
     location: location
-    resourceToken: resourceToken
-    aiFoundryName: foundry.outputs.FOUNDRY_NAME
-    aiFoundryProjectNames: [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
-    logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
-    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
     appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
-    gatewayAuthenticationType: 'ProjectManagedIdentity'
+    appInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    resourceToken: resourceToken
     foundryInstances: foundryInstances
-    staticModels: staticModels
-    acceptedTenantIds: acceptedTenantIds
-    apimSku: 'Standardv2'
-    virtualNetworkType: 'External'
+    foundryProjectNames: projectNames
+    foundryName: foundry.outputs.FOUNDRY_NAME
     subnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.apimv2Subnet.resourceId
     peSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
-    publicNetworkAccess: apimPublicEnabled ? 'Enabled' : 'Disabled'
-  }
-}
-
-module apim_role_assignment '../modules/iam/role-assignment-cognitiveServices.bicep' = {
-  name: 'apim-role-assignment-deployment-${resourceToken}'
-  params: {
-    accountName: openai_with_models.outputs.FOUNDRY_NAME
-    principalId: ai_gateway.outputs.apimPrincipalId
-    roleName: 'Cognitive Services User'
+    apimPublicEnabled: apimPublicEnabled
+    acceptedTenantIds: empty(acceptedTenantIds) ? [tenant().tenantId] : acceptedTenantIds
   }
 }
 

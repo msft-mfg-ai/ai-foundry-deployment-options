@@ -1,216 +1,138 @@
-// _DEPRECATED: use modules/apim/per-model-gateway.bicep instead. This legacy
-// orchestrator implements the older "single backend pool + static-models inline"
-// pattern. per-model-gateway.bicep covers the same SKUs / networking variants
-// (public, Internal VNet, External+PE, Premium custom domain) plus per-(instance,
-// model) backends with smart routing and dynamic discovery.
+/// APIM AI Gateway with Private Endpoint for Azure AI Foundry.
+/// Creates APIM in External VNet (Standardv2 SKU), attaches a private endpoint, then
+/// optionally disables public network access. Uses the modular v2 pattern:
+/// v2/apim.bicep → apim-pe.bicep → common-apim-setup.bicep → connections-apim-gateway.bicep.
 
-import { aiServiceConfigType } from 'v2/inference-api.bicep'
-import { ModelType } from '../ai/connection-apim-gateway.bicep'
 import { subscriptionType } from 'v2/apim.bicep'
+import { foundryInstanceType } from '../apim/advanced/types.bicep'
 
 param location string = resourceGroup().location
 param tags object = {}
+param foundryProjectNames string[] = []
+param acceptedTenantIds string[] = []
+param foundryName string
+param foundryInstances foundryInstanceType[]
+
 param logAnalyticsWorkspaceId string
 param appInsightsInstrumentationKey string = ''
 param appInsightsId string = ''
-param aiFoundryName string
-param aiFoundryProjectNames string[] = []
 param resourceToken string
 
-param staticModels ModelType[] = []
-param aiServicesConfig aiServiceConfigType[] = []
 param subnetResourceId string
 param peSubnetResourceId string
 @description('Flag to enable public access to the API Management service')
 param apimPublicEnabled bool = false
-// Connection configuration
-@allowed(['ApiKey', 'ProjectManagedIdentity'])
-param authType string = 'ProjectManagedIdentity'
 
-var connection_per_project = !empty(aiFoundryProjectNames)
-var subscriptions subscriptionType[] = connection_per_project
-  ? map(aiFoundryProjectNames, (projectName) => {
+var connectionPerProject = !empty(foundryProjectNames)
+var subscriptions subscriptionType[] = connectionPerProject
+  ? map(foundryProjectNames, (projectName) => {
       name: 'sub-${projectName}-${resourceToken}'
-      displayName: 'Subscription for ${projectName} in ${aiFoundryName}'
+      displayName: 'Subscription for ${projectName} in ${foundryName}'
     })
   : [
       {
-        name: 'sub-foundry-${aiFoundryName}'
-        displayName: 'Default Subscription for ${aiFoundryName}'
+        name: 'sub-foundry-${foundryName}'
+        displayName: 'Default Subscription for ${foundryName}'
       }
     ]
 
-module apim 'apim.bicep' = {
+module ai_gateway '../apim/v2/apim.bicep' = {
   name: 'apim-deployment'
   params: {
+    apiManagementName: 'apim-ai-${resourceToken}'
     tags: tags
     location: location
-    logAnalyticsWorkspaceId: logAnalyticsWorkspaceId
-    appInsightsInstrumentationKey: appInsightsInstrumentationKey
-    appInsightsId: appInsightsId
     resourceSuffix: resourceToken
-    aiServicesConfig: aiServicesConfig
     apimSku: 'Standardv2'
+    lawId: logAnalyticsWorkspaceId
+    appInsightsId: appInsightsId
+    appInsightsInstrumentationKey: appInsightsInstrumentationKey
+    apimSubscriptionsConfig: subscriptions
     virtualNetworkType: 'External'
     subnetResourceId: subnetResourceId
-    // NotSupported: Blocking all public network access by setting property `publicNetworkAccess` of API Management service apim-xxxx is not enabled during service creation.
-    publicNetworkAccess: null
-    subscriptions: subscriptions
+    #disable-next-line BCP036
+    publicNetworkAccess: 'Enabled'
   }
 }
 
-module apim_pe 'apim-pe.bicep' = {
+module apimPrivateEndpoint '../apim/apim-pe.bicep' = {
   name: 'apim-pe-deployment'
   params: {
     tags: tags
     location: location
-    apimName: apim.outputs.apimName
+    apimName: ai_gateway.outputs.name
     peSubnetResourceId: peSubnetResourceId
   }
 }
 
-// run update to disable public access if needed
-module apim_update 'apim.bicep' = if (!apimPublicEnabled) {
-  name: 'apim-update-deployment'
+module common_ai_gateway_setup '../apim/common-apim-setup.bicep' = {
+  name: 'common-ai-gateway-setup'
   params: {
-    tags: tags
+    apimName: ai_gateway.outputs.name
+    apimLoggerId: ai_gateway.outputs.loggerId
+    appInsightsInstrumentationKey: appInsightsInstrumentationKey
+    appInsightsResourceId: appInsightsId
+    resourceToken: resourceToken
+    gatewayAuthenticationType: 'ProjectManagedIdentity'
+    acceptedTenantIds: acceptedTenantIds
+    foundryInstances: foundryInstances
+    apimSku: 'Standardv2'
+  }
+}
+
+module foundry_connections '../ai/connections-apim-gateway.bicep' = {
+  name: 'apim-connections-for-foundry'
+  params: {
+    aiFoundryName: foundryName
+    aiFoundryProjectNames: foundryProjectNames
+    resourceToken: resourceToken
+    gatewayAuthenticationType: 'ProjectManagedIdentity'
+    staticModels: common_ai_gateway_setup.outputs.staticModels
+    apimResourceId: ai_gateway.outputs.id
+    apimSubscriptionNames: map(subscriptions, s => s.name)
+    inferenceApiName: common_ai_gateway_setup.outputs.inferenceApiName
+  }
+}
+
+module apimServiceUpdate '../apim/v2/apim.bicep' = if (!apimPublicEnabled) {
+  name: 'apim-update-deployment'
+  dependsOn: [
+    apimPrivateEndpoint
+    common_ai_gateway_setup
+    foundry_connections
+  ]
+  params: {
+    apiManagementName: 'apim-ai-${resourceToken}'
     location: location
-    logAnalyticsWorkspaceId: logAnalyticsWorkspaceId
+    tags: tags
+    resourceSuffix: resourceToken
+    apimSku: 'Standardv2'
+    lawId: logAnalyticsWorkspaceId
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
     appInsightsId: appInsightsId
-    resourceSuffix: resourceToken
-    aiServicesConfig: aiServicesConfig
-    apimSku: 'Standardv2'
+    apimSubscriptionsConfig: subscriptions
     virtualNetworkType: 'External'
     subnetResourceId: subnetResourceId
-    // NotSupported: Blocking all public network access by setting property `publicNetworkAccess` of API Management service apim-xxxx is not enabled during service creation.
-    // Need to run this weird update step after PE is attached.
     publicNetworkAccess: 'Disabled'
-    subscriptions: subscriptions
-  }
-  dependsOn: [apim_pe]
-}
-
-module aiGatewayConnectionDynamic '../ai/connection-apim-gateway.bicep' = if (!connection_per_project) {
-  name: 'apim-connection-dynamic'
-  params: {
-    aiFoundryName: aiFoundryName
-    connectionName: 'apim-${resourceToken}-dynamic'
-    apimResourceId: apim.outputs.apimResourceId
-    apiName: apim.outputs.inferenceApiName
-    // Always pass the subscription name — the underlying module uses it to inject
-    // metadata.customHeaders.api-key, which is required for the Foundry portal to
-    // honor metadata.models even under ProjectManagedIdentity auth.
-    apimSubscriptionName: first(apim.outputs.subscriptions).name
-    isSharedToAll: true
-    listModelsEndpoint: '/deployments'
-    getModelEndpoint: '/deployments/{deploymentName}'
-    deploymentProvider: 'AzureOpenAI'
-    inferenceAPIVersion: '2025-03-01-preview'
-    authType: authType
   }
 }
 
-// Static-models connection — see comment in ai-gateway.bicep for the rationale
-// behind the ProjectManagedIdentity default + always-passed apimSubscriptionName.
-module aiGatewayConnectionStatic '../ai/connection-apim-gateway.bicep' = if (!connection_per_project && !empty(staticModels)) {
-  name: 'apim-connection-static'
-  params: {
-    aiFoundryName: aiFoundryName
-    connectionName: 'apim-${resourceToken}-static'
-    apimResourceId: apim.outputs.apimResourceId
-    apiName: apim.outputs.inferenceApiName
-    apimSubscriptionName: first(apim.outputs.subscriptions).name
-    isSharedToAll: true
-    staticModels: staticModels
-    inferenceAPIVersion: '2025-03-01-preview'
-    authType: authType
-  }
-}
-
-module aiGatewayProjectConnectionStatic '../ai/connection-apim-gateway.bicep' = [
-  for projectName in aiFoundryProjectNames: if (connection_per_project && !empty(staticModels)) {
-    name: 'apim-connection-static-${projectName}'
+// Grant APIM's managed identity Cognitive Services User on every backing
+// Foundry instance. Skip chained-APIM instances (isApim=true): they auth
+// inbound via JWT, not via RBAC.
+module apim_role_assignments '../iam/role-assignment-cognitiveServices.bicep' = [
+  for (instance, i) in foundryInstances: if (!(instance.?isApim ?? false)) {
+    name: 'apim-role-${i}-${resourceToken}'
+    scope: resourceGroup(split(instance.resourceId, '/')[2], split(instance.resourceId, '/')[4])
     params: {
-      aiFoundryName: aiFoundryName
-      aiFoundryProjectName: projectName
-      connectionName: 'apim-${resourceToken}-static-for-${projectName}'
-      apimResourceId: apim.outputs.apimResourceId
-      apiName: apim.outputs.inferenceApiName
-      apimSubscriptionName: first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).name
-      isSharedToAll: false
-      staticModels: staticModels
-      inferenceAPIVersion: '2025-03-01-preview'
-      authType: authType
+      accountName: last(split(instance.resourceId, '/'))
+      principalId: ai_gateway.outputs.principalId
+      roleName: 'Cognitive Services User'
     }
   }
 ]
-
-module aiGatewayProjectConnectionDynamic '../ai/connection-apim-gateway.bicep' = [
-  for projectName in aiFoundryProjectNames: if (connection_per_project) {
-    name: 'apim-connection-dynamic-${projectName}'
-    params: {
-      aiFoundryName: aiFoundryName
-      aiFoundryProjectName: projectName
-      connectionName: 'apim-${resourceToken}-dynamic-for-${projectName}'
-      apimResourceId: apim.outputs.apimResourceId
-      apiName: apim.outputs.inferenceApiName
-      apimSubscriptionName: authType == 'ApiKey'
-        ? first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).name
-        : null
-      isSharedToAll: false
-      listModelsEndpoint: '/deployments'
-      getModelEndpoint: '/deployments/{deploymentName}'
-      deploymentProvider: 'AzureOpenAI'
-      inferenceAPIVersion: '2025-03-01-preview'
-      authType: authType
-    }
-  }
-]
-
-module public_mcps './public-mcps.bicep' = {
-  name: 'public-mcps-deployment'
-  params: {
-    apimServiceName: apim.outputs.apimName
-    aiFoundryName: aiFoundryName
-    apimAppInsightsLoggerId: apim.outputs.apimAppInsightsLoggerId
-  }
-}
-
-// module modelGatewayConnectionStatic '../ai/connection-modelgateway-static.bicep' = if (!empty(staticModels)) {
-//   name: 'model-gateway-connection-static'
-//   params: {
-//     aiFoundryName: aiFoundryName
-//     connectionName: 'model-gateway-${resourceToken}-static'
-//     apiKey: apim.outputs.subscriptionValue
-//     isSharedToAll: true
-//     gatewayName: 'apim'
-//     staticModels: staticModels
-//     inferenceAPIVersion: '2025-03-01-preview'
-//     targetUrl: apim.outputs.apiUrl
-//     deploymentInPath: 'true'
-//   }
-// }
-
-// module modelGatewayConnectionDynamic '../ai/connection-modelgateway-dynamic.bicep' = {
-//   name: 'model-gateway-connection-dynamic'
-//   params: {
-//     aiFoundryName: aiFoundryName
-//     connectionName: 'model-gateway-${resourceToken}-dynamic'
-//     apiKey: apim.outputs.subscriptionValue
-//     isSharedToAll: true
-//     gatewayName: 'apim'
-//     targetUrl: apim.outputs.apiUrl
-//     listModelsEndpoint: '/deployments'
-//     getModelEndpoint: '/deployments/{deploymentName}'
-//     deploymentProvider: 'AzureOpenAI'
-//     inferenceAPIVersion: '2025-03-01-preview'
-//     deploymentInPath: 'true'
-//   }
-// }
-
-output apimResourceId string = apim.outputs.apimResourceId
-output apimName string = apim.outputs.apimName
-output apimGatewayUrl string = apim.outputs.apimGatewayUrl
-output apimPrincipalId string = apim.outputs.apimPrincipalId
-output apimAppInsightsLoggerId string = apim.outputs.apimAppInsightsLoggerId
+output apimResourceId string = ai_gateway.outputs.id
+output apimName string = ai_gateway.outputs.name
+output apimGatewayUrl string = ai_gateway.outputs.gatewayUrl
+output apimPrincipalId string = ai_gateway.outputs.principalId
+output apimAppInsightsLoggerId string = ai_gateway.outputs.appInsightsLoggerId

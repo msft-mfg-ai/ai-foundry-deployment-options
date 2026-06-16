@@ -20,13 +20,15 @@ ai-gateway-quota/
 ├── tests/                   # Test notebook
 └── docs/                    # Documentation
 
-# Shared policy XML files live in the modules directory, not under ai-gateway-quota:
+# Shared modules and types live in the modules directory, not under ai-gateway-quota:
 options-infra/modules/apim/advanced/
-├── policy-priority.xml      # Main routing + quota enforcement policy
-├── fragment-identity.xml    # JWT validation and contract lookup
-├── policy-config-viewer.xml # HTML contract config debug endpoint
-├── token-estimation-*.xml   # Token estimation helpers (inbound/outbound)
-└── types.bicep              # Bicep type definitions for contracts
+├── policy-priority.xml           # Main routing + quota enforcement policy
+├── fragment-identity.xml         # JWT validation and contract lookup
+├── policy-config-viewer.xml      # HTML contract config debug endpoint
+├── token-estimation-*.xml        # Token estimation helpers (inbound/outbound)
+├── multi-foundry-backends.bicep  # Backend and pool creation (location-scoped backends, model-scoped pools)
+├── ai-gateway-advanced.bicep     # Orchestrator module consuming backend outputs
+└── types.bicep                   # Bicep type definitions for foundryInstanceType and contracts
 ```
 
 ## Policy Files
@@ -90,6 +92,31 @@ Key panels:
 - **Monthly Budget Burn-Down** — cumulative token usage this month
 
 The logging pipeline for observability headers: APIM policy sets response headers → `responseLogSettings` in `inference-api.bicep` captures them → they appear in `ApiManagementGatewayLogs.ResponseHeaders` as a JSON string.
+
+## Multi-Region Backend Naming
+
+### Backend vs. Pool Architecture
+
+The gateway creates one **backend per `(instance, model, location)` pair** but only one **pool per model**:
+
+- **Backends**: Named `{instance}-{model-clean}-{location-clean}-backend` for unique identity and diagnostics
+- **Pools**: Named `{model-clean}-ptu-pool` (PTU backends at priority 1) and `{model-clean}-payg-pool` (PAYAG backends at priority 2)
+
+This design supports multi-region topologies without requiring per-region pool separation. Multiple foundries in the same region get different backend names, and pools intelligently mix backends from all regions.
+
+### How Location Gets Into Backend Names
+
+In Bicep (`multi-foundry-backends.bicep` line ~51):
+```bicep
+backendName: '${instance.name}-${replace(replace(dep.modelName, '.', ''), '-', '')}-${replace(replace(instance.location, ' ', ''), '.', '')}-backend'
+```
+
+In Terraform (`tf/modules/apim-advanced-backends/main.tf` line ~13):
+```hcl
+backend_name = "${instance.name}-${model_clean}-${replace(replace(instance.location, " ", ""), ".", "")}-backend"
+```
+
+The `location` field from each `foundryInstanceType` is cleaned (spaces and dots removed) and appended to backend names for uniqueness.
 
 ## Key Gotchas
 

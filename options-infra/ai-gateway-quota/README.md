@@ -143,6 +143,28 @@ The deploying identity needs **`Application.ReadWrite.All`** permission. Client 
 
 Teams with pre-existing Entra apps or managed identities can bring their own identities by populating the `identities` array in their contract — no app registration is created for them.
 
+## Backend Naming & Multi-Region Support
+
+### Backend Naming Convention
+
+Backends are created per `(instance, model, location)` triplet with names like `{instance}-{model-clean}-{location-clean}-backend`. This ensures unique backend identity when multiple Foundry instances serve the same model in different Azure regions:
+
+```
+Topology: 2 paygo in eastus2 + 1 paygo in westus + 1 PTU in eastus
+
+Backends created:
+  ✓ foundry-paygo-a-gpt41mini-eastus2-backend       (PTU: false, Location: eastus2)
+  ✓ foundry-paygo-b-gpt41mini-eastus2-backend       (PTU: false, Location: eastus2)
+  ✓ foundry-paygo-c-gpt41mini-westus-backend        (PTU: false, Location: westus)
+  ✓ foundry-ptu-gpt41mini-eastus-backend            (PTU: true,  Location: eastus)
+
+Pools created (per-model only, not per-region):
+  ✓ gpt41mini-ptu-pool    → contains 1 PTU backend (priority 1)
+  ✓ gpt41mini-payg-pool   → contains 3 PAYG backends (priority 2)
+```
+
+**Pools remain model-scoped** — a single PTU pool per model contains all PTU backends from any region, and a single PAYAG pool per model contains all PAYAG backends from any region. Circuit breaker on PTU backends handles automatic failover to PAYAG without requiring region-based pool separation.
+
 ## ⚠️ Critical: Consistent Deployment Names
 
 All Azure OpenAI / Foundry instances serving the same model **must** use the **same deployment name**, matching the `modelName` in the configuration. APIM backend pools forward the URL path unchanged — mismatched names cause intermittent 404s.

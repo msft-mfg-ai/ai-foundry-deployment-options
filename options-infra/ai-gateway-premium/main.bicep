@@ -219,6 +219,8 @@ module identities '../modules/iam/identity.bicep' = [
   }
 ]
 
+var projectNames = [for i in range(1, projectsCount): 'ai-project-${resourceToken}-${i}']
+
 @batchSize(1)
 module projects '../modules/ai/ai-project-with-caphost.bicep' = [
   for i in range(1, projectsCount): {
@@ -227,6 +229,7 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
       tags: tags
       location: location
       foundryName: foundry.outputs.FOUNDRY_NAME
+      project_name: projectNames[i - 1]
       project_description: 'AI Project ${i} ${resourceToken}'
       display_name: 'AI Project ${i} ${resourceToken}'
       projectId: i
@@ -238,49 +241,37 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
   }
 ]
 
-module ai_gateway '../modules/apim/per-model-gateway.bicep' = {
-  name: 'ai-gateway-deployment-${resourceToken}'
+var effectiveHostnameConfigurations = [
+  {
+    type: 'Proxy'
+    hostName: 'apim.${customDomain}'
+    certificateSource: 'KeyVault'
+    keyVaultId: keyVault_for_apim.outputs.KEY_VAULT_SECRETS_URIS[0]
+  }
+]
+
+module ai_gateway '../modules/apim/ai-gateway-premium.bicep' = {
+  name: 'ai-gateway-premium-deployment'
   params: {
     tags: tags
     location: apimLocation
-    resourceToken: resourceToken
-    aiFoundryName: foundry.outputs.FOUNDRY_NAME
-    aiFoundryProjectNames: [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
-    logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
-    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
     appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
-    gatewayAuthenticationType: 'ProjectManagedIdentity'
+    appInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    resourceToken: resourceToken
     foundryInstances: foundryInstances
-    staticModels: staticModels
-    acceptedTenantIds: acceptedTenantIds
-    // Premium + Internal VNet + KV-cert custom domain
-    apimSku: 'Premiumv2'
-    virtualNetworkType: 'Internal'
+    foundryProjectNames: projectNames
+    foundryName: foundry.outputs.FOUNDRY_NAME
     subnetResourceId: apim_vnet.outputs.VIRTUAL_NETWORK_SUBNETS.apimv2PremiumSubnet.resourceId
-    apimManagedIdentityType: 'SystemAssigned, UserAssigned'
+    vnetResourceIds: [apim_vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID, vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID]
+    acceptedTenantIds: acceptedTenantIds
     apimUserAssignedManagedIdentityResourceId: apim_identity.outputs.MANAGED_IDENTITY_RESOURCE_ID
+    hostnameConfigurations: effectiveHostnameConfigurations
     customDomain: customDomain
     keyVaultName: keyVault_for_apim.outputs.KEY_VAULT_NAME
-    certificateKeyVaultUri: keyVault_for_apim.outputs.KEY_VAULT_SECRETS_URIS[0]
-    vnetResourceIdsForDnsLink: [apim_vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID, vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID]
   }
   dependsOn: [dns_zone_linking]
 }
-
-// Grant APIM's managed identity Cognitive Services User on every backing
-// Foundry instance. Skip chained-APIM instances (isApim=true): they auth
-// inbound via JWT, not via RBAC.
-module apim_role_assignments '../modules/iam/role-assignment-cognitiveServices.bicep' = [
-  for (instance, i) in foundryInstances: if (!(instance.?isApim ?? false)) {
-    name: 'apim-role-${i}-${resourceToken}'
-    scope: resourceGroup(split(instance.resourceId, '/')[2], split(instance.resourceId, '/')[4])
-    params: {
-      accountName: last(split(instance.resourceId, '/'))
-      principalId: ai_gateway.outputs.apimPrincipalId
-      roleName: 'Cognitive Services User'
-    }
-  }
-]
 
 module dashboard_setup '../modules/dashboard/dashboard-setup.bicep' = {
   name: 'dashboard-setup-deployment-${resourceToken}'

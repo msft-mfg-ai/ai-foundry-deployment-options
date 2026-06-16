@@ -5,11 +5,11 @@
 // creates APIM backends + mixed (PTU+PAYG) and PAYG-only pools per model.
 //
 // Backend naming convention:
-//   {instance}-{model-clean}-backend — one backend per (instance, model) pair.
+//   {instance}-{model-clean}-{location-clean}-backend — one backend per (instance, model, location) pair.
 //   The URL is still {endpoint}/openai (the deployment segment is forwarded
 //   as-is from the request path), but each backend has its OWN circuit-breaker
 //   state, so a single throttled model can't disable other models on the same
-//   Foundry instance.
+//   Foundry instance. Location is included in the name for uniqueness and clarity.
 //
 // Pool naming convention:
 //   {model-clean}-ptu-pool  — Mixed pool: PTU at priority 1, PAYG at priority 2
@@ -48,7 +48,7 @@ var allDeployments = flatten(map(
       endpoint: instance.endpoint
       modelName: dep.modelName
       modelClean: replace(replace(dep.modelName, '.', ''), '-', '')
-      backendName: '${instance.name}-${replace(replace(dep.modelName, '.', ''), '-', '')}-backend'
+      backendName: '${instance.name}-${replace(replace(dep.modelName, '.', ''), '-', '')}-${replace(replace(instance.location, ' ', ''), '.', '')}-backend'
       isPtu: instance.isPtu
       ptuCapacityTpm: dep.?ptuCapacityTpm ?? 0
       priority: instance.?priority ?? (instance.isPtu ? 1 : 2)

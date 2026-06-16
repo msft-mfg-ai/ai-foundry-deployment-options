@@ -144,11 +144,44 @@ Two APIM policy fragments (`token-estimation-inbound.xml`, `token-estimation-out
 
 ---
 
-## 9. Next Steps
+## 9. Backend Naming & Multi-Region Support ✅ Implemented
 
-- [ ] **Choose APIM topology**: Single Premium multi-region (recommended) vs. separate instances per region
-- [ ] **Create region-specific pools in Bicep**: Refactor `multi-foundry-backends.bicep` to produce `{model}-{region}-pool` with regional PTU + PAYG tiers
-- [ ] **Add `context.Deployment.Region` routing**: Policy selects the right regional pool based on which APIM gateway handles the request
+Multi-region topology is supported through **location-scoped backend naming**, not pool separation:
+
+### Backend Naming Convention
+
+Backends are named `{instance}-{model-clean}-{location-clean}-backend` to ensure uniqueness when multiple Foundry instances serve the same model in different Azure regions:
+
+```
+FOUNDRY_A (eastus2, gpt-4.1-mini)     → backend: foundry-a-gpt41mini-eastus2-backend
+FOUNDRY_B (eastus2, gpt-4.1-mini)     → backend: foundry-b-gpt41mini-eastus2-backend
+FOUNDRY_C (westus, gpt-4.1-mini)      → backend: foundry-c-gpt41mini-westus-backend
+FOUNDRY_PTU (eastus, gpt-4.1-mini)    → backend: foundry-ptu-gpt41mini-eastus-backend
+```
+
+Example: 2 paygo foundries in eastus2 + 1 paygo in westus + 1 PTU in eastus — each gets a unique backend with location in the name. Location must match the Azure region where the Foundry instance is deployed.
+
+### Pool Design — Still Per-Model Only
+
+Pools remain **model-scoped**, not region-scoped. This allows:
+- Single PTU pool per model containing all PTU backends (any region)
+- Single PAYG pool per model containing all PAYAG backends (any region)
+- Circuit breaker on PTU backends handles automatic failover to PAYG
+- No region-based pool selection logic
+
+```
+{model-clean}-ptu-pool      PTU backends from all regions at priority 1
+{model-clean}-payg-pool     PAYG backends from all regions at priority 2
+```
+
+### Regional Preference (Optional)
+
+If callers need to prefer a specific region (e.g., local foundry first), use the explicit `priority` field on each foundry instance in the configuration. Deployer controls locality preference, not automatic APIM region-based selection.
+
+---
+
+## 10. Future Enhancements
+
 - [ ] **Empirical PTU header test**: Deploy a real PTU deployment and capture all response headers
 - [ ] **Document soft limit behavior**: Make it clear in contract docs that PTU quotas are approximate
 - [ ] **Streaming support**: `context.Response.Body.As<JObject>` may not work for `stream: true` responses — need to handle chunked responses separately

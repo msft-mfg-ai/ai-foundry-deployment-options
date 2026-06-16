@@ -1,11 +1,11 @@
-// _DEPRECATED: use modules/apim/per-model-gateway.bicep instead. This legacy
-// orchestrator implements the older "single backend pool + static-models inline"
-// pattern. per-model-gateway.bicep covers the same SKUs / networking variants
-// (public, Internal VNet, External+PE, Premium custom domain) plus per-(instance,
-// model) backends with smart routing and dynamic discovery.
+/// APIM AI Gateway — Premiumv2 SKU, Internal VNet injection with custom domain for Azure AI Foundry.
+/// Creates APIM Premiumv2 in Internal VNet, configures private DNS (default + custom domain),
+/// sets up the inference API and Foundry connections, then applies hostname/cert configuration.
+/// Uses the modular v2 pattern:
+/// v2/apim.bicep → apim-dns.bicep (x2) → common-apim-setup.bicep →
+/// connections-apim-gateway.bicep → apim-hostname-update.bicep.
 
-import { aiServiceConfigType } from 'v2/inference-api.bicep'
-import { ModelType } from '../ai/connection-apim-gateway.bicep'
+import { foundryInstanceType } from 'advanced/types.bicep'
 import { subscriptionType, hostnameConfigurationType } from 'v2/apim.bicep'
 
 param location string = resourceGroup().location
@@ -13,234 +13,156 @@ param tags object = {}
 param logAnalyticsWorkspaceId string
 param appInsightsInstrumentationKey string = ''
 param appInsightsId string = ''
-param aiFoundryName string
-param aiFoundryProjectNames string[] = []
 param resourceToken string
-
-param staticModels ModelType[] = []
-param aiServicesConfig aiServiceConfigType[] = []
+param foundryInstances foundryInstanceType[]
+param foundryProjectNames string[] = []
+param foundryName string
 param subnetResourceId string
-param vnetResourceIdsForDnsLink string[] = []
-@description('The user-assigned managed identity ID to be used with API Management')
-param apimUserAssignedManagedIdentityResourceId string?
-param certificateKeyVaultUri string?
-param keyVaultName string?
-param customDomain string?
 
-var custom_domain_setup_valid = !empty(customDomain) && (empty(certificateKeyVaultUri) || empty(apimUserAssignedManagedIdentityResourceId) || empty(keyVaultName))
-  ? fail('Custom domain requires both certificateKeyVaultUri, apimUserAssignedManagedIdentityResourceId, and keyVaultName to be set.')
-  : true
+@description('VNet resource IDs to link to the APIM private DNS zones (typically both the APIM VNet and the Foundry VNet).')
+param vnetResourceIds string[]
 
-var hostnameConfigurations hostnameConfigurationType[] = custom_domain_setup_valid
-  ? [
-      // Setting up custom domains for SkuType PremiumV2 currently is only supported for 'Proxy' and 'DeveloperPortal' hostname type.
-      {
-        type: 'Proxy'
-        hostName: 'apim.${customDomain}'
-        certificateSource: 'KeyVault'
-        keyVaultId: certificateKeyVaultUri!
-      }
-    ]
-  : []
-var subnetIdParts = split(subnetResourceId, '/')
-var subnetName = last(subnetIdParts)
-var vnetResourceId = substring(subnetResourceId, 0, length(subnetResourceId) - length('/subnets/${subnetName}'))
+@description('Tenant IDs whose Entra ID tokens the gateway should accept on inbound calls. Empty = no inbound JWT validation.')
+param acceptedTenantIds string[] = []
 
-var connection_per_project = !empty(aiFoundryProjectNames)
-var subscriptions subscriptionType[] = connection_per_project
-  ? map(aiFoundryProjectNames, (projectName) => {
+@description('User-assigned managed identity resource ID for APIM (used for Key Vault cert access).')
+param apimUserAssignedManagedIdentityResourceId string
+
+@description('Hostname configurations for the APIM service (proxy, developer portal, etc.).')
+param hostnameConfigurations hostnameConfigurationType[] = []
+
+@description('Custom domain name used to create the custom DNS A record (e.g. cloud.contoso.org → apim.<customDomain>). Leave empty to skip custom DNS zone.')
+param customDomain string = ''
+
+@description('Key Vault name that holds the TLS certificate. Required when hostnameConfigurations is non-empty.')
+param keyVaultName string = ''
+
+var connectionPerProject = !empty(foundryProjectNames)
+var subscriptions subscriptionType[] = connectionPerProject
+  ? map(foundryProjectNames, (projectName) => {
       name: 'sub-${projectName}-${resourceToken}'
-      displayName: 'Subscription for ${projectName} in ${aiFoundryName}'
+      displayName: 'Subscription for ${projectName} in ${foundryName}'
     })
   : [
       {
-        name: 'sub-foundry-${aiFoundryName}'
-        displayName: 'Default Subscription for ${aiFoundryName}'
+        name: 'sub-foundry-${foundryName}'
+        displayName: 'Default Subscription for ${foundryName}'
       }
     ]
 
-module apim 'apim.bicep' = {
+module apim 'v2/apim.bicep' = {
   name: 'apim-deployment'
   params: {
+    apiManagementName: 'apim-ai-${resourceToken}'
     tags: tags
     location: location
-    logAnalyticsWorkspaceId: logAnalyticsWorkspaceId
-    appInsightsInstrumentationKey: appInsightsInstrumentationKey
+    resourceSuffix: resourceToken
+    apimSku: 'Premiumv2'
+    lawId: logAnalyticsWorkspaceId
     appInsightsId: appInsightsId
-    resourceSuffix: resourceToken
-    aiServicesConfig: aiServicesConfig
-    apimSku: 'Premiumv2'
+    appInsightsInstrumentationKey: appInsightsInstrumentationKey
+    apimSubscriptionsConfig: subscriptions
     virtualNetworkType: 'Internal'
     subnetResourceId: subnetResourceId
-    // NotSupported: Blocking all public network access by setting property `publicNetworkAccess` of API Management service apim-xxxx is not enabled during service creation.
-    publicNetworkAccess: null
-    subscriptions: subscriptions
-    apimUserAssignedManagedIdentityResourceId: apimUserAssignedManagedIdentityResourceId
     apimManagedIdentityType: 'SystemAssigned, UserAssigned'
-  }
-}
-
-// run lightweight update to update custom domains only (avoids re-deploying full APIM with APIs)
-module apim_update 'apim-hostname-update.bicep' = if (custom_domain_setup_valid && !empty(hostnameConfigurations)) {
-  name: 'apim-hostname-update-deployment'
-  params: {
-    tags: tags
-    location: location
-    resourceSuffix: resourceToken
-    apimSku: 'Premiumv2'
-    virtualNetworkType: 'Internal'
-    subnetResourceId: subnetResourceId
-    // NotSupported: Blocking all public network access by setting property `publicNetworkAccess` of API Management service apim-xxxx is not enabled during service creation.
-    publicNetworkAccess: null
     apimUserAssignedManagedIdentityResourceId: apimUserAssignedManagedIdentityResourceId
-    apimManagedIdentityType: 'SystemAssigned, UserAssigned'
-    apimPrincipalId: apim.outputs.apimPrincipalId
-    // update only the hostname configurations
     hostnameConfigurations: hostnameConfigurations
-    keyVaultName: keyVaultName!
+    publicNetworkAccess: 'Enabled'
   }
-  dependsOn: [apim_dns, apim_custom_dns]
 }
 
-module apim_dns 'apim-dns.bicep' = {
+module apimDns 'apim-dns.bicep' = {
   name: 'apim-dns-configuration'
   params: {
     tags: tags
     apimIpAddress: apim.outputs.apimPrivateIp
-    vnetResourceIds: union(vnetResourceIdsForDnsLink, [vnetResourceId])
-    apimName: apim.outputs.apimName
+    vnetResourceIds: vnetResourceIds
+    apimName: apim.outputs.name
   }
 }
 
-module apim_custom_dns 'apim-dns.bicep' = if (!empty(customDomain)) {
-  name: 'apim-custom-dns-deployment'
+module apimCustomDns 'apim-dns.bicep' = if (!empty(customDomain)) {
+  name: 'apim-custom-dns-configuration'
   params: {
-    vnetResourceIds: union(vnetResourceIdsForDnsLink, [vnetResourceId])
-    apimName: 'apim'
+    tags: tags
     apimIpAddress: apim.outputs.apimPrivateIp
+    vnetResourceIds: vnetResourceIds
+    apimName: 'apim'
     zoneName: customDomain
   }
 }
 
-module aiGatewayConnectionDynamic '../ai/connection-apim-gateway.bicep' = if (!connection_per_project) {
-  name: 'apim-connection-dynamic'
+module common_ai_gateway_setup 'common-apim-setup.bicep' = {
+  name: 'common-ai-gateway-setup'
   params: {
-    aiFoundryName: aiFoundryName
-    connectionName: 'apim-${resourceToken}-dynamic'
-    apimResourceId: apim.outputs.apimResourceId
-    apiName: apim.outputs.inferenceApiName
-    apimSubscriptionName: first(apim.outputs.subscriptions).name
-    isSharedToAll: true
-    listModelsEndpoint: '/deployments'
-    getModelEndpoint: '/deployments/{deploymentName}'
-    deploymentProvider: 'AzureOpenAI'
-    inferenceAPIVersion: '2025-03-01-preview'
-    // apim connection doesn't support custom domain
+    apimName: apim.outputs.name
+    apimLoggerId: apim.outputs.loggerId
+    appInsightsInstrumentationKey: appInsightsInstrumentationKey
+    appInsightsResourceId: appInsightsId
+    resourceToken: resourceToken
+    gatewayAuthenticationType: 'ProjectManagedIdentity'
+    acceptedTenantIds: acceptedTenantIds
+    foundryInstances: foundryInstances
+    apimSku: 'Premiumv2'
   }
 }
 
-// Static-models connection — see comment in ai-gateway.bicep for the rationale
-// (Foundry portal requires PMI + non-empty customHeaders to display models).
-module aiGatewayConnectionStatic '../ai/connection-apim-gateway.bicep' = if (!connection_per_project && !empty(staticModels)) {
-  name: 'apim-connection-static'
+module foundry_connections '../ai/connections-apim-gateway.bicep' = {
+  name: 'apim-connections-for-foundry'
   params: {
-    aiFoundryName: aiFoundryName
-    connectionName: 'apim-${resourceToken}-static'
-    apimResourceId: apim.outputs.apimResourceId
-    apiName: apim.outputs.inferenceApiName
-    apimSubscriptionName: first(apim.outputs.subscriptions).name
-    isSharedToAll: true
-    staticModels: staticModels
-    inferenceAPIVersion: '2025-03-01-preview'
-    // apim connection doesn't support custom domain
+    aiFoundryName: foundryName
+    aiFoundryProjectNames: foundryProjectNames
+    resourceToken: resourceToken
+    gatewayAuthenticationType: 'ProjectManagedIdentity'
+    staticModels: common_ai_gateway_setup.outputs.staticModels
+    apimResourceId: apim.outputs.id
+    apimSubscriptionNames: map(subscriptions, s => s.name)
+    inferenceApiName: common_ai_gateway_setup.outputs.inferenceApiName
   }
 }
 
-module aiGatewayProjectConnectionStatic '../ai/connection-apim-gateway.bicep' = [
-  for projectName in aiFoundryProjectNames: if (connection_per_project && !empty(staticModels)) {
-    name: 'apim-connection-static-${projectName}'
+module apimHostnameUpdate 'apim-hostname-update.bicep' = if (!empty(hostnameConfigurations)) {
+  name: 'apim-hostname-update-deployment'
+  dependsOn: [
+    apimDns
+    apimCustomDns
+    common_ai_gateway_setup
+    foundry_connections
+  ]
+  params: {
+    tags: tags
+    location: location
+    resourceSuffix: resourceToken
+    apimSku: 'Premiumv2'
+    virtualNetworkType: 'Internal'
+    subnetResourceId: subnetResourceId
+    #disable-next-line BCP036
+    publicNetworkAccess: null
+    apimUserAssignedManagedIdentityResourceId: apimUserAssignedManagedIdentityResourceId
+    apimManagedIdentityType: 'SystemAssigned, UserAssigned'
+    apimPrincipalId: apim.outputs.principalId
+    hostnameConfigurations: hostnameConfigurations
+    keyVaultName: keyVaultName
+  }
+}
+
+// Grant APIM's managed identity Cognitive Services User on every backing
+// Foundry instance. Skip chained-APIM instances (isApim=true): they auth
+// inbound via JWT, not via RBAC.
+module apim_role_assignments '../iam/role-assignment-cognitiveServices.bicep' = [
+  for (instance, i) in foundryInstances: if (!(instance.?isApim ?? false)) {
+    name: 'apim-role-${i}-${resourceToken}'
+    scope: resourceGroup(split(instance.resourceId, '/')[2], split(instance.resourceId, '/')[4])
     params: {
-      aiFoundryName: aiFoundryName
-      aiFoundryProjectName: projectName
-      connectionName: 'apim-${resourceToken}-static-for-${projectName}'
-      apimResourceId: apim.outputs.apimResourceId
-      apiName: apim.outputs.inferenceApiName
-      apimSubscriptionName: first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).name
-      isSharedToAll: false
-      staticModels: staticModels
-      inferenceAPIVersion: '2025-03-01-preview'
-    // apim connection doesn't support custom domain
+      accountName: last(split(instance.resourceId, '/'))
+      principalId: apim.outputs.principalId
+      roleName: 'Cognitive Services User'
     }
   }
 ]
 
-module aiGatewayProjectConnectionDynamic '../ai/connection-apim-gateway.bicep' = [
-  for projectName in aiFoundryProjectNames: if (connection_per_project) {
-    name: 'apim-connection-dynamic-${projectName}'
-    params: {
-      aiFoundryName: aiFoundryName
-      aiFoundryProjectName: projectName
-      connectionName: 'apim-${resourceToken}-dynamic-for-${projectName}'
-      apimResourceId: apim.outputs.apimResourceId
-      apiName: apim.outputs.inferenceApiName
-      apimSubscriptionName: first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).name
-      isSharedToAll: false
-      listModelsEndpoint: '/deployments'
-      getModelEndpoint: '/deployments/{deploymentName}'
-      deploymentProvider: 'AzureOpenAI'
-      inferenceAPIVersion: '2025-03-01-preview'
-    // apim connection doesn't support custom domain
-    }
-  }
-]
-
-module public_mcps './public-mcps.bicep' = {
-  name: 'public-mcps-deployment'
-  params: {
-    apimServiceName: apim.outputs.apimName
-    aiFoundryName: aiFoundryName
-    apimAppInsightsLoggerId: apim.outputs.apimAppInsightsLoggerId
-  }
-}
-
-module modelGatewayConnectionStatic '../ai/connection-modelgateway-static.bicep' = [
-for projectName in aiFoundryProjectNames: if (connection_per_project && !empty(staticModels)) {
-  name: 'model-gateway-connection-static-${projectName}'
-  params: {
-    aiFoundryName: aiFoundryName
-    aiFoundryProjectName: projectName
-    connectionName: 'model-gateway-${resourceToken}-static-for-${projectName}'
-    apiKey: first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).key
-    isSharedToAll: false
-    gatewayName: 'apim'
-    staticModels: staticModels
-    inferenceAPIVersion: '2025-03-01-preview'
-    targetUrl: customDomain != null ? 'https://apim.${customDomain}/${apim.outputs.inferenceApiPath}' : apim.outputs.apiUrl
-    deploymentInPath: 'true'
-  }
-}]
-
-module modelGatewayConnectionDynamic '../ai/connection-modelgateway-dynamic.bicep' = [
-for projectName in aiFoundryProjectNames: if (connection_per_project && !empty(staticModels)) {
-  name: 'model-gateway-connection-dynamic-${projectName}'
-  params: {
-    aiFoundryName: aiFoundryName
-    connectionName: 'model-gateway-${resourceToken}-dynamic-for-${projectName}'
-    apiKey: first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).key
-    isSharedToAll: false
-    gatewayName: 'apim'
-    targetUrl: customDomain != null ? 'https://apim.${customDomain}/${apim.outputs.inferenceApiPath}' : apim.outputs.apiUrl
-    listModelsEndpoint: '/deployments'
-    getModelEndpoint: '/deployments/{deploymentName}'
-    deploymentProvider: 'AzureOpenAI'
-    inferenceAPIVersion: '2025-03-01-preview'
-    deploymentInPath: 'true'
-  }
-}]
-
-output customDomainSetupValid bool = custom_domain_setup_valid
-output apimResourceId string = apim.outputs.apimResourceId
-output apimName string = apim.outputs.apimName
-output apimGatewayUrl string = apim.outputs.apimGatewayUrl
-output apimPrincipalId string = apim.outputs.apimPrincipalId
-output apimAppInsightsLoggerId string = apim.outputs.apimAppInsightsLoggerId
+output apimResourceId string = apim.outputs.id
+output apimName string = apim.outputs.name
+output apimGatewayUrl string = apim.outputs.gatewayUrl
+output apimPrincipalId string = apim.outputs.principalId
+output apimAppInsightsLoggerId string = apim.outputs.appInsightsLoggerId

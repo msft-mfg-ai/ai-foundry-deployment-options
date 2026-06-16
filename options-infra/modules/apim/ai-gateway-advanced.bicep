@@ -306,6 +306,7 @@ module inferenceApi 'v2/inference-api.bicep' = {
     aiServicesConfig: []
     inferenceAPIType: 'AzureOpenAI'
     inferenceAPIPath: 'inference'
+    requireSubscriptionKey: false
     configureCircuitBreaker: false
     resourceSuffix: resourceToken
     enableModelDiscovery: true

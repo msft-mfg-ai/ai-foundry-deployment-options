@@ -18,9 +18,6 @@ param apimPublicEnabled bool = false
 @description('Existing Foundry / AI Services instances to front with the gateway. Discovered by the `preprovision-list-foundry-models` hook (FOUNDRY_INSTANCES_JSON) from EXISTING_FOUNDRY_RESOURCE_IDS / OPENAI_RESOURCE_ID. At least one instance is required.')
 param foundryInstances foundryInstanceType[]
 
-@description('Tenant IDs whose Entra ID tokens the gateway should accept on inbound calls. Empty (default) = no inbound JWT validation — callers reach the gateway anonymously and APIM\'s managed identity authenticates to Foundry. When set, the inbound policy requires a valid bearer token with `aud=https://cognitiveservices.azure.com` issued by one of these tenants.')
-param acceptedTenantIds string[] = []
-
 var tags = {
   'created-by': 'option-ai-gateway'
   'hidden-title': 'Foundry - APIM v2 Standard with PE'
@@ -163,6 +160,8 @@ module identities '../modules/iam/identity.bicep' = [
   }
 ]
 
+var projectNames = [for i in range(1, projectsCount): 'ai-project-${resourceToken}-${i}']
+
 @batchSize(1)
 module projects '../modules/ai/ai-project-with-caphost.bicep' = [
   for i in range(1, projectsCount): {
@@ -171,6 +170,7 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
       tags: tags
       location: location
       foundryName: foundry.outputs.FOUNDRY_NAME
+      project_name: projectNames[i - 1]
       project_description: 'AI Project ${i} ${resourceToken}'
       display_name: 'AI Project ${i} ${resourceToken}'
       projectId: i
@@ -182,46 +182,24 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
   }
 ]
 
-module ai_gateway '../modules/apim/per-model-gateway.bicep' = {
-  name: 'ai-gateway-deployment-${resourceToken}'
+module ai_gateway_pe '../modules/apim/ai-gateway-pe.bicep' = {
+  name: 'ai_gateway_pe-deployment-${resourceToken}'
   params: {
     tags: tags
     location: location
-    resourceToken: resourceToken
-    aiFoundryName: foundry.outputs.FOUNDRY_NAME
-    aiFoundryProjectNames: [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
-    logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
-    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
     appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
-    gatewayAuthenticationType: 'ProjectManagedIdentity'
+    appInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    resourceToken: resourceToken
     foundryInstances: foundryInstances
-    staticModels: staticModels
-    acceptedTenantIds: acceptedTenantIds
-    // External VNet injection + private endpoint. publicNetworkAccess=Disabled
-    // when apimPublicEnabled=false triggers the post-PE flip step inside
-    // per-model-gateway.bicep.
-    apimSku: 'Standardv2'
-    virtualNetworkType: 'External'
+    foundryProjectNames: projectNames
+    foundryName: foundry.outputs.FOUNDRY_NAME
     subnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.apimv2Subnet.resourceId
     peSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
-    publicNetworkAccess: apimPublicEnabled ? 'Enabled' : 'Disabled'
+    apimPublicEnabled: apimPublicEnabled
+    acceptedTenantIds: [tenant().tenantId]
   }
 }
-
-// Grant APIM's managed identity Cognitive Services User on every backing
-// Foundry instance. Skip chained-APIM instances (isApim=true): they auth
-// inbound via JWT, not via RBAC.
-module apim_role_assignments '../modules/iam/role-assignment-cognitiveServices.bicep' = [
-  for (instance, i) in foundryInstances: if (!(instance.?isApim ?? false)) {
-    name: 'apim-role-${i}-${resourceToken}'
-    scope: resourceGroup(split(instance.resourceId, '/')[2], split(instance.resourceId, '/')[4])
-    params: {
-      accountName: last(split(instance.resourceId, '/'))
-      principalId: ai_gateway.outputs.apimPrincipalId
-      roleName: 'Cognitive Services User'
-    }
-  }
-]
 
 module dashboard_setup '../modules/dashboard/dashboard-setup.bicep' = {
   name: 'dashboard-setup-deployment-${resourceToken}'
@@ -253,9 +231,9 @@ module mcp_apis '../modules/apps/apps-private-link.bicep' = {
     location: location
     vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
     peSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
-    apimServiceName: ai_gateway.outputs.apimName
-    apimGatewayUrl: ai_gateway.outputs.apimGatewayUrl
-    apimAppInsightsLoggerId: ai_gateway.outputs.apimAppInsightsLoggerId
+    apimServiceName: ai_gateway_pe.outputs.apimName
+    apimGatewayUrl: ai_gateway_pe.outputs.apimGatewayUrl
+    apimAppInsightsLoggerId: ai_gateway_pe.outputs.apimAppInsightsLoggerId
     aiFoundryName: foundry.outputs.FOUNDRY_NAME
     externalApis: apiServices
   }
