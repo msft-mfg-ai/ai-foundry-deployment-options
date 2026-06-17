@@ -244,3 +244,5 @@ output project_connection_strings string[] = [
 ]
 output project_names string[] = [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
 output config_validation_result bool = valid_config
+output APIM_GATEWAY_URL string = ai_gateway_pe.outputs.apimGatewayUrl
+output APIM_REALTIME_URL string = ai_gateway_pe.outputs.realtimeUrl

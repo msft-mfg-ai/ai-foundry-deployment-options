@@ -133,3 +133,10 @@ output apimName string = ai_gateway.outputs.name
 output apimGatewayUrl string = ai_gateway.outputs.gatewayUrl
 output apimPrincipalId string = ai_gateway.outputs.principalId
 output apimAppInsightsLoggerId string = ai_gateway.outputs.appInsightsLoggerId
+
+@description('Realtime WebSocket API path (e.g. `inference/openai/realtime`). Empty when no realtime model deployment is fronted by the gateway.')
+output realtimeApiPath string = common_ai_gateway_setup.outputs.realtimeApiPath
+@description('Full wss URL of the realtime API, or empty when no realtime model is available.')
+output realtimeUrl string = empty(common_ai_gateway_setup.outputs.realtimeApiPath)
+  ? ''
+  : '${replace(ai_gateway.outputs.gatewayUrl, 'https:', 'wss:')}/${common_ai_gateway_setup.outputs.realtimeApiPath}'

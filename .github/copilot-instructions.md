@@ -52,7 +52,9 @@ CI uses a standalone `bicep` binary (see `.github/workflows/bicep-validate-reusa
 
 ## Running Python / Agent Scripts
 
-Each agent directory (`agents/`, `agents_v2/`, `agents_v2_maf/`, `subscription-manager/`) is an **isolated Python workspace** — it has its own `pyproject.toml`, `uv.lock`, and `.venv`. They are excluded from the root `pyproject.toml` workspace.
+This repo uses **`uv`** for all Python dependency management — **never** create a `requirements.txt` or use `pip install`. Declare dependencies in a `pyproject.toml` and run with `uv sync` / `uv run`.
+
+Each Python directory (`agents/`, `agents_v2/`, `agents_v2_maf/`, `subscription-manager/`, and per-option `tests/` folders) is an **isolated Python workspace** — it has its own `pyproject.toml`, `uv.lock`, and `.venv`. They are excluded from the root `pyproject.toml` workspace.
 
 ```bash
 # Per-directory setup (do this once per directory)

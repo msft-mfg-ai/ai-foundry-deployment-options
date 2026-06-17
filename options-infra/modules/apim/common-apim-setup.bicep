@@ -1,5 +1,6 @@
 import { foundryInstanceType } from 'advanced/types.bicep'
 import { ModelType } from '../ai/connection-apim-gateway.bicep'
+import { realtimeRouteType } from 'v2/realtime-ws-api.bicep'
 
 param apimName string
 param apimLoggerId string
@@ -76,6 +77,24 @@ var staticModels ModelType[] = [
     }
   }
 ]
+
+// -- Realtime (WebSocket) routes ---------------------------------------------
+// Realtime deployments (modelName contains "realtime") need a dedicated
+// WebSocket API — HTTP per-model pools can't carry a wss handshake. Build one
+// route per (instance, realtime deployment) mapping the deployment name to the
+// backing instance's wss base URL. The realtime API/policy is only deployed
+// when at least one realtime deployment exists.
+var realtimeRoutes realtimeRouteType[] = flatten(map(
+  foundryInstances,
+  inst => map(
+    filter(inst.deployments, d => contains(toLower(d.modelName), 'realtime')),
+    d => {
+      model: d.modelName
+      wssBaseUrl: '${replace(inst.endpoint, 'https:', 'wss:')}${endsWith(inst.endpoint, '/') ? '' : '/'}openai/realtime'
+    }
+  )
+))
+var hasRealtime = !empty(realtimeRoutes)
 
 // ============================================================================
 // -- Policy fragments (shared by inbound policies of every inference API)
@@ -172,6 +191,29 @@ module inferenceApiSpec 'v2/inference-api.bicep' = {
   }
 }
 
+// ============================================================================
+// -- Realtime (WebSocket) API — only when realtime deployments exist
+// ============================================================================
+// Dedicated wss API at `inference/openai/realtime`. WebSocket APIs can't use
+// backend pools, so the onHandshake policy routes per-deployment to a concrete
+// wss backend (advanced/multi-foundry-backends is bypassed here). Reuses the
+// same inbound JWT validation as the HTTP APIs. Depends on inferenceApi to
+// avoid the service-level `inference` tag race condition.
+module realtimeApi 'v2/realtime-ws-api.bicep' = if (hasRealtime) {
+  name: 'realtime-ws-api-deployment'
+  dependsOn: [inferenceApi]
+  params: {
+    apiManagementName: apimName
+    apimLoggerId: apimLoggerId
+    inferenceAPIPath: 'inference'
+    realtimeRoutes: realtimeRoutes
+    jwtValidationXml: jwtValidationXml
+    requireSubscriptionKey: gatewayAuthenticationType != 'ProjectManagedIdentity'
+    appInsightsInstrumentationKey: appInsightsInstrumentationKey
+    appInsightsId: appInsightsResourceId
+  }
+}
+
 // OpenAI v1 API has more than 100 Operations and requires Premium or Standardv2 SKU
 // https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-subscription-service-limits?toc=%2Fazure%2Fapi-management%2Ftoc.json&bc=%2Fazure%2Fapi-management%2Fbreadcrumb%2Ftoc.json#limits---api-management-v2-tiers
 // Depends on inference_api to avoid race condition creating duplicate APIM service-level tags
@@ -251,3 +293,5 @@ output backendNames array = foundryBackends.outputs.backendNames
 output poolNames array = foundryBackends.outputs.poolNames
 output inferenceApiName string = passthroughApiName
 output staticModels ModelType[] = staticModels
+output hasRealtime bool = hasRealtime
+output realtimeApiPath string = hasRealtime ? realtimeApi!.outputs.apiPath : ''
