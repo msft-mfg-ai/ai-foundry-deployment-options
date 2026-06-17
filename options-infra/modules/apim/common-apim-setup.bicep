@@ -3,7 +3,6 @@ import { ModelType } from '../ai/connection-apim-gateway.bicep'
 
 param apimName string
 param apimLoggerId string
-param resourceToken string
 @allowed([
   'Consumption'
   'Developer'
@@ -14,6 +13,7 @@ param resourceToken string
   'Premium'
   'Premiumv2'
 ])
+@description('Apim SKU - used to determine if full OpenAI spec can be deployed (requires Standardv2 or Premium)')
 param apimSku string = 'Basicv2'
 
 @allowed(['ApiKey', 'ProjectManagedIdentity'])
@@ -25,7 +25,9 @@ param acceptedTenantIds string[] = []
 @description('Existing Foundry/AI Services instances to register as backends.')
 param foundryInstances foundryInstanceType[]
 
+@description('Application Insights instrumentation key for logging.')
 param appInsightsInstrumentationKey string = ''
+@description('Application Insights resource ID for logging.')
 param appInsightsResourceId string = ''
 
 // -- Constants ----------------------------------------------------------------
@@ -74,10 +76,6 @@ var staticModels ModelType[] = [
     }
   }
 ]
-
-resource apimService 'Microsoft.ApiManagement/service@2024-06-01-preview' existing = {
-  name: apimName
-}
 
 // ============================================================================
 // -- Policy fragments (shared by inbound policies of every inference API)
@@ -138,7 +136,6 @@ module inferenceApi 'v2/inference-api.bicep' = {
     inferenceAPIPath: 'inference'
     inferenceAPIName: passthroughApiName
     configureCircuitBreaker: false
-    resourceSuffix: resourceToken
     enableModelDiscovery: false
     requireSubscriptionKey: gatewayAuthenticationType != 'ProjectManagedIdentity'
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
@@ -168,7 +165,6 @@ module inferenceApiSpec 'v2/inference-api.bicep' = {
     inferenceAPIDisplayName: 'Inference API (Azure OpenAI spec)'
     inferenceAPIDescription: 'AzureOpenAI-spec inference API — same per-model routing as the passthrough, with portal test console and per-operation definitions.'
     configureCircuitBreaker: false
-    resourceSuffix: resourceToken
     enableModelDiscovery: false
     requireSubscriptionKey: gatewayAuthenticationType != 'ProjectManagedIdentity'
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
@@ -193,7 +189,6 @@ module openAiv2Api 'v2/inference-api.bicep' = if  (apimSku == 'Premium' || apimS
     inferenceAPIDisplayName: 'OpenAI API v1'
     inferenceAPIName: 'openai-api-v1'
     configureCircuitBreaker: true
-    resourceSuffix: resourceToken
     enableModelDiscovery: true
     requireSubscriptionKey: gatewayAuthenticationType != 'ProjectManagedIdentity'
     appInsightsInstrumentationKey: appInsightsInstrumentationKey

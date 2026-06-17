@@ -92,7 +92,7 @@ module apimService 'v2/apim.bicep' = {
   params: {
     location: location
     tags: tags
-    resourceSuffix: resourceToken
+    apiManagementName: 'apim-ai-${resourceToken}'
     apimSku: apimSku
     lawId: logAnalyticsWorkspaceResourceId
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
@@ -308,7 +308,6 @@ module inferenceApi 'v2/inference-api.bicep' = {
     inferenceAPIPath: 'inference'
     requireSubscriptionKey: false
     configureCircuitBreaker: false
-    resourceSuffix: resourceToken
     enableModelDiscovery: true
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
     appInsightsId: appInsightsResourceId

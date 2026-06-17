@@ -48,13 +48,11 @@ module apim 'apim.bicep' = {
   params: {
     tags: tags
     location: location
+    apiManagementName: 'apim-ai-${resourceToken}'
     logAnalyticsWorkspaceId: logAnalyticsWorkspaceId
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
     appInsightsId: appInsightsId
-    resourceSuffix: resourceToken
     aiServicesConfig: [] // Anthropic-only: no OpenAI backends
-    anthropicServicesConfig: anthropicServicesConfig
-    anthropicApiKey: anthropicApiKey
     apimSku: 'Standardv2'
     virtualNetworkType: 'External'
     subnetResourceId: subnetResourceId
@@ -83,10 +81,8 @@ module apim_update 'apim.bicep' = if (!apimPublicEnabled) {
     logAnalyticsWorkspaceId: logAnalyticsWorkspaceId
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
     appInsightsId: appInsightsId
-    resourceSuffix: resourceToken
+    apiManagementName: 'apim-ai-${resourceToken}'
     aiServicesConfig: []
-    anthropicServicesConfig: anthropicServicesConfig
-    anthropicApiKey: anthropicApiKey
     apimSku: 'Standardv2'
     virtualNetworkType: 'External'
     subnetResourceId: subnetResourceId
@@ -94,6 +90,23 @@ module apim_update 'apim.bicep' = if (!apimPublicEnabled) {
     subscriptions: subscriptions
   }
   dependsOn: [apim_pe]
+}
+
+// Layer the Anthropic pass-through inference API onto the created APIM.
+// Extracted out of apim.bicep so anthropic-only settings stay isolated to this
+// sample. Runs after apim_update so the public-access toggle has settled; the
+// caller-identity fragment it depends on is created during the apim pass.
+module anthropic_inference_api 'anthropic-inference-api.bicep' = {
+  name: 'anthropic-inference-api-deployment'
+  params: {
+    apiManagementName: apim.outputs.apimName
+    apimLoggerId: apim.outputs.apimLoggerId
+    anthropicServicesConfig: anthropicServicesConfig
+    anthropicApiKey: anthropicApiKey
+    appInsightsInstrumentationKey: appInsightsInstrumentationKey
+    appInsightsId: appInsightsId
+  }
+  dependsOn: [apim_update]
 }
 
 // TODO: Temporary hack for APIM static connection
@@ -108,7 +121,7 @@ module aiGatewayAnthropicConnectionStatic '../ai/connection-apim-gateway.bicep' 
     aiFoundryName: aiFoundryName
     connectionName: 'apim-${resourceToken}-anthropic-static'
     apimResourceId: apim.outputs.apimResourceId
-    apiName: apim.outputs.anthropicApiName
+    apiName: anthropic_inference_api.outputs.anthropicApiName
     apimSubscriptionName: first(apim.outputs.subscriptions).name
     isSharedToAll: true
     staticModels: anthropicStaticModels
@@ -126,7 +139,7 @@ module aiGatewayAnthropicProjectConnectionStatic '../ai/connection-apim-gateway.
       aiFoundryProjectName: projectName
       connectionName: 'apim-${resourceToken}-anthropic-static-for-${projectName}'
       apimResourceId: apim.outputs.apimResourceId
-      apiName: apim.outputs.anthropicApiName
+      apiName: anthropic_inference_api.outputs.anthropicApiName
       apimSubscriptionName: first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).name
       isSharedToAll: false
       staticModels: anthropicStaticModels

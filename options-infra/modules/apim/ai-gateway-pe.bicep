@@ -42,7 +42,6 @@ module ai_gateway '../apim/v2/apim.bicep' = {
     apiManagementName: 'apim-ai-${resourceToken}'
     tags: tags
     location: location
-    resourceSuffix: resourceToken
     apimSku: 'Standardv2'
     lawId: logAnalyticsWorkspaceId
     appInsightsId: appInsightsId
@@ -72,7 +71,6 @@ module common_ai_gateway_setup '../apim/common-apim-setup.bicep' = {
     apimLoggerId: ai_gateway.outputs.loggerId
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
     appInsightsResourceId: appInsightsId
-    resourceToken: resourceToken
     gatewayAuthenticationType: 'ProjectManagedIdentity'
     acceptedTenantIds: acceptedTenantIds
     foundryInstances: foundryInstances

@@ -9,11 +9,8 @@
 //    PARAMETERS
 // ------------------
 
-@description('The suffix to append to the API Management instance name. Defaults to a unique string based on subscription and resource group IDs.')
-param resourceSuffix string = uniqueString(subscription().id, resourceGroup().id)
-
 @description('The name of the API Management instance. Defaults to "apim-<resourceSuffix>".')
-param apiManagementName string = 'apim-${resourceSuffix}'
+param apiManagementName string
 
 @description('The location of the API Management instance. Defaults to the resource group location.')
 param location string = resourceGroup().location
