@@ -103,7 +103,6 @@ module apimServiceUpdate '../apim/v2/apim.bicep' = if (!apimPublicEnabled) {
     apiManagementName: 'apim-ai-${resourceToken}'
     location: location
     tags: tags
-    resourceSuffix: resourceToken
     apimSku: 'Standardv2'
     lawId: logAnalyticsWorkspaceId
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
