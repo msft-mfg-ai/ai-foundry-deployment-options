@@ -1,6 +1,6 @@
 # AI Gateway with JWT Auth + Access Contracts + Priority Routing
 
-This deployment creates the Komatsu-aligned **Azure API Management (APIM)** AI Gateway architecture. A single canonical inference policy, [`policy-per-model.xml`](../modules/apim/policy-per-model.xml), is shared by the passthrough `inference` API, spec-backed `inference-api-azure` API, conditional `openai-api-v1` API (Premium/StandardV2 SKUs), and static-discovery operations. Client applications are identified by JWT claims, matched to blob-backed **access contracts**, and subject to **per-model TPM quotas**, **monthly token budgets**, and **2-tier priority routing** (P1 → mixed PTU+PAYG pool with circuit breaker failover, P2 → PAYG-only with quota enforcement).
+This deployment creates the unified **Azure API Management (APIM)** AI Gateway architecture. A single canonical inference policy, [`policy-per-model.xml`](../modules/apim/policy-per-model.xml), is shared by the passthrough `inference` API, spec-backed `inference-api-azure` API, conditional `openai-api-v1` API (Premium/StandardV2 SKUs), and static-discovery operations. Client applications are identified by JWT claims, matched to blob-backed **access contracts**, and subject to **per-model TPM quotas**, **monthly token budgets**, and **2-tier priority routing** (P1 → mixed PTU+PAYG pool with circuit breaker failover, P2 → PAYG-only with quota enforcement).
 
 ## Features
 

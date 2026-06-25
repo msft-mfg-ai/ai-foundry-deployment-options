@@ -85,7 +85,7 @@ var staticModels ModelType[] = [
 // Realtime deployments need a dedicated WebSocket API — HTTP per-model pools
 // can't carry a wss handshake. Build one route per (instance, realtime
 // deployment) mapping the deployment name to a concrete APIM backend and its
-// backing instance's wss base URL. Match Komatsu's model-name criterion
+// backing instance's wss base URL. Match on model-name criterion
 // (gpt-* + realtime) while also honoring the captured Realtime model format.
 var realtimeRoutes realtimeRouteType[] = flatten(map(
   foundryInstances,

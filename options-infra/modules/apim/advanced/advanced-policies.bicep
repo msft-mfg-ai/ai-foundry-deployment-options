@@ -2,7 +2,7 @@
 // Advanced Config Operations
 // ============================================================================
 // Adds config viewer/update operations to an existing APIM inference API.
-// The endpoints use the Komatsu AI Gateway path shape while attaching to this
+// The endpoints use the unified AI Gateway path shape while attaching to this
 // repo's inference API resource.
 // ============================================================================
 

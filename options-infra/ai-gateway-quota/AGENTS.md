@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This project implements the Komatsu-aligned **APIM AI Gateway** for Azure AI Foundry. It provides:
+This project implements the unified **APIM AI Gateway** for Azure AI Foundry. It provides:
 
 - **Single policy stack**: `options-infra/modules/apim/policy-per-model.xml` is the canonical inference policy for the passthrough `inference` API, spec-backed `inference-api-azure` API, conditional `openai-api-v1` API (Premium/StandardV2 SKUs), and static-discovery operations.
 - **Access contract enforcement**: Each caller has a blob-backed contract defining TPM, monthly token quota, priority, and allowed models. Contracts are wired through `caller-identity-fragment.bicep`'s `contractsBlobUrl` parameter.

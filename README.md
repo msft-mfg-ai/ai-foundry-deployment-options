@@ -194,7 +194,7 @@ APIM gateway samples are aligned on a unified per-model architecture: `policy-pe
 | [**ai-gateway-premium**](./options-infra/ai-gateway-premium/) | 💎 APIM Premium v2 with internal VNet injection | Resource Group | Unified per-model stack, custom domain, private networking |
 | [**ai-gateway-internal**](./options-infra/ai-gateway-internal/) | 🔒 Internal APIM proxying to external Azure OpenAI / Foundry | Resource Group | Unified per-model stack, internal VNet mode |
 | [**ai-gateway-pe**](./options-infra/ai-gateway-pe/) | 🔐 APIM Standard v2 with private endpoint | Resource Group | Unified per-model stack, private endpoints to backends |
-| [**ai-gateway-quota**](./options-infra/ai-gateway-quota/) | 📊 Komatsu-aligned APIM gateway with contracts, quotas, and PTU/PAYG priority routing | Resource Group | Blob-backed contracts, policy fragments, dashboard, pytest suite |
+| [**ai-gateway-quota**](./options-infra/ai-gateway-quota/) | 📊 Unified APIM gateway with contracts, quotas, and PTU/PAYG priority routing | Resource Group | Blob-backed contracts, policy fragments, dashboard, pytest suite |
 | [**ai-gateway-anthropic**](./options-infra/ai-gateway-anthropic/) | 🟣 Anthropic/Claude API-key gateway sample | Resource Group | Legacy/specialized cross-tenant API-key pattern; unified stack supports Anthropic via discovery |
 | [**ai-gateway-openrouter**](./options-infra/ai-gateway-openrouter/) | 🌍 Public Foundry with OpenRouter as external model gateway | Resource Group | Non-APIM external gateway connection |
 | [**ai-gateway-litellm**](./options-infra/ai-gateway-litellm/) | ⚡ LiteLLM on ACA + PostgreSQL with Application Gateway and private endpoints | Resource Group | Non-APIM LiteLLM Container Apps deployment |

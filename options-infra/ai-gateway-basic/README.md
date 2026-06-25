@@ -5,7 +5,7 @@ This deployment creates a Foundry Basic environment with an **external Azure API
 Built on the shared [`modules/apim/per-model-gateway.bicep`](../modules/apim/per-model-gateway.bicep) orchestrator — every backing `(instance, model, location)` gets its own APIM backend and model-scoped pool membership, and a reusable [`per-model-routing`](../modules/apim/per-model-routing-fragment.xml) policy fragment dispatches each inbound request to the right pool.
 
 
-> **Unified architecture note:** This sample uses the shared Komatsu-aligned APIM stack in open mode: `policy-per-model.xml` is applied to the passthrough `inference` API, spec-backed `inference-api-azure` API, and (on Premium/StandardV2-capable SKUs) `openai-api-v1`. The `caller-identity` fragment emits observability headers without contract enforcement, while `per-model-routing` sends traffic to the PAYG-only pool because no contracts set `priority == 1`.
+> **Unified architecture note:** This sample uses the shared APIM stack in open mode: `policy-per-model.xml` is applied to the passthrough `inference` API, spec-backed `inference-api-azure` API, and (on Premium/StandardV2-capable SKUs) `openai-api-v1`. The `caller-identity` fragment emits observability headers without contract enforcement, while `per-model-routing` sends traffic to the PAYG-only pool because no contracts set `priority == 1`.
 
 ## Architecture Overview
 

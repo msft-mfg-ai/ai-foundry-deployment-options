@@ -110,7 +110,7 @@ val=$(azd env get-value FOO 2>/dev/null) || val=""
 
 ## APIM Module Architecture
 
-The Komatsu-aligned AI Gateway stack uses one APIM service with shared fragments, per-model backends, and up to four API surfaces:
+The unified AI Gateway stack uses one APIM service with shared fragments, per-model backends, and up to four API surfaces:
 
 ```
 <sample orchestrator>.bicep

@@ -1,6 +1,6 @@
 # ai-gateway-quota pytest suite
 
-Live integration tests ported from the Komatsu AI Gateway suite. They exercise chat, streaming, TTS, Whisper, discovery, contract/quota headers, config endpoints, OpenAI-compatible surfaces, and retry/failover behavior against a deployed `ai-gateway-quota` APIM instance.
+Live integration tests for the unified AI Gateway suite. They exercise chat, streaming, TTS, Whisper, discovery, contract/quota headers, config endpoints, OpenAI-compatible surfaces, and retry/failover behavior against a deployed `ai-gateway-quota` APIM instance.
 
 ## Run
 
