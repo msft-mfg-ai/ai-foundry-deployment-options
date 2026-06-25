@@ -195,9 +195,11 @@ APIM gateway samples are aligned on a unified per-model architecture: `policy-pe
 | [**ai-gateway-internal**](./options-infra/ai-gateway-internal/) | 🔒 Internal APIM proxying to external Azure OpenAI / Foundry | Resource Group | Unified per-model stack, internal VNet mode |
 | [**ai-gateway-pe**](./options-infra/ai-gateway-pe/) | 🔐 APIM Standard v2 with private endpoint | Resource Group | Unified per-model stack, private endpoints to backends |
 | [**ai-gateway-quota**](./options-infra/ai-gateway-quota/) | 📊 Unified APIM gateway with contracts, quotas, and PTU/PAYG priority routing | Resource Group | Blob-backed contracts, policy fragments, dashboard, pytest suite |
-| [**ai-gateway-anthropic**](./options-infra/ai-gateway-anthropic/) | 🟣 Anthropic/Claude API-key gateway sample | Resource Group | Legacy/specialized cross-tenant API-key pattern; unified stack supports Anthropic via discovery |
 | [**ai-gateway-openrouter**](./options-infra/ai-gateway-openrouter/) | 🌍 Public Foundry with OpenRouter as external model gateway | Resource Group | Non-APIM external gateway connection |
 | [**ai-gateway-litellm**](./options-infra/ai-gateway-litellm/) | ⚡ LiteLLM on ACA + PostgreSQL with Application Gateway and private endpoints | Resource Group | Non-APIM LiteLLM Container Apps deployment |
+
+> [!NOTE]
+> **Anthropic / Claude models** are supported by every APIM sample above via the shared per-model stack. The AZD preprovision hook discovers Anthropic deployments alongside OpenAI ones, `multi-foundry-backends.bicep` creates a dedicated `/anthropic` backend per Claude deployment (with `anthropic-version` header injection in `policy-per-model.xml`), and `connections-apim-gateway.bicep` splits the Foundry connection by `model.format` so each project gets one OpenAI connection and one Anthropic connection. No dedicated `ai-gateway-anthropic` sample is needed.
 
 > [!NOTE]
 > AI Gateway (APIM) integration with Azure AI Foundry is expected to enter **public preview on February 13, 2026**.
