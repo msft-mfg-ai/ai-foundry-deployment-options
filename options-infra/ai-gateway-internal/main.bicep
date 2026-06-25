@@ -8,7 +8,6 @@ targetScope = 'resourceGroup'
 
 import { apiType } from '../modules/apps/apps-private-link.bicep'
 import { foundryInstanceType } from '../modules/apim/advanced/types.bicep'
-import { ModelType } from '../modules/ai/connection-apim-gateway.bicep'
 
 param location string = resourceGroup().location
 param projectsCount int = 3
@@ -32,27 +31,6 @@ var tags = {
 }
 
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
-
-// Dedupe model deployments across all instances → ModelType[] for the Foundry
-// connection's portal model picker.
-var allDeployments = flatten(map(foundryInstances, inst => inst.deployments))
-var dedupedDeployments = reduce(
-  allDeployments,
-  [],
-  (acc, d) => contains(map(acc, x => x.modelName), d.modelName) ? acc : concat(acc, [d])
-)
-var staticModels ModelType[] = [
-  for d in dedupedDeployments: {
-    name: d.modelName
-    properties: {
-      model: {
-        name: d.modelName
-        version: d.?modelVersion ?? '2025-01-01-preview'
-        format: d.?modelFormat ?? 'OpenAI'
-      }
-    }
-  }
-]
 
 module foundry_identity '../modules/iam/identity.bicep' = {
   name: 'foundry-identity-deployment'
@@ -206,13 +184,14 @@ module ai_gateway '../modules/apim/ai-gateway-internal.bicep' = {
   }
 }
 
-module dashboard_setup '../modules/dashboard/dashboard-setup.bicep' = {
-  name: 'dashboard-setup-deployment-${resourceToken}'
+module dashboard '../modules/dashboard/dashboard.bicep' = {
+  name: 'dashboard-deployment-${resourceToken}'
   params: {
     location: location
-    applicationInsightsName: logAnalytics.outputs.APPLICATION_INSIGHTS_NAME
-    logAnalyticsWorkspaceName: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_NAME
     dashboardDisplayName: 'APIM Token Usage Dashboard for ${resourceToken}'
+    applicationInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    applicationInsightsName: logAnalytics.outputs.APPLICATION_INSIGHTS_NAME
+    logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
   }
 }
 

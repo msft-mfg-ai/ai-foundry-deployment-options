@@ -187,7 +187,7 @@ var subscriptionKey = !empty(apimSubscriptionName)
 // For APIs that previously relied on `subscriptionRequired=true` + the
 // customHeaders.api-key for caller auth (e.g. anthropic-api with no JWT
 // validation), set `subscriptionRequired=false` on the API and rely on the
-// JWT validation policy instead — see anthropic-policy.xml / policy_jwt.xml.
+// JWT validation policy instead — see policy-per-model.xml / policy_jwt.xml.
 var subscriptionKeyHeader = {
   customHeaders: string({ 'x-ms-foundry-models': 'byom' })
 }

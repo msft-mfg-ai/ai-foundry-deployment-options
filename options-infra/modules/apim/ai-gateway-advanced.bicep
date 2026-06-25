@@ -10,7 +10,7 @@
 //   - Per-project Foundry connections (identity-based, optional)
 //
 // Uses: v2/apim.bicep (APIM service), v2/inference-api.bicep (inference API)
-// Adds: advanced/contract-storage, advanced/multi-foundry-backends, priority policy
+// Adds: advanced/contract-storage, advanced/multi-foundry-backends, shared fragments/policies
 // ============================================================================
 
 import { ModelType } from '../ai/connection-apim-gateway.bicep'
@@ -50,8 +50,11 @@ param eventHubNamespaceName string = ''
 @description('Event Hub name for quota events')
 param eventHubName string = ''
 
-@description('Store contracts in Azure Blob Storage (true) or APIM Named Value (false). Named Value has a 4096-char limit — use Blob Storage for larger contract sets.')
+@description('Store contracts in Azure Blob Storage. Advanced config update endpoints require blob storage; false is no longer supported by this orchestrator.')
 param useStorageAccount bool = true
+
+@description('Tenant IDs whose Entra ID tokens are accepted as inbound auth. Defaults to the current subscription tenant. The first tenant is also used by the access-contract caller fragment.')
+param acceptedTenantIds string[] = []
 
 // -- Foundry Connection Parameters (optional) ---------------------------------
 
@@ -66,8 +69,27 @@ param staticModels ModelType[] = []
 
 // -- Derived ------------------------------------------------------------------
 
+var apiManagementName = 'apim-ai-${resourceToken}'
 var createFoundryConnections = !empty(aiFoundryName)
 var connectionPerProject = createFoundryConnections && !empty(aiFoundryProjectNames)
+var validStorageMode = useStorageAccount ? true : fail('ai-gateway-advanced.bicep now requires useStorageAccount=true because advanced config endpoints read and update the contracts blob.')
+var effectiveAcceptedTenantIds = empty(acceptedTenantIds) ? [tenant().tenantId] : acceptedTenantIds
+var acceptedTenantId = first(effectiveAcceptedTenantIds)
+
+// Replaces the `{JWT_VALIDATION}` token in policy-per-model.xml. Each accepted
+// tenant contributes BOTH the v1 (`sts.windows.net`) and v2
+// (`login.microsoftonline.com/.../v2.0`) issuer URLs since Entra tokens can
+// carry either depending on how the caller acquired them.
+var issuersXml = join(
+  map(
+    effectiveAcceptedTenantIds,
+    tid => '<issuer>https://sts.windows.net/${tid}/</issuer>\n<issuer>https://login.microsoftonline.com/${tid}/v2.0</issuer>'
+  ),
+  ''
+)
+#disable-next-line no-hardcoded-env-urls
+var jwtValidationXml = '<validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized"><openid-config url="https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration" /><audiences><audience>https://cognitiveservices.azure.com</audience><audience>https://cognitiveservices.azure.com/</audience></audiences><issuers>${issuersXml}</issuers></validate-jwt>'
+var policyPerModelXml = replace(loadTextContent('policy-per-model.xml'), '{JWT_VALIDATION}', jwtValidationXml)
 
 // Subscriptions are only needed for Foundry connections
 var subscriptions = connectionPerProject
@@ -92,7 +114,7 @@ module apimService 'v2/apim.bicep' = {
   params: {
     location: location
     tags: tags
-    apiManagementName: 'apim-ai-${resourceToken}'
+    apiManagementName: apiManagementName
     apimSku: apimSku
     lawId: logAnalyticsWorkspaceResourceId
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
@@ -108,14 +130,15 @@ module foundryBackends 'advanced/multi-foundry-backends.bicep' = {
   name: 'foundry-backend-pools'
   dependsOn: [apimService]
   params: {
-    apimServiceName: apimService.outputs.name
+    apimServiceName: apiManagementName
+    apimLocation: location
     foundryInstances: foundryInstances
     configureCircuitBreaker: true
   }
 }
 
 // ============================================================================
-// -- Contract Compilation (shared by both storage modes)
+// -- Contract Compilation (stored in Blob)
 // ============================================================================
 // Two structures:
 //   1. "contracts": { contractName → config } — the contract definitions
@@ -168,7 +191,7 @@ var contractMapJson = string(contractMap)
 // ============================================================================
 // -- Contract Config Storage (Blob) — when useStorageAccount is true
 // ============================================================================
-module contractStorage 'advanced/contract-storage.bicep' = if (useStorageAccount) {
+module contractStorage 'advanced/contract-storage.bicep' = if (validStorageMode) {
   name: 'contract-storage'
   params: {
     location: location
@@ -180,21 +203,8 @@ module contractStorage 'advanced/contract-storage.bicep' = if (useStorageAccount
 }
 
 // ============================================================================
-// -- Contract Config Named Value — when useStorageAccount is false
-// ============================================================================
-module contractNamedValue 'advanced/contract-named-value.bicep' = if (!useStorageAccount) {
-  name: 'contract-named-value'
-  dependsOn: [apimService]
-  params: {
-    apimServiceName: apimService.outputs.name
-    contractMapJson: contractMapJson
-  }
-}
-
-// ============================================================================
 // -- Event Hub Logger (for quota-exceeded notifications)
 // ============================================================================
-var apimName = 'apim-${resourceToken}'
 var eventHubEnabled = !empty(eventHubNamespaceName) && !empty(eventHubName)
 
 module eventHubRoleAssignment '../../modules/eventhub/eventhub-role-assignment.bicep' = if (eventHubEnabled) {
@@ -229,79 +239,47 @@ resource eventHubLogger 'Microsoft.ApiManagement/service/loggers@2024-06-01-prev
 // ============================================================================
 
 resource apimRef 'Microsoft.ApiManagement/service@2024-06-01-preview' existing = {
-  name: apimName
-  dependsOn: [apimService]
+  name: apiManagementName
 }
 
 // ============================================================================
-// -- Policy Fragment: Identity & Authorization
+// -- Shared Policy Fragments
 // ============================================================================
 
-// Build the contracts-loading XML block based on storage mode
-var contractsBlobUrl = useStorageAccount ? contractStorage.outputs.blobUrl : ''
+module callerIdentityFragment 'caller-identity-fragment.bicep' = {
+  name: 'caller-identity-fragment'
+  params: {
+    apiManagementName: apiManagementName
+    contractsBlobUrl: contractStorage.outputs.blobUrl
+    acceptedTenantId: acceptedTenantId
+  }
+}
 
-var contractsLoadBlobTemplate = loadTextContent('advanced/contracts-load-blob.xml')
-var contractsLoadBlob = replace(contractsLoadBlobTemplate, '{blob-url}', contractsBlobUrl)
-
-var contractsLoadNamedValue = '<set-variable name="contracts-json" value="{{access-contracts-json}}" />'
-
-var contractsLoadSection = useStorageAccount ? contractsLoadBlob : contractsLoadNamedValue
-
-var fragmentXml = replace(
-  replace(loadTextContent('advanced/fragment-identity.xml'), '{tenant-id}', subscription().tenantId),
-  '{contracts-load-section}',
-  contractsLoadSection
-)
-
-resource identityFragment 'Microsoft.ApiManagement/service/policyFragments@2024-06-01-preview' = {
-  parent: apimRef
-  name: 'identity-and-authorization'
-  dependsOn: [apimService, contractStorage, contractNamedValue]
-  properties: {
-    description: 'Shared JWT validation, identity resolution, contract loading, and model authorization'
-    format: 'rawxml'
-    value: fragmentXml
+module perModelRoutingFragment 'per-model-routing-fragment.bicep' = {
+  name: 'per-model-routing-fragment'
+  params: {
+    apiManagementName: apiManagementName
   }
 }
 
 // ============================================================================
-// -- Priority Routing Policy (Main API)
-// ============================================================================
-// Extract PTU backend hostnames from foundry instances for URL-based detection
-var ptuBackendHosts = join(
-  map(filter(foundryInstances, inst => inst.isPtu), inst => replace(replace(inst.endpoint, 'https://', ''), '/', '')),
-  ','
-)
-
-var mainPolicyXml = replace(
-  replace(
-    loadTextContent('advanced/policy-priority.xml'),
-    '{eventhub-logger-id}',
-    eventHubEnabled ? 'quota-eventhub-logger' : ''
-  ),
-  '{ptu-backend-hosts}',
-  ptuBackendHosts
-)
-
-// ============================================================================
-// -- Inference API (with priority routing policy)
+// -- Inference API (with shared per-model policy)
 // ============================================================================
 // Uses v2/inference-api module for API creation, OpenAPI spec, diagnostics,
-// and model discovery — with our priority routing policy.
-// Backend pools are created by foundryBackends module (per-model pools),
-// so we pass an empty aiServicesConfig to avoid duplicate backend creation.
+// and model discovery. Backend pools are created by foundryBackends module
+// (per-model pools), so we pass an empty aiServicesConfig to avoid duplicate
+// backend creation.
 module inferenceApi 'v2/inference-api.bicep' = {
   name: 'inference-api-deployment'
   dependsOn: [
     foundryBackends
-    identityFragment
-    contractStorage
-    contractNamedValue
+    callerIdentityFragment
+    perModelRoutingFragment
     ...(eventHubEnabled ? [eventHubLogger] : [])
   ]
   params: {
-    policyXml: mainPolicyXml
-    apiManagementName: apimService.outputs.name
+    policyXml: policyPerModelXml
+    apiManagementName: apiManagementName
     apimLoggerId: apimService.outputs.loggerId
     aiServicesConfig: []
     inferenceAPIType: 'AzureOpenAI'
@@ -315,106 +293,17 @@ module inferenceApi 'v2/inference-api.bicep' = {
 }
 
 // ============================================================================
-// -- Config Viewer API
+// -- Advanced Config Operations
 // ============================================================================
 
-// Build config viewer contracts-loading block (no caching needed for admin page)
-var configViewerLoadBlobTemplate = loadTextContent('advanced/contracts-load-blob-nocache.xml')
-var configViewerLoadBlob = replace(configViewerLoadBlobTemplate, '{blob-url}', contractsBlobUrl)
-
-var configViewerLoadNamedValue = '<set-variable name="contracts-json" value="{{access-contracts-json}}" />'
-
-var configViewerLoadSection = useStorageAccount ? configViewerLoadBlob : configViewerLoadNamedValue
-var contractsSourceLabel = useStorageAccount ? 'Blob Storage &amp;middot; Cached 5 min' : 'APIM Named Value'
-
-var configViewerPolicyXml = replace(
-  replace(
-    loadTextContent('advanced/policy-config-viewer.xml'),
-    '{contracts-load-section}',
-    configViewerLoadSection
-  ),
-  '{contracts-source-label}',
-  contractsSourceLabel
-)
-
-resource configViewerApi 'Microsoft.ApiManagement/service/apis@2024-06-01-preview' = {
-  parent: apimRef
-  name: 'config-viewer-api'
-  dependsOn: [apimService]
-  properties: {
-    apiType: 'http'
-    description: 'Access contract configuration viewer — renders contracts as styled HTML'
-    displayName: 'Config Viewer'
-    path: 'gateway'
-    protocols: ['https']
-    subscriptionRequired: false
-    type: 'http'
-  }
-}
-
-resource configViewerOperation 'Microsoft.ApiManagement/service/apis/operations@2024-06-01-preview' = {
-  parent: configViewerApi
-  name: 'get-config'
-  properties: {
-    displayName: 'View Access Contracts'
-    method: 'GET'
-    urlTemplate: '/config'
-    description: 'Renders all access contracts as a styled HTML page'
-  }
-}
-
-resource configViewerPolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2024-06-01-preview' = {
-  parent: configViewerOperation
-  name: 'policy'
-  dependsOn: [contractStorage, contractNamedValue]
-  properties: {
-    format: 'rawxml'
-    value: configViewerPolicyXml
-  }
-}
-
-resource configRefreshOperation 'Microsoft.ApiManagement/service/apis/operations@2024-06-01-preview' = {
-  parent: configViewerApi
-  name: 'refresh-config'
-  properties: {
-    displayName: 'Refresh Contract Cache'
-    method: 'POST'
-    urlTemplate: '/config/refresh'
-    description: 'Clears the cached contracts blob so the next request reloads from storage'
-  }
-}
-
-resource configRefreshPolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2024-06-01-preview' = {
-  parent: configRefreshOperation
-  name: 'policy'
-  properties: {
-    format: 'rawxml'
-    value: useStorageAccount
-      ? '<policies><inbound><base /><cache-remove-value key="contracts-blob-cache" /><return-response><set-status code="200" reason="OK" /><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>{"status": "ok", "message": "Contract cache cleared. Next request will reload from blob storage."}</set-body></return-response></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
-      : '<policies><inbound><base /><return-response><set-status code="200" reason="OK" /><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>{"status": "ok", "message": "Contracts are stored as APIM Named Value — no cache to clear. Redeploy to update contracts."}</set-body></return-response></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
-  }
-}
-
-resource configJsonOperation 'Microsoft.ApiManagement/service/apis/operations@2024-06-01-preview' = {
-  parent: configViewerApi
-  name: 'get-config-json'
-  properties: {
-    displayName: 'Get Contracts JSON'
-    method: 'GET'
-    urlTemplate: '/config.json'
-    description: 'Returns all access contracts as raw JSON'
-  }
-}
-
-resource configJsonPolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2024-06-01-preview' = {
-  parent: configJsonOperation
-  name: 'policy'
-  dependsOn: [contractStorage, contractNamedValue]
-  properties: {
-    format: 'rawxml'
-    value: useStorageAccount
-      ? '<policies><inbound><base />${configViewerLoadBlob}<return-response><set-status code="200" reason="OK" /><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>@((string)context.Variables["contracts-json"])</set-body></return-response></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
-      : '<policies><inbound><base /><return-response><set-status code="200" reason="OK" /><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>{{access-contracts-json}}</set-body></return-response></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
+module advancedPolicies 'advanced/advanced-policies.bicep' = {
+  name: 'advanced-policies'
+  dependsOn: [inferenceApi]
+  params: {
+    apimServiceName: apiManagementName
+    apiName: inferenceApi.outputs.apiName
+    contractsBlobUrl: contractStorage.outputs.blobUrl
+    storageAccountName: contractStorage.outputs.storageAccountName
   }
 }
 
@@ -490,8 +379,8 @@ output apimName string = apimService.outputs.name
 output apimPrincipalId string = apimService.outputs.principalId
 output apimGatewayUrl string = apimService.outputs.gatewayUrl
 output inferenceApiUrl string = '${apimService.outputs.gatewayUrl}/${inferenceApi.outputs.apiPath}'
-output configViewerUrl string = '${apimService.outputs.gatewayUrl}/gateway/config'
-output contractsBlobUrl string = useStorageAccount ? contractStorage.outputs.blobUrl : ''
+output configViewerUrl string = '${apimService.outputs.gatewayUrl}/${inferenceApi.outputs.apiPath}/ai-gateway/config.json'
+output contractsBlobUrl string = contractStorage.outputs.blobUrl
 output contractMapJson string = contractMapJson
 output poolNames array = foundryBackends.outputs.poolNames
 output hasPtuDeployments bool = foundryBackends.outputs.hasPtuDeployments

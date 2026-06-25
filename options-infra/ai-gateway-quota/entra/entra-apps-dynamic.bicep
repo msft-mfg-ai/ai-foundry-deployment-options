@@ -10,7 +10,7 @@
 
 extension microsoftGraphV1
 
-import { accessContractType } from '../types/gateway-types.bicep'
+import { accessContractType } from '../../modules/apim/advanced/types.bicep'
 
 @description('Unique name prefix for the Entra applications')
 param appNamePrefix string
@@ -116,6 +116,6 @@ output contractsWithIdentities array = [
     priority: contract.priority
     models: contract.models
     monthlyQuota: contract.monthlyQuota
-    environment: contract.environment ?? 'UNKNOWN'
+    environment: contract.?environment ?? 'UNKNOWN'
   }
 ]

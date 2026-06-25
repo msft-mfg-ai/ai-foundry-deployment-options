@@ -2,144 +2,102 @@
 
 ## Project Overview
 
-This project implements an **APIM AI Gateway** inspired by the [Citadel access contracts pattern](https://github.com/Azure-Samples/ai-hub-gateway-solution-accelerator/tree/citadel-v1) for managing Azure OpenAI traffic. It provides:
+This project implements the Komatsu-aligned **APIM AI Gateway** for Azure AI Foundry. It provides:
 
-- **Access contract enforcement**: Each caller is issued a contract defining their TPM rate limit, monthly token quota, priority tier, and allowed models. Contracts are enforced via APIM policies validated against incoming JWTs.
-- **2-tier priority routing**: Production (priority 1) and Standard (priority 2) traffic classes
-- **PTU + PAYG spillover**: Requests first attempt PTU (Provisioned Throughput Units) backends, then spill over to PAYG (Pay-As-You-Go) on capacity exhaustion
-- **Portal dashboard**: An Azure Portal dashboard (`dashboard/dashboard.bicep`) visualizes per-caller token usage, quota consumption, rate limit events, spillover counts, and remaining quota. All data flows from outbound response headers → `ApiManagementGatewayLogs.ResponseHeaders` via APIM diagnostics.
+- **Single policy stack**: `options-infra/modules/apim/policy-per-model.xml` is the canonical inference policy for the passthrough `inference` API, spec-backed `inference-api-azure` API, conditional `openai-api-v1` API (Premium/StandardV2 SKUs), and static-discovery operations.
+- **Access contract enforcement**: Each caller has a blob-backed contract defining TPM, monthly token quota, priority, and allowed models. Contracts are wired through `caller-identity-fragment.bicep`'s `contractsBlobUrl` parameter.
+- **2-tier priority routing**: `priority == 1` routes to `{model}-pool` (mixed PTU+PAYG); other priorities route to `{model}-payg-pool` (PAYG only).
+- **PTU + PAYG spillover**: PTU backends are priority 1, in-region PAYG priority 50, out-of-region PAYG priority 100. Circuit breakers isolate failover per `(instance, model, location)` backend.
+- **Portal dashboard**: `dashboard/dashboard.bicep` visualizes caller token usage, quota consumption, rate limits, failover counts, and remaining quota from APIM diagnostic headers.
 
 ## Directory Structure
 
-```
+```text
 ai-gateway-quota/
 ├── dashboard/               # Azure Portal dashboard (Bicep)
-│   └── dashboard.bicep      # KQL-based dashboard tiles for quota/spillover monitoring
-├── tf/                      # Terraform deployment
-│   └── policies/            # Terraform-specific copies of the shared policy XML files
-├── tests/                   # Test notebook
-└── docs/                    # Documentation
+├── tests/                   # Pytest live integration suite
+├── docs/                    # Supporting design docs
+└── tf/                      # Legacy/experimental Terraform path; verify parity before use
 
-# Shared modules and types live in the modules directory, not under ai-gateway-quota:
-options-infra/modules/apim/advanced/
-├── policy-priority.xml           # Main routing + quota enforcement policy
-├── fragment-identity.xml         # JWT validation and contract lookup
-├── policy-config-viewer.xml      # HTML contract config debug endpoint
-├── token-estimation-*.xml        # Token estimation helpers (inbound/outbound)
-├── multi-foundry-backends.bicep  # Backend and pool creation (location-scoped backends, model-scoped pools)
-├── ai-gateway-advanced.bicep     # Orchestrator module consuming backend outputs
-└── types.bicep                   # Bicep type definitions for foundryInstanceType and contracts
+# Shared modules and canonical policies live outside this option:
+options-infra/modules/apim/
+├── policy-per-model.xml             # Canonical inference policy
+├── caller-identity-fragment.xml     # Observability + optional contract authz fragment
+├── caller-identity-fragment.bicep   # Injects {contracts-load-section}
+├── per-model-routing-fragment.xml   # Priority-aware per-model pool routing
+├── per-model-routing-fragment.bicep
+├── log-settings.bicep               # Captured request/response headers
+├── static-discovery-operations.bicep
+├── v2/inference-api.bicep           # Passthrough inference API
+├── v2/inference-api-azure.bicep     # Spec-backed Azure API
+├── v2/openai-api-v1.bicep           # Conditional OpenAI v1 API
+└── advanced/multi-foundry-backends.bicep
 ```
 
-## Policy Files
+## Policy Files and Fragments
 
-### `fragment-identity.xml`
-JWT validation, contract lookup, and claim extraction. Validates incoming JWTs against the configured tenant, extracts the contract ID, and loads the associated contract configuration (TPM limits, priority tier, etc.).
+### `policy-per-model.xml`
 
-### `policy-priority.xml`
-Main routing policy orchestrating the full request lifecycle:
-- TPM quota enforcement
-- Priority-based backend selection
-- PTU gate invocation (via loopback)
-- Retry logic for PTU → PAYG spillover
-- Response header injection (quota remaining, backend used, spillover flag, etc.)
+Canonical request policy for all inference surfaces. It includes the shared fragments, applies per-model TPM and monthly quota limits only when contract values are present, routes to the selected pool, retries/fails over, and emits observability headers.
 
-Key outbound response headers set by this policy (all logged to `ApiManagementGatewayLogs.ResponseHeaders`):
+### `caller-identity`
 
-| Header | Description |
-|---|---|
-| `x-quota-remaining-tokens` | Monthly token budget remaining for the caller |
-| `x-quota-limit-tokens` | Caller's monthly token quota |
-| `x-ratelimit-remaining-tokens` | Per-model TPM budget remaining |
-| `x-backend-type` | Actual backend used: `ptu` or `payg` (resolved after circuit-breaker failover) |
-| `x-spillover` | `"true"` if request was routed to PTU but landed on PAYG (capacity exhaustion); `"false"` otherwise |
-| `x-route-target` | Inbound routing intent: `ptu` or `payg` |
-| `x-caller-name` | Contract/caller name |
-| `x-caller-priority` | Priority label (`production` or `standard`) |
+`caller-identity-fragment.xml` always sets caller observability headers/variables. `{contracts-load-section}` lets the same fragment run in two modes:
 
-### `policy-ptu-gate.xml`
-Internal PTU gate policy for atomic token counting via a loopback API call. This enables checking PTU capacity and decrementing token counters in a single atomic operation, preventing race conditions.
+- **Open mode** (`contractsBlobUrl` empty): neutral defaults flow through; `model-tpm` and monthly quota are `0`, so `<llm-token-limit>` blocks in `policy-per-model.xml` short-circuit via `<choose when="model-tpm > 0">` wrappers.
+- **Quota mode** (`contractsBlobUrl` set): validates JWT, loads contracts from blob, matches identity, sets caller priority/quotas, and enforces per-model authorization.
 
-### `policy-config-viewer.xml`
-HTML dashboard endpoint that renders the current contract configuration. Useful for debugging and verifying that contracts are loaded correctly.
+### `per-model-routing`
 
-## Placeholder System
+Extracts the requested model from URL/body, computes `model-clean`, and selects the pool:
 
-The shared XML policy files use placeholders that get substituted differently depending on the deployment method (Bicep vs Terraform):
+- `priority == 1` → `{model-clean}-pool` (mixed PTU+PAYG)
+- otherwise → `{model-clean}-payg-pool` (PAYG only)
 
-| Placeholder | Description | Bicep | Terraform |
-|---|---|---|---|
-| `{contracts-load-section}` | How contract config is loaded | Blob storage | APIM named value (no storage account) |
-| `{tenant-id}` | Azure AD tenant ID for JWT validation | Substituted at deploy | Substituted at deploy |
-| `{eventhub-logger-id}` | Event Hub logger resource ID | Event Hub logger ID | Empty (not yet implemented) |
-| `{internal-api-key}` | Internal key protecting the loopback API | Generated at deploy | Generated at deploy |
-| `{loopback-backend-id}` | Loopback backend resource ID for PTU gate calls | Backend resource ID | Backend resource ID |
-| `{contracts-source-label}` | Label shown in config viewer for contract source | `"blob"` | `"named-value"` |
-| `{ptu-backend-hosts}` | Comma-separated PTU backend hostnames for spillover detection | PTU host list | PTU host list |
+### Config endpoints
 
-## Dashboard
+- `GET /ai-gateway/config.json` — read current contracts
+- `POST /ai-gateway/config/update` — write updated contracts back to blob
+- `GET /ai-gateway/config` — styled HTML viewer
 
-`dashboard/dashboard.bicep` deploys an Azure Portal dashboard backed by Log Analytics KQL queries. All data comes from `ApiManagementGatewayLlmLog` (token counts) joined with `ApiManagementGatewayLogs` (caller identity and routing headers).
+## Backend Topology
 
-Key panels:
-- **Caller Quota Overview** — monthly token usage per caller
-- **Token Usage Over Time** — hourly stacked bar chart by caller
-- **Rate Limit Events** — 429 throttle events by caller
-- **💰 Remaining Monthly Quota** — latest `x-quota-remaining-tokens` per caller with % used
-- **🔀 PTU→PAYG Spillover Summary** — per-caller spillover count and rate
-- **📉 Spillover Over Time** — hourly spillover chart by caller
-- **Model Usage by Caller** — per-deployment token breakdown
-- **Monthly Budget Burn-Down** — cumulative token usage this month
+`advanced/multi-foundry-backends.bicep` creates one APIM backend per `(instance, model, location)`. This scopes circuit breakers per model so one throttled model does not disable other models on the same Foundry instance.
 
-The logging pipeline for observability headers: APIM policy sets response headers → `responseLogSettings` in `inference-api.bicep` captures them → they appear in `ApiManagementGatewayLogs.ResponseHeaders` as a JSON string.
+Per model, it creates:
 
-## Multi-Region Backend Naming
+- `{model-clean}-pool` when PTU and PAYG exist: PTU priority 1, in-region PAYG priority 50, out-of-region PAYG priority 100.
+- `{model-clean}-payg-pool`: PAYG-only pool for standard/open callers.
 
-### Backend vs. Pool Architecture
+## AZD Discovery Flow
 
-The gateway creates one **backend per `(instance, model, location)` pair** but only one **pool per model**:
+Before each `azd up`, `options-infra/scripts/preprovision-list-foundry-models.sh` discovers configured Foundry/APIM instances and their deployments, then writes `FOUNDRY_INSTANCES_JSON` to the azd environment. `main.bicepparam` reads it with:
 
-- **Backends**: Named `{instance}-{model-clean}-{location-clean}-backend` for unique identity and diagnostics
-- **Pools**: Named `{model-clean}-ptu-pool` (PTU backends at priority 1) and `{model-clean}-payg-pool` (PAYAG backends at priority 2)
-
-This design supports multi-region topologies without requiring per-region pool separation. Multiple foundries in the same region get different backend names, and pools intelligently mix backends from all regions.
-
-### How Location Gets Into Backend Names
-
-In Bicep (`multi-foundry-backends.bicep` line ~51):
 ```bicep
-backendName: '${instance.name}-${replace(replace(dep.modelName, '.', ''), '-', '')}-${replace(replace(instance.location, ' ', ''), '.', '')}-backend'
+json(readEnvironmentVariable('FOUNDRY_INSTANCES_JSON', '[]'))
 ```
 
-In Terraform (`tf/modules/apim-advanced-backends/main.tf` line ~13):
-```hcl
-backend_name = "${instance.name}-${model_clean}-${replace(replace(instance.location, " ", ""), ".", "")}-backend"
+## Captured Headers
+
+`log-settings.bicep` captures these key headers in APIM diagnostics: `x-caller-name`, `x-caller-id`, `x-caller-priority`, `x-caller-identity`, `x-caller-foundry`, `x-caller-project`, `x-backend-id`, `x-backend-pool`, `x-backend-retry-count`, `x-backend-attempt-trail`, `x-inference-failover`, `x-requested-model`, `x-tokens-consumed`, `x-ratelimit-remaining-tokens`, `x-quota-tokens-consumed`, `x-quota-remaining-tokens`, `x-quota-limit-tokens`, `x-ratelimit-limit-tokens`, `x-ptu-limit`, `x-foundry-agent-id`, `x-foundry-project-name`, `x-foundry-project-id`.
+
+## Tests
+
+Live pytest suite:
+
+```bash
+cd options-infra/ai-gateway-quota/tests
+uv sync
+uv run pytest -v
 ```
 
-The `location` field from each `foundryInstanceType` is cleaned (spaces and dots removed) and appended to backend names for uniqueness.
+The suite covers chat, TTS, Whisper, quota, contract, and failover scenarios.
 
 ## Key Gotchas
 
-### `set-variable` NOT Allowed in `<backend>` Section
-APIM does not allow `<set-variable>` inside the `<backend>` section. Any variable assignments must happen in `<inbound>` or `<outbound>`.
-
-### PTU Returns 503 for Capacity Exhaustion
-PTU backends return **503** (not just 429) when capacity is exhausted. Retry logic must handle both 429 and 503 status codes.
-
-### `llm-token-limit` is Inbound-Only
-The `llm-token-limit` policy can only be used in the `<inbound>` section. It cannot be applied in `<backend>` or `<outbound>`.
-
-### `estimate-prompt-tokens` Must Be Consistent
-The `estimate-prompt-tokens` setting must match between the PTU gate and the main API policy. Mismatches will cause token accounting drift.
-
-### Quota Header Bouncing on APIM StandardV2
-The `x-quota-remaining-tokens` header may bounce (fluctuate) on APIM StandardV2. This is platform behavior — the value is an estimate, not an exact count.
-
-### `OpenAITokenQuotaExceeded` Has Capital Q
-The error code is `OpenAITokenQuotaExceeded` (capital **Q** in Quota). Case-sensitive matching will fail if you use a lowercase q.
-
-### Circuit Breaker Causes `PoolIsInactive`
-When a circuit breaker trips on a backend pool, the error surfaced is `PoolIsInactive`. Handle this in retry/error logic accordingly.
-
-### Policy Files Exist in Two Locations
-The canonical policy XML files are in `options-infra/modules/apim/advanced/`. The Terraform deployment has its own copies in `ai-gateway-quota/tf/policies/`. Keep them in sync when making changes.
+- `set-variable` is not allowed inside APIM `<backend>` sections.
+- PTU capacity exhaustion can return 503 as well as 429; retry/failover logic must handle both.
+- `llm-token-limit` is inbound-only and remaining-token headers are estimates on StandardV2.
+- `OpenAITokenQuotaExceeded` has a capital **Q**.
+- Circuit breaker failures can surface as `PoolIsInactive`.
+- Keep canonical policy references on `policy-per-model.xml`, `caller-identity`, and `per-model-routing`; do not revive legacy priority/identity policy artifacts.

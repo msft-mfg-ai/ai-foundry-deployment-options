@@ -357,6 +357,69 @@ ApiManagementGatewayLogs
   }
 }
 
+
+// Saved Query: Gateway Routing Headers
+resource queryGatewayRoutingHeaders 'Microsoft.OperationalInsights/workspaces/savedSearches@2020-08-01' = {
+  name: '${workspaceName}/APIM_GatewayRoutingHeaders'
+  properties: {
+    category: 'APIM Token Analytics'
+    displayName: 'Gateway Routing Headers (retry, failover, backend pool)'
+    query: '''
+ApiManagementGatewayLogs
+| where ResponseHeaders has_any ("x-backend-pool", "x-backend-retry-count", "x-backend-attempt-trail", "x-inference-failover")
+| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
+| extend CallerPriority = extract(@'"x-caller-priority":"([^"]+)"', 1, tostring(ResponseHeaders))
+| extend RequestedModel = extract(@'"x-requested-model":"([^"]+)"', 1, tostring(ResponseHeaders))
+| extend BackendPool = extract(@'"x-backend-pool":"([^"]+)"', 1, tostring(ResponseHeaders))
+| extend HeaderBackendId = extract(@'"x-backend-id":"([^"]+)"', 1, tostring(ResponseHeaders))
+| extend RetryCount = toint(extract(@'"x-backend-retry-count":"([^"]+)"', 1, tostring(ResponseHeaders)))
+| extend AttemptTrail = extract(@'"x-backend-attempt-trail":"([^"]+)"', 1, tostring(ResponseHeaders))
+| extend FailoverTrail = extract(@'"x-inference-failover":"([^"]+)"', 1, tostring(ResponseHeaders))
+| project TimeGenerated, CorrelationId, CallerName, CallerPriority, RequestedModel, BackendPool, BackendId = coalesce(BackendId, HeaderBackendId), RetryCount, AttemptTrail, FailoverTrail, ResponseCode
+| order by TimeGenerated desc
+'''
+    version: 2
+    tags: [
+      {
+        name: 'Group'
+        value: 'APIM FinOps'
+      }
+    ]
+  }
+}
+
+// Saved Query: Quota and Foundry Headers
+resource queryQuotaAndFoundryHeaders 'Microsoft.OperationalInsights/workspaces/savedSearches@2020-08-01' = {
+  name: '${workspaceName}/APIM_QuotaAndFoundryHeaders'
+  properties: {
+    category: 'APIM Token Analytics'
+    displayName: 'Quota and Foundry Headers'
+    query: '''
+ApiManagementGatewayLogs
+| where ResponseHeaders has_any ("x-quota-tokens-consumed", "x-quota-remaining-tokens", "x-tokens-consumed", "x-ratelimit-remaining-tokens", "x-ptu-limit", "x-foundry-agent-id", "x-foundry-project-name", "x-foundry-project-id")
+| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
+| extend QuotaTokensConsumed = tolong(extract(@'"x-quota-tokens-consumed":"([^"]+)"', 1, tostring(ResponseHeaders)))
+| extend QuotaRemaining = tolong(extract(@'"x-quota-remaining-tokens":"([^"]+)"', 1, tostring(ResponseHeaders)))
+| extend TokensConsumed = tolong(extract(@'"x-tokens-consumed":"([^"]+)"', 1, tostring(ResponseHeaders)))
+| extend RateLimitRemaining = tolong(extract(@'"x-ratelimit-remaining-tokens":"([^"]+)"', 1, tostring(ResponseHeaders)))
+| extend PtuLimit = tolong(extract(@'"x-ptu-limit":"([^"]+)"', 1, tostring(ResponseHeaders)))
+| extend AgentId = extract(@'"x-foundry-agent-id":"([^"]+)"', 1, tostring(ResponseHeaders))
+| extend ProjectName = extract(@'"x-foundry-project-name":"([^"]+)"', 1, tostring(ResponseHeaders))
+| extend ProjectId = extract(@'"x-foundry-project-id":"([^"]+)"', 1, tostring(ResponseHeaders))
+| summarize arg_max(TimeGenerated, QuotaRemaining), QuotaTokensConsumed = sum(QuotaTokensConsumed), TokensConsumed = sum(TokensConsumed), MinRateLimitRemaining = min(RateLimitRemaining), Requests = count() by CallerName, AgentId, ProjectName, ProjectId, PtuLimit
+| project CallerName, AgentId, ProjectName, ProjectId, PtuLimit, QuotaTokensConsumed, TokensConsumed, LatestQuotaRemaining = QuotaRemaining, MinRateLimitRemaining, Requests
+| order by QuotaTokensConsumed desc
+'''
+    version: 2
+    tags: [
+      {
+        name: 'Group'
+        value: 'APIM FinOps'
+      }
+    ]
+  }
+}
+
 // ------------------
 //    OUTPUTS
 // ------------------
@@ -372,5 +435,7 @@ output savedQueriesDeployed array = [
   queryTokensByFoundry.name
   queryTokensByAgent.name
   querySingleCallInspection.name
+  queryGatewayRoutingHeaders.name
+  queryQuotaAndFoundryHeaders.name
 ]
 

@@ -3,8 +3,8 @@
  * @description Creates a WebSocket API in APIM that fronts Azure OpenAI
  * Realtime (speech/audio) deployments. Unlike the HTTP inference APIs, a
  * WebSocket API cannot use backend *pools* (a realtime connection is 1:1 and
- * can't be load-balanced), so this API routes per-deployment to a concrete
- * `wss://` backend via a custom `onHandshake` policy
+ * can't be load-balanced), so this API routes per-deployment to a concrete APIM
+ * backend with a `wss://` URL via a custom `onHandshake` policy
  * (../realtime-routing-policy.xml).
  *
  * The API is exposed at `{inferenceAPIPath}/openai/realtime` — a strictly
@@ -28,7 +28,7 @@ param apimLoggerId string = ''
 @description('Base path of the inference API surface (without leading/trailing slash). The realtime API is created at `{inferenceAPIPath}/openai/realtime`.')
 param inferenceAPIPath string = 'inference'
 
-@description('Realtime deployment routes. One entry per realtime model deployment, mapping the deployment name to the backing instance wss base URL.')
+@description('Realtime deployment routes. One entry per realtime model deployment, mapping the deployment name to a concrete APIM backend and backing instance wss base URL.')
 param realtimeRoutes realtimeRouteType[]
 
 @description('Pre-rendered `<validate-jwt>` block injected into the onHandshake policy. Empty string disables inbound caller-token validation.')
@@ -49,13 +49,16 @@ param appInsightsId string = ''
 // ------------------
 
 @export()
-@description('A single realtime deployment route: the deployment/model name and the backing instance wss base URL.')
+@description('A single realtime deployment route: the deployment/model name, APIM backend ID, and backing instance wss base URL.')
 type realtimeRouteType = {
   @description('Deployment/model name as used in the realtime URL query (e.g. "gpt-realtime", "gpt-4o-realtime-preview").')
-  model: string
+  deploymentName: string
+
+  @description('Concrete APIM backend resource name for this realtime deployment.')
+  backendId: string
 
   @description('Backing instance wss base URL, e.g. "wss://acct.openai.azure.com/openai/realtime".')
-  wssBaseUrl: string
+  endpoint: string
 }
 
 // ------------------
@@ -65,18 +68,19 @@ type realtimeRouteType = {
 import { requestLogSettings } from '../log-settings.bicep'
 var logSettings = requestLogSettings
 
-// Build the deployment -> wss base URL map embedded into the policy. Dedupe by
-// model name (first route wins) so multiple instances serving the same realtime
-// model collapse to a single backend (no LB on WebSocket connections).
+// Build the deployment -> concrete APIM backend map embedded into the policy.
+// Dedupe by deployment name (first route wins) so multiple instances serving
+// the same realtime deployment collapse to a single backend (no LB on WebSocket
+// connections).
 var dedupedRoutes = reduce(
   realtimeRoutes,
   [],
-  (acc, r) => contains(map(acc, x => x.model), r.model) ? acc : concat(acc, [r])
+  (acc, r) => contains(map(acc, x => x.deploymentName), r.deploymentName) ? acc : concat(acc, [r])
 )
 var routingMapObject = reduce(
   dedupedRoutes,
   {},
-  (acc, r) => union(acc, { '${r.model}': r.wssBaseUrl })
+  (acc, r) => union(acc, { '${r.deploymentName}': r.backendId })
 )
 var routingMapJson = string(routingMapObject)
 
@@ -97,7 +101,7 @@ var onHandshakePolicyXml = replace(
 
 // Default backend (serviceUrl) — the policy overrides it per request, but a
 // valid wss serviceUrl is required at API creation. Use the first route.
-var defaultServiceUrl = dedupedRoutes[0].wssBaseUrl
+var defaultServiceUrl = dedupedRoutes[0].endpoint
 
 // ------------------
 //    RESOURCES
@@ -106,6 +110,25 @@ var defaultServiceUrl = dedupedRoutes[0].wssBaseUrl
 resource apimService 'Microsoft.ApiManagement/service@2024-06-01-preview' existing = {
   name: apiManagementName
 }
+
+@batchSize(1)
+resource realtimeBackends 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' = [
+  for route in realtimeRoutes: {
+    parent: apimService
+    name: route.backendId
+    properties: {
+      description: 'Realtime WebSocket backend for deployment ${route.deploymentName}'
+      url: route.endpoint
+      protocol: 'http'
+      credentials: {
+        #disable-next-line BCP037
+        managedIdentity: {
+          resource: 'https://cognitiveservices.azure.com'
+        }
+      }
+    }
+  }
+]
 
 // https://learn.microsoft.com/azure/templates/microsoft.apimanagement/service/apis
 resource api 'Microsoft.ApiManagement/service/apis@2024-06-01-preview' = {
@@ -139,6 +162,7 @@ resource onHandshakeOperation 'Microsoft.ApiManagement/service/apis/operations@2
 resource onHandshakePolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2024-06-01-preview' = {
   name: 'policy'
   parent: onHandshakeOperation
+  dependsOn: [realtimeBackends]
   properties: {
     format: 'rawxml'
     value: onHandshakePolicyXml

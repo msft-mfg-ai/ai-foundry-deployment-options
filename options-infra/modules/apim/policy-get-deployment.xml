@@ -11,7 +11,9 @@
 
     NOTE: deliberately NOT inheriting `<base />` so the API-level per-model
     routing fragment (which would route the request to a backend pool we never
-    use here) doesn't fire.
+    use here) doesn't fire. {JWT_VALIDATION} below is injected by Bicep
+    (common-apim-setup.bicep) so the API-level Entra ID auth is preserved
+    even though we skip <base />.
 -->
 <policies>
     <inbound>
@@ -29,6 +31,7 @@
                 <header>*</header>
             </expose-headers>
         </cors>
+        {JWT_VALIDATION}
         <set-variable name="deployments-json" value="{DEPLOYMENTS_LIST_JSON}" />
         <set-variable name="matched-deployment" value="@{
             var name = (string)context.Request.MatchedParameters[&quot;deploymentName&quot;];

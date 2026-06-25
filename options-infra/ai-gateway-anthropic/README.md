@@ -1,5 +1,7 @@
 # Option: AI Gateway (APIM Standard v2) with Anthropic / Claude models
 
+> **Unified architecture note:** This is a specialized cross-tenant/API-key Anthropic sample. The unified APIM gateway stack now also supports Anthropic-format deployments through `FOUNDRY_INSTANCES_JSON`, `policy-per-model.xml`, and `per-model-routing`; prefer the unified stack unless you specifically need this API-key backend credential pattern.
+
 This deployment creates a Foundry environment with an **Azure API Management (APIM) v2 Standard** instance acting as an AI Gateway for **Anthropic Claude models** hosted on Azure AI Foundry. It is designed for scenarios where the Anthropic Foundry account is in a **different tenant** from the APIM deployment — authentication uses an API key sent as a backend credential header.
 
 ## Architecture Overview

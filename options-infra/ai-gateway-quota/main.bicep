@@ -23,7 +23,7 @@ param foundryInstances foundryInstanceType[] = []
 @description('Access contracts defining team identities, priorities, and quotas')
 param accessContracts accessContractType[]
 
-@description('Store contracts in Azure Blob Storage (true) or APIM Named Value (false). Named Value has a 4096-char limit — use Blob Storage for larger contract sets.')
+@description('Store contracts in Azure Blob Storage. Advanced config update endpoints require blob storage; false is no longer supported.')
 param useStorageAccount bool = true
 
 @description('Optional: deploy a self-contained Foundry account in this resource group with these model deployments, and auto-register it as a PAYG backend. Empty means BYO via foundryInstances.')
@@ -134,6 +134,7 @@ module aiGateway '../modules/apim/ai-gateway-advanced.bicep' = {
     appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
     foundryInstances: effectiveFoundryInstances
     accessContracts: entraApps.outputs.contractsWithIdentities
+    acceptedTenantIds: [entraApps.outputs.tenantId]
     eventHubNamespaceName: eventHub.outputs.namespaceName
     eventHubName: eventHub.outputs.eventHubName
     useStorageAccount: useStorageAccount
@@ -192,7 +193,7 @@ output GATEWAY_APP_ID string = entraApps.outputs.gatewayAppId
 output GATEWAY_AUDIENCE string = entraApps.outputs.gatewayAudience
 output TENANT_ID string = entraApps.outputs.tenantId
 output CONTRACTS_BLOB_URL string = aiGateway.outputs.contractsBlobUrl
-output CONTRACTS_STORAGE_MODE string = useStorageAccount ? 'blob' : 'named-value'
+output CONTRACTS_STORAGE_MODE string = 'blob'
 output POOL_NAMES array = aiGateway.outputs.poolNames
 output HAS_PTU_DEPLOYMENTS bool = aiGateway.outputs.hasPtuDeployments
 output CONFIG_VALIDATION_RESULT bool = validConfig

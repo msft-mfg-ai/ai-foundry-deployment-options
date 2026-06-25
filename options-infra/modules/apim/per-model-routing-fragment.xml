@@ -40,9 +40,34 @@
         return &quot;unknown&quot;;
     }" />
 
-    <!-- Compute pool name — must match advanced/multi-foundry-backends.bicep. -->
+    <!-- Compute pool name — must match advanced/multi-foundry-backends.bicep.
+
+         Two pools per model (when both kinds of backends exist):
+           {model-clean}-pool       — mixed pool (PTU pri 1 + in-region PAYG
+                                       pri 50 + out-of-region PAYG pri 100)
+                                       with circuit-breaker driven PTU→PAYG
+                                       failover. Created only when at least
+                                       one PTU backend exists for the model.
+           {model-clean}-payg-pool  — PAYG-only pool. Always created when at
+                                       least one PAYG backend exists.
+
+         Selection rule (priority comes from the caller-identity fragment):
+           priority == 1   → mixed pool (PTU preferred, PAYG fallback)
+           else            → PAYG-only pool
+
+         Callers without an identity fragment in the inbound chain default to
+         priority=2 (set in caller-identity-fragment.xml), so they hit the
+         PAYG-only pool — matching the old behavior. -->
     <set-variable name="model-clean" value="@(((string)context.Variables[&quot;requestedModel&quot;]).Replace(&quot;.&quot;, &quot;&quot;).Replace(&quot;-&quot;, &quot;&quot;))" />
-    <set-variable name="backend-pool" value="@((string)context.Variables[&quot;model-clean&quot;] + &quot;-payg-pool&quot;)" />
+    <set-variable name="backend-pool" value="@{
+        var clean = (string)context.Variables[&quot;model-clean&quot;];
+        int p = 2;
+        object pv;
+        if (context.Variables.TryGetValue(&quot;priority&quot;, out pv) &amp;&amp; pv != null) {
+            int.TryParse(pv.ToString(), out p);
+        }
+        return p == 1 ? clean + &quot;-pool&quot; : clean + &quot;-payg-pool&quot;;
+    }" />
 
     <!-- Route to the per-model pool. `backend-id` accepts a pool name when the
          backend resource is of type `Pool`. -->

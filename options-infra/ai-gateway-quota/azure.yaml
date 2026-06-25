@@ -11,12 +11,20 @@ hooks:
       shell: pwsh
       run: |
         Write-Host "Pre-provisioning steps..."
+        & '../scripts/preprovision-list-foundry-models.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         azd env set CURRENT_USER_OBJECT_ID (az ad signed-in-user show --query id -o tsv)
+      interactive: false
+      continueOnError: false
     posix:
       shell: sh
       run: |
+        set -e
         echo "Pre-provisioning steps..."
+        sh ../scripts/preprovision-list-foundry-models.sh
         azd env set CURRENT_USER_OBJECT_ID $(az ad signed-in-user show --query id -o tsv)
+      interactive: false
+      continueOnError: false
 
   postprovision:
     windows:

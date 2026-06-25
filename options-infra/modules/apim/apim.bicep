@@ -100,8 +100,9 @@ var updatedJwtInferencePolicyXml = replace(
 // x-caller-* headers (name/id/foundry/project) without duplicating logic.
 module callerIdentityFragment 'caller-identity-fragment.bicep' = {
   name: 'caller-identity-fragment'
+  dependsOn: [apim]
   params: {
-    apiManagementName: apim.outputs.name
+    apiManagementName: apiManagementName
   }
 }
 
@@ -110,7 +111,7 @@ module inference_api 'v2/inference-api.bicep' = if (!empty(aiServicesConfig)) {
   dependsOn: [callerIdentityFragment]
   params: {
     policyXml: gatewayAuthenticationType == 'ProjectManagedIdentity' ? updatedJwtInferencePolicyXml : updatedInferencePolicyXml
-    apiManagementName: apim.outputs.name
+    apiManagementName: apiManagementName
     apimLoggerId: apim.outputs.loggerId
     aiServicesConfig: aiServicesConfig
     inferenceAPIType: inferenceAPIType
@@ -133,7 +134,7 @@ module openAiv2Api 'v2/inference-api.bicep' = if (!empty(aiServicesConfig) && (a
   dependsOn: [inference_api, callerIdentityFragment]
   params: {
     policyXml: gatewayAuthenticationType == 'ProjectManagedIdentity' ? updatedJwtInferencePolicyXml : updatedInferencePolicyXml
-    apiManagementName: apim.outputs.name
+    apiManagementName: apiManagementName
     apimLoggerId: apim.outputs.loggerId
     aiServicesConfig: aiServicesConfig
     inferenceAPIType: 'OpenAI'

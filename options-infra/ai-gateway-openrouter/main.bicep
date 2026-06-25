@@ -179,13 +179,14 @@ module models_policy_assignment '../modules/policy/models-policy-assignment.bice
   }
 }
 
-module dashboard_setup '../modules/dashboard/dashboard-setup.bicep' = {
-  name: 'dashboard-setup-deployment-${resourceToken}'
+module dashboard '../modules/dashboard/dashboard.bicep' = {
+  name: 'dashboard-deployment-${resourceToken}'
   params: {
     location: location
-    applicationInsightsName: logAnalytics.outputs.APPLICATION_INSIGHTS_NAME
-    logAnalyticsWorkspaceName: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_NAME
     dashboardDisplayName: 'APIM Token Usage Dashboard for ${resourceToken}'
+    applicationInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    applicationInsightsName: logAnalytics.outputs.APPLICATION_INSIGHTS_NAME
+    logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
   }
 }
 

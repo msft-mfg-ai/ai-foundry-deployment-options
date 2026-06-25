@@ -1,5 +1,7 @@
 # Option: LiteLLM Gateway with Self-Signed Cert + nginx Proxy
 
+> **Unified architecture note:** This sample is a LiteLLM certificate/proxy variant, not the APIM `policy-per-model.xml` stack. Use it for self-signed-certificate LiteLLM integration; use APIM gateway samples for the unified caller-identity/per-model-routing architecture.
+
 This deployment option demonstrates an enterprise pattern where **the LiteLLM
 endpoint is fronted by a self-signed certificate** on a caller-supplied
 custom domain (simulating an internal/private CA), and Foundry — which

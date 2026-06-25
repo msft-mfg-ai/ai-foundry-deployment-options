@@ -2,6 +2,9 @@
 
 This deployment creates a Foundry environment with an **Azure API Management (APIM) Standardv2** instance in **External VNet injection** mode plus an APIM private endpoint. It uses [`per-model-gateway.bicep`](../modules/apim/per-model-gateway.bicep) for **per-model smart routing**; instead of external fan-out, this sample provisions one local Azure OpenAI account and synthesizes the same gateway instance shape from it.
 
+
+> **Unified architecture note:** This sample uses the shared Komatsu-aligned APIM stack in open mode: `policy-per-model.xml` is applied to the passthrough `inference` API, spec-backed `inference-api-azure` API, and (on Premium/StandardV2-capable SKUs) `openai-api-v1`. The `caller-identity` fragment emits observability headers without contract enforcement, while `per-model-routing` sends traffic to the PAYG-only pool because no contracts set `priority == 1`.
+
 ## Architecture Overview
 
 ```
@@ -16,7 +19,7 @@ This deployment creates a Foundry environment with an **Azure API Management (AP
 │                                                  ▼                                        │
 │                        ┌─────────────────────────────────────────────────────┐            │
 │                        │ Azure API Management Standardv2 (External + PE)     │            │
-│                        │ - /inference/openai + /azure APIs                  │            │
+│                        │ - /inference + inference-api-azure APIs                  │            │
 │                        │ - Per-model routing fragment                        │            │
 │                        │ - PAYG pools for test-gpt-4.1 and test-gpt-5.2      │            │
 │                        └──────────────────────────┬──────────────────────────┘            │
@@ -53,7 +56,7 @@ This deployment creates a Foundry environment with an **Azure API Management (AP
 ### AI Gateway (APIM)
 - **Azure API Management Standardv2** in external VNet-injected mode with private endpoint
 - Per-model backends + PAYG pools synthesised from the in-deployment OpenAI account
-- Passthrough `/inference/openai` API and spec-backed `/azure` API
+- Passthrough `inference` API and spec-backed `inference-api-azure` API
 - Managed identity with Cognitive Services User role on the local OpenAI account
 - Optional `apiServices` entries for private MCP/OpenAPI services are exposed through APIM and private DNS
 
@@ -63,7 +66,7 @@ This deployment creates a Foundry environment with an **Azure API Management (AP
 
 ## Prerequisites
 
-No external Foundry / Azure OpenAI resource is required. This sample provisions its own Azure OpenAI account in-deployment with `test-gpt-4.1` and `test-gpt-5.2`, then routes to it through per-model PAYG pools. The deployment synthesizes a single-instance `foundryInstances[]` value from that local account.
+No external Foundry / Azure OpenAI resource is required. This sample provisions its own Azure OpenAI account in-deployment with `test-gpt-4.1` and `test-gpt-5.2`, then routes to it through the unified per-model PAYG-only pool path. The deployment synthesizes a single-instance `foundryInstances[]` value from that local account.
 
 ### Optional Parameters
 - `PROJECTS_COUNT` - Number of Foundry projects to create (default: 1)
@@ -73,12 +76,12 @@ No external Foundry / Azure OpenAI resource is required. This sample provisions 
 
 All gateway variants use [`per-model-gateway.bicep`](../modules/apim/per-model-gateway.bicep) for APIM orchestration:
 
-- [`multi-foundry-backends.bicep`](../modules/apim/advanced/multi-foundry-backends.bicep) creates one APIM backend per `(instance, model)`, so a throttled deployment only disables that backend while sibling deployments continue serving traffic.
-- One PAYG backend pool is created per model, named `{model-clean}-payg-pool` after removing `.` and `-` from the model name; all instances serving that model join the same pool for APIM load balancing.
-- The shared [`per-model-routing`](../modules/apim/per-model-routing-fragment.xml) policy fragment is wired into both `/inference/openai` and `/azure`. It reads the model from `/deployments/{name}/...` or the request body's `model`, computes `model-clean`, and routes to the matching pool.
+- [`multi-foundry-backends.bicep`](../modules/apim/advanced/multi-foundry-backends.bicep) creates one APIM backend per `(instance, model, location)`, so a throttled model only disables that backend while sibling models on the same Foundry continue serving traffic.
+- The backend module supports two pools per model: `{model-clean}-pool` for priority-1 mixed PTU+PAYG and `{model-clean}-payg-pool` for PAYG-only. These non-quota samples run in open mode, so traffic uses the PAYG-only pool.
+- The shared [`per-model-routing`](../modules/apim/per-model-routing-fragment.xml) policy fragment is wired into the passthrough and spec-backed APIs. It reads the model from `/deployments/{name}/...` or the request body's `model`, computes `model-clean`, and routes to the matching pool.
 - APIM's system-assigned managed identity is granted **Cognitive Services User** on every backing instance, including instances in other resource groups or subscriptions.
 
-The gateway does not enforce quotas, JWT validation, or access contracts; those controls live in the `ai-gateway-quota` sample. The spec-backed `/azure` API renders the APIM test console and model-discovery endpoints from the synthesized in-deployment OpenAI instance.
+The gateway does not enforce quotas or access contracts in open mode; those controls are enabled by wiring contracts in the `ai-gateway-quota` sample. The spec-backed `inference-api-azure` API at `/azure/openai` renders the APIM test console and model-discovery endpoints from the synthesized in-deployment OpenAI instance.
 
 ## Advanced features
 

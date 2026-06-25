@@ -1,13 +1,7 @@
 using 'main.bicep'
 
-param anthropicApiBase = readEnvironmentVariable('ANTHROPIC_API_BASE', '')
-param anthropicApiKey = readEnvironmentVariable('ANTHROPIC_API_KEY', '')
-
-var anthropicResourceIdValue = readEnvironmentVariable('ANTHROPIC_RESOURCE_ID', '')
-param anthropicResourceId = empty(anthropicResourceIdValue) ? null : anthropicResourceIdValue
-
-var anthropicLocationValue = readEnvironmentVariable('ANTHROPIC_LOCATION', '')
-param anthropicLocation = empty(anthropicLocationValue) ? null : anthropicLocationValue
+// Foundry instances discovered by the `preprovision-list-foundry-models` hook.
+param foundryInstances = json(readEnvironmentVariable('FOUNDRY_INSTANCES_JSON', '[]'))
 
 var dependenciesLocationValue = readEnvironmentVariable('DEPENDENCIES_LOCATION', '')
 param dependenciesLocation = empty(dependenciesLocationValue) ? null : dependenciesLocationValue

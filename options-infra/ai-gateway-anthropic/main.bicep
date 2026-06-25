@@ -1,32 +1,24 @@
 // Deploys Azure AI Foundry with an APIM AI Gateway configured to proxy Claude (Anthropic)
 // models hosted on a Foundry account. Designed for scenarios where the Anthropic Foundry
-// account is in a different tenant — authentication uses an API key sent as a backend
-// credential header rather than managed identity.
+// account can be reached by APIM using managed identity.
 //
 // Infrastructure deployed:
 //  - VNet + private DNS zones
 //  - Foundry account + projects with capability hosts
 //  - Key Vault, Log Analytics, App Insights
 //  - APIM Standardv2 (External VNet) with private endpoint
-//  - Anthropic inference API at {gateway}/inference/anthropic
+//  - Shared pass-through inference API at {gateway}/inference
 //  - Foundry connections (static model list, deploymentInPath=false)
 
 targetScope = 'resourceGroup'
 
+import { foundryInstanceType } from '../modules/apim/advanced/types.bicep'
+import { ModelType } from '../modules/ai/connection-apim-gateway.bicep'
+
 param location string = resourceGroup().location
 
-@description('Base endpoint of the Foundry account hosting Claude models (e.g. https://<name>.services.ai.azure.com).')
-param anthropicApiBase string
-
-@description('API key for the Anthropic Foundry endpoint.')
-@secure()
-param anthropicApiKey string
-
-@description('Resource ID of the Foundry account hosting Claude models. Used as backend metadata only; not required for auth.')
-param anthropicResourceId string
-
-@description('Location of the Foundry account hosting Claude models.')
-param anthropicLocation string = location
+@description('Existing Foundry / AI Services instances to front with the gateway. Discovered by the `preprovision-list-foundry-models` hook (FOUNDRY_INSTANCES_JSON). At least one instance is required.')
+param foundryInstances foundryInstanceType[]
 
 @description('Location for Foundry dependency resources (Storage, AI Search, Cosmos DB). Defaults to `location`. Override when the primary region does not allow one of the services (e.g. AI Search in eastus2).')
 param dependenciesLocation string = location
@@ -37,38 +29,34 @@ param projectsCount int = 1
 @description('Allow public access to APIM. Set to true for testing; false for production.')
 param apimPublicEnabled bool = true
 
-@description('Static list of Claude model deployments to surface in Foundry connections.')
-param staticModels object[] = [
-  {
-    name: 'claude-opus-4-6'
-    properties: {
-      model: {
-        name: 'claude-opus-4-6'
-        version: '20250514'
-        format: 'Anthropic'
-      }
-    }
-  }
-]
-
 var tags = {
   'created-by': 'option-ai-gateway-anthropic'
   'hidden-title': 'Foundry - Anthropic AI Gateway (APIM v2 Standard with PE)'
   SecurityControl: 'Ignore'
 }
 
-var valid_anthropic_config = empty(anthropicApiBase) || empty(anthropicApiKey) || empty(anthropicResourceId)
-  ? fail('ANTHROPIC_API_BASE, ANTHROPIC_API_KEY, and ANTHROPIC_RESOURCE_ID environment variables must be set.')
+var valid_anthropic_config = empty(foundryInstances)
+  ? fail('No Foundry instances configured. Set EXISTING_FOUNDRY_RESOURCE_IDS (or OPENAI_RESOURCE_ID) and run the `preprovision-list-foundry-models` hook so FOUNDRY_INSTANCES_JSON is populated.')
   : true
 
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
 
-var anthropicServicesConfig = [
-  {
-    name: 'anthropic-foundry'
-    resourceId: anthropicResourceId
-    endpoint: anthropicApiBase
-    location: anthropicLocation
+var allDeployments = flatten(map(foundryInstances, inst => inst.deployments))
+var dedupedDeployments = reduce(
+  allDeployments,
+  [],
+  (acc, d) => contains(map(acc, x => x.modelName), d.modelName) ? acc : concat(acc, [d])
+)
+var staticModels ModelType[] = [
+  for d in dedupedDeployments: {
+    name: d.modelName
+    properties: {
+      model: {
+        name: d.modelName
+        version: d.?modelVersion ?? ''
+        format: d.?modelFormat ?? 'Anthropic'
+      }
+    }
   }
 ]
 
@@ -106,36 +94,37 @@ module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
   }
 }
 
-// Cross-tenant private endpoint for the Anthropic-hosting Foundry account.
+// Cross-tenant private endpoints for the Anthropic-hosting Foundry account(s).
 // Uses manualPrivateLinkServiceConnections — requires approval on the target tenant.
-var anthropicParts = split(empty(anthropicResourceId) ? '' : anthropicResourceId, '/')
-var anthropicAccountName = last(anthropicParts)
-var anthropicCrossSubscription = (empty(anthropicResourceId) ? '' : anthropicParts[2]) != subscription().subscriptionId
-var createAnthropicPE = !empty(anthropicResourceId)
-
-module anthropic_foundry_private_endpoint_cross_tenant '../modules/networking/ai-pe-dns-cross-tenant.bicep' = if (createAnthropicPE && anthropicCrossSubscription) {
-  name: 'anthropic-foundry-pe-and-dns-deployment'
-  params: {
-    tags: tags
-    location: location
-    aiAccountResourceId: anthropicResourceId
-    peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
-    resourceToken: resourceToken
-    existingDnsZones: ai_dependencies.outputs.DNS_ZONES
+module anthropic_foundry_private_endpoint_cross_tenant '../modules/networking/ai-pe-dns-cross-tenant.bicep' = [
+  for (instance, i) in foundryInstances: if (!(instance.?isApim ?? false) && split(instance.resourceId, '/')[2] != subscription().subscriptionId) {
+    name: 'anthropic-foundry-pe-cross-${i}-${resourceToken}'
+    params: {
+      tags: tags
+      location: location
+      aiAccountResourceId: instance.resourceId
+      peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+      resourceToken: '${resourceToken}-${i}'
+      existingDnsZones: ai_dependencies.outputs.DNS_ZONES
+    }
   }
-}
+]
 
-module anthropic_foundry_private_endpoint '../modules/networking/ai-pe-dns.bicep' = if (createAnthropicPE && !anthropicCrossSubscription) {
-  name: 'anthropic-foundry-pe-and-dns-deployment'
-  params: {
-    tags: tags
-    location: location
-    aiAccountName: anthropicAccountName
-    peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
-    resourceToken: resourceToken
-    existingDnsZones: ai_dependencies.outputs.DNS_ZONES
+module anthropic_foundry_private_endpoint '../modules/networking/ai-pe-dns.bicep' = [
+  for (instance, i) in foundryInstances: if (!(instance.?isApim ?? false) && split(instance.resourceId, '/')[2] == subscription().subscriptionId) {
+    name: 'anthropic-foundry-pe-${i}-${resourceToken}'
+    params: {
+      tags: tags
+      location: location
+      aiAccountName: last(split(instance.resourceId, '/'))
+      aiAccountNameResourceGroup: split(instance.resourceId, '/')[4]
+      aiAccountSubscriptionId: split(instance.resourceId, '/')[2]
+      peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+      resourceToken: '${resourceToken}-${i}'
+      existingDnsZones: ai_dependencies.outputs.DNS_ZONES
+    }
   }
-}
+]
 
 module logAnalytics '../modules/monitor/loganalytics.bicep' = {
   name: 'log-analytics'
@@ -223,19 +212,19 @@ module ai_gateway '../modules/apim/ai-gateway-anthropic.bicep' = {
     appInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
     appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
     aiFoundryProjectNames: [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
-    anthropicServicesConfig: anthropicServicesConfig
+    foundryInstances: foundryInstances
     anthropicStaticModels: staticModels
-    anthropicApiKey: anthropicApiKey
   }
 }
 
-module dashboard_setup '../modules/dashboard/dashboard-setup.bicep' = {
-  name: 'dashboard-setup-deployment-${resourceToken}'
+module dashboard '../modules/dashboard/dashboard.bicep' = {
+  name: 'dashboard-deployment-${resourceToken}'
   params: {
     location: location
-    applicationInsightsName: logAnalytics.outputs.APPLICATION_INSIGHTS_NAME
-    logAnalyticsWorkspaceName: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_NAME
     dashboardDisplayName: 'APIM Token Usage Dashboard for ${resourceToken}'
+    applicationInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    applicationInsightsName: logAnalytics.outputs.APPLICATION_INSIGHTS_NAME
+    logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
   }
 }
 

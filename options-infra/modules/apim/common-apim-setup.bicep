@@ -4,12 +4,15 @@ import { realtimeRouteType } from 'v2/realtime-ws-api.bicep'
 
 param apimName string
 param apimLoggerId string
+@description('APIM deployment region. Defaults to the resource group location. Used for region-aware PAYG backend prioritization.')
+param location string = resourceGroup().location
 @allowed([
   'Consumption'
   'Developer'
   'Basic'
   'Basicv2'
   'Standard'
+  'StandardV2'
   'Standardv2'
   'Premium'
   'Premiumv2'
@@ -79,18 +82,19 @@ var staticModels ModelType[] = [
 ]
 
 // -- Realtime (WebSocket) routes ---------------------------------------------
-// Realtime deployments (modelName contains "realtime") need a dedicated
-// WebSocket API — HTTP per-model pools can't carry a wss handshake. Build one
-// route per (instance, realtime deployment) mapping the deployment name to the
-// backing instance's wss base URL. The realtime API/policy is only deployed
-// when at least one realtime deployment exists.
+// Realtime deployments need a dedicated WebSocket API — HTTP per-model pools
+// can't carry a wss handshake. Build one route per (instance, realtime
+// deployment) mapping the deployment name to a concrete APIM backend and its
+// backing instance's wss base URL. Match Komatsu's model-name criterion
+// (gpt-* + realtime) while also honoring the captured Realtime model format.
 var realtimeRoutes realtimeRouteType[] = flatten(map(
   foundryInstances,
   inst => map(
-    filter(inst.deployments, d => contains(toLower(d.modelName), 'realtime')),
+    filter(inst.deployments, d => toLower(d.?modelFormat ?? '') == 'realtime' || (startsWith(toLower(d.modelName), 'gpt-') && contains(toLower(d.modelName), 'realtime'))),
     d => {
-      model: d.modelName
-      wssBaseUrl: '${replace(inst.endpoint, 'https:', 'wss:')}${endsWith(inst.endpoint, '/') ? '' : '/'}openai/realtime'
+      deploymentName: d.modelName
+      backendId: '${inst.name}-${replace(replace(d.modelName, '.', ''), '-', '')}-${replace(replace(inst.location, ' ', ''), '.', '')}-realtime-backend'
+      endpoint: '${replace(inst.endpoint, 'https:', 'wss:')}${endsWith(inst.endpoint, '/') ? '' : '/'}openai/realtime'
     }
   )
 ))
@@ -123,6 +127,7 @@ module foundryBackends 'advanced/multi-foundry-backends.bicep' = {
   name: 'foundry-backend-pools'
   params: {
     apimServiceName: apimName
+    apimLocation: location
     foundryInstances: foundryInstances
     configureCircuitBreaker: true
   }
@@ -170,21 +175,17 @@ module inferenceApi 'v2/inference-api.bicep' = {
 // console and SDK generators see per-operation definitions.
 // `dependsOn: [inferenceApi]` avoids the service-level `inference` tag race
 // condition between concurrent API deployments.
-module inferenceApiSpec 'v2/inference-api.bicep' = {
+module inferenceApiSpec 'v2/inference-api-azure.bicep' = {
   name: 'inference-api-spec-deployment'
-  dependsOn: [inferenceApi, foundryBackends, callerIdentityFragment, perModelRoutingFragment]
+  dependsOn: [inferenceApi, callerIdentityFragment, perModelRoutingFragment]
   params: {
     policyXml: policyPerModelXml
     apiManagementName: apimName
     apimLoggerId: apimLoggerId
-    aiServicesConfig: []
-    inferenceAPIType: 'AzureOpenAI'
     inferenceAPIPath: specApiPath
     inferenceAPIName: 'inference-api-azure'
     inferenceAPIDisplayName: 'Inference API (Azure OpenAI spec)'
     inferenceAPIDescription: 'AzureOpenAI-spec inference API — same per-model routing as the passthrough, with portal test console and per-operation definitions.'
-    configureCircuitBreaker: false
-    enableModelDiscovery: false
     requireSubscriptionKey: gatewayAuthenticationType != 'ProjectManagedIdentity'
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
     appInsightsId: appInsightsResourceId
@@ -214,24 +215,20 @@ module realtimeApi 'v2/realtime-ws-api.bicep' = if (hasRealtime) {
   }
 }
 
-// OpenAI v1 API has more than 100 Operations and requires Premium or Standardv2 SKU
+// OpenAI v1 API has more than 100 Operations and requires Premium, Premiumv2, or StandardV2 SKU
 // https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-subscription-service-limits?toc=%2Fazure%2Fapi-management%2Ftoc.json&bc=%2Fazure%2Fapi-management%2Fbreadcrumb%2Ftoc.json#limits---api-management-v2-tiers
 // Depends on inference_api to avoid race condition creating duplicate APIM service-level tags
-module openAiv2Api 'v2/inference-api.bicep' = if  (apimSku == 'Premium' || apimSku == 'Standardv2') {
-  name: 'openai-v2-api-deployment'
-  dependsOn: [inferenceApiSpec, callerIdentityFragment]
+module openaiV1Api 'v2/openai-api-v1.bicep' = if (contains(['Premium', 'StandardV2', 'Premiumv2'], apimSku)) {
+  name: 'openai-v1-api-deployment'
+  dependsOn: [inferenceApi]
   params: {
     policyXml: policyPerModelXml
     apiManagementName: apimName
     apimLoggerId: apimLoggerId
-    aiServicesConfig: []
-    inferenceAPIType: 'OpenAI'
-    inferenceAPIPath: 'openai-v1'
+    inferenceAPIPath: 'openai/v1'
     inferenceAPIDescription: 'OpenAI API v1 for AI Gateway'
     inferenceAPIDisplayName: 'OpenAI API v1'
     inferenceAPIName: 'openai-api-v1'
-    configureCircuitBreaker: true
-    enableModelDiscovery: true
     requireSubscriptionKey: gatewayAuthenticationType != 'ProjectManagedIdentity'
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
     appInsightsId: appInsightsResourceId
@@ -262,8 +259,24 @@ module openAiv2Api 'v2/inference-api.bicep' = if  (apimSku == 'Premium' || apimS
 var rawDeploymentsListJson = string({ value: staticModels })
 var deploymentsListJsonEncoded = replace(replace(replace(replace(rawDeploymentsListJson, '&', '&amp;'), '<', '&lt;'), '>', '&gt;'), '"', '&quot;')
 
-var listDeploymentsPolicyXml = replace(loadTextContent('policy-list-deployments.xml'), '{DEPLOYMENTS_LIST_JSON}', deploymentsListJsonEncoded)
-var getDeploymentPolicyXml = replace(loadTextContent('policy-get-deployment.xml'), '{DEPLOYMENTS_LIST_JSON}', deploymentsListJsonEncoded)
+var listDeploymentsPolicyXml = replace(
+  replace(
+    loadTextContent('policy-list-deployments.xml'),
+    '{DEPLOYMENTS_LIST_JSON}',
+    deploymentsListJsonEncoded
+  ),
+  '{JWT_VALIDATION}',
+  jwtValidationXml
+)
+var getDeploymentPolicyXml = replace(
+  replace(
+    loadTextContent('policy-get-deployment.xml'),
+    '{DEPLOYMENTS_LIST_JSON}',
+    deploymentsListJsonEncoded
+  ),
+  '{JWT_VALIDATION}',
+  jwtValidationXml
+)
 
 module passthroughDiscovery 'static-discovery-operations.bicep' = {
   name: 'passthrough-discovery-ops'

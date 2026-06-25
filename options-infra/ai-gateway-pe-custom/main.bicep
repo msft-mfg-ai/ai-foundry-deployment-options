@@ -8,13 +8,14 @@ targetScope = 'resourceGroup'
 
 import { apiType } from '../modules/apps/apps-private-link.bicep'
 import { foundryInstanceType } from '../modules/apim/advanced/types.bicep'
-import { ModelType } from '../modules/ai/connection-apim-gateway.bicep'
 
 param location string = resourceGroup().location
 param projectsCount int = 3
 param apiServices apiType[] = []
 param apimPublicEnabled bool = false
-param openAiLocation string = resourceGroup().location
+
+@description('Existing Foundry / AI Services instances to front with the gateway. Discovered by the `preprovision-list-foundry-models` hook (FOUNDRY_INSTANCES_JSON). At least one instance is required.')
+param foundryInstances foundryInstanceType[]
 
 @description('Tenant IDs whose Entra ID tokens the gateway should accept on inbound calls. Empty (default) = no inbound JWT validation — callers reach the gateway anonymously and APIM\'s managed identity authenticates to Foundry. When set, the inbound policy requires a valid bearer token with `aud=https://cognitiveservices.azure.com` issued by one of these tenants.')
 param acceptedTenantIds string[] = []
@@ -26,89 +27,10 @@ var tags = {
 }
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
 
-// Model deployments to provision on the in-deployment OpenAI account.
-// The same list seeds the gateway's foundryInstances + staticModels so per-model
-// routing knows the (instance, model) pairs and the Foundry connection's
-// portal can render its model picker.
-var openAiDeploymentSpecs = [
-  {
-    name: 'test-gpt-4.1'
-    format: 'OpenAI'
-    model: 'gpt-4.1'
-    version: '2025-04-14'
-    apiVersion: '2025-01-01-preview'
-    capacity: 20
-  }
-  {
-    name: 'test-gpt-5.2'
-    format: 'OpenAI'
-    model: 'gpt-5.2'
-    version: '2025-12-11'
-    apiVersion: '2025-12-11'
-    capacity: 20
-  }
-]
+var valid_config = empty(foundryInstances)
+  ? fail('No Foundry instances configured. Set EXISTING_FOUNDRY_RESOURCE_IDS (or OPENAI_RESOURCE_ID) and run the `preprovision-list-foundry-models` hook so FOUNDRY_INSTANCES_JSON is populated.')
+  : true
 
-module openai_with_models '../modules/ai/ai-foundry.bicep' = {
-  name: 'azure-openai'
-  params: {
-    location: openAiLocation
-    tags: tags
-    name: 'openai-${resourceToken}'
-    kind: 'OpenAI'
-    publicNetworkAccess: 'Disabled'
-    deployments: [
-      for d in openAiDeploymentSpecs: {
-        name: d.name
-        properties: {
-          model: {
-            format: d.format
-            name: d.model
-            version: d.version
-          }
-        }
-        sku: {
-          name: 'GlobalStandard'
-          capacity: d.capacity
-        }
-      }
-    ]
-  }
-}
-
-// Synthesise the single-instance foundryInstances[] from the in-deployment
-// OpenAI account — no preprovision hook needed because the account is owned
-// by this template.
-var localFoundryDeployments = [
-  for d in openAiDeploymentSpecs: {
-    modelName: d.name
-    modelVersion: d.apiVersion
-    modelFormat: d.format
-  }
-]
-var foundryInstances foundryInstanceType[] = [
-  {
-    name: openai_with_models.outputs.FOUNDRY_NAME
-    resourceId: openai_with_models.outputs.FOUNDRY_RESOURCE_ID
-    endpoint: openai_with_models.outputs.FOUNDRY_ENDPOINT
-    location: openAiLocation
-    isPtu: false
-    deployments: localFoundryDeployments
-  }
-]
-
-var staticModels ModelType[] = [
-  for d in openAiDeploymentSpecs: {
-    name: d.name
-    properties: {
-      model: {
-        name: d.model
-        version: d.apiVersion
-        format: d.format
-      }
-    }
-  }
-]
 
 module foundry_identity '../modules/iam/identity.bicep' = {
   name: 'foundry-identity-deployment'
@@ -145,18 +67,22 @@ module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
   }
 }
 
-// Private endpoint for external OpenAI
-module openai_private_endpoint '../modules/networking/ai-pe-dns.bicep' = {
-  name: 'openai-private-endpoint-and-dns-deployment'
-  params: {
-    tags: tags
-    location: location
-    aiAccountName: openai_with_models.outputs.FOUNDRY_NAME
-    peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
-    resourceToken: resourceToken
-    existingDnsZones: ai_dependencies.outputs.DNS_ZONES
+// Private endpoint per backing Foundry instance.
+module openai_private_endpoints '../modules/networking/ai-pe-dns.bicep' = [
+  for (instance, i) in foundryInstances: if (!(instance.?isApim ?? false)) {
+    name: 'openai-pe-${i}-${resourceToken}'
+    params: {
+      tags: tags
+      location: location
+      aiAccountName: last(split(instance.resourceId, '/'))
+      aiAccountNameResourceGroup: split(instance.resourceId, '/')[4]
+      aiAccountSubscriptionId: split(instance.resourceId, '/')[2]
+      peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+      resourceToken: '${resourceToken}-${i}'
+      existingDnsZones: ai_dependencies.outputs.DNS_ZONES
+    }
   }
-}
+]
 
 // --------------------------------------------------------------------------------------------------------------
 // -- Log Analytics Workspace and App Insights ------------------------------------------------------------------
@@ -256,13 +182,14 @@ module ai_gateway '../modules/apim/ai-gateway-pe.bicep' = {
   }
 }
 
-module dashboard_setup '../modules/dashboard/dashboard-setup.bicep' = {
-  name: 'dashboard-setup-deployment-${resourceToken}'
+module dashboard '../modules/dashboard/dashboard.bicep' = {
+  name: 'dashboard-deployment-${resourceToken}'
   params: {
     location: location
-    applicationInsightsName: logAnalytics.outputs.APPLICATION_INSIGHTS_NAME
-    logAnalyticsWorkspaceName: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_NAME
     dashboardDisplayName: 'APIM Token Usage Dashboard for ${resourceToken}'
+    applicationInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    applicationInsightsName: logAnalytics.outputs.APPLICATION_INSIGHTS_NAME
+    logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
   }
 }
 
@@ -299,3 +226,4 @@ output project_connection_strings string[] = [
   for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_CONNECTION_STRING
 ]
 output project_names string[] = [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
+output config_validation_result bool = valid_config

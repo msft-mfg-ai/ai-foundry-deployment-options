@@ -20,6 +20,9 @@ type foundryDeploymentType = {
 
   @description('Model format / publisher namespace (e.g. "OpenAI", "Cohere", "DeepSeek"). Optional — captured by the discovery script for the same reason as `modelVersion`.')
   modelFormat: string?
+
+  @description('SKU capacity units for the deployment. Only used when deploying a new Foundry instance (createFoundryDeployments path). Ignored when the deployment already exists on the backing instance.')
+  skuCapacity: int?
 }
 
 // -- Foundry Instance (existing, passed as parameter) -------------------------

@@ -1,9 +1,8 @@
 // Anthropic-only AI Gateway orchestrator.
-// Deploys APIM (Standardv2) with private endpoint and routes traffic to a Foundry-hosted
-// Claude endpoint using API-key backend credentials (suitable for cross-tenant scenarios).
-// No OpenAI inference API is exposed; only the Anthropic pass-through API is created.
+// Deploys APIM (Standardv2) with private endpoint and routes traffic to Foundry-hosted
+// Claude endpoints through the shared `/inference` pass-through API.
 
-import { aiServiceConfigType } from 'v2/inference-api.bicep'
+import { foundryInstanceType } from 'advanced/types.bicep'
 import { ModelType } from '../ai/connection-apim-gateway.bicep'
 import { subscriptionType } from 'v2/apim.bicep'
 
@@ -16,11 +15,8 @@ param aiFoundryName string
 param aiFoundryProjectNames string[] = []
 param resourceToken string
 
-param anthropicServicesConfig aiServiceConfigType[]
+param foundryInstances foundryInstanceType[]
 param anthropicStaticModels ModelType[] = []
-
-@secure()
-param anthropicApiKey string
 
 param subnetResourceId string
 param peSubnetResourceId string
@@ -92,19 +88,18 @@ module apim_update 'apim.bicep' = if (!apimPublicEnabled) {
   dependsOn: [apim_pe]
 }
 
-// Layer the Anthropic pass-through inference API onto the created APIM.
-// Extracted out of apim.bicep so anthropic-only settings stay isolated to this
-// sample. Runs after apim_update so the public-access toggle has settled; the
-// caller-identity fragment it depends on is created during the apim pass.
-module anthropic_inference_api 'anthropic-inference-api.bicep' = {
-  name: 'anthropic-inference-api-deployment'
+module common_ai_gateway_setup 'common-apim-setup.bicep' = {
+  name: 'common-ai-gateway-setup'
   params: {
-    apiManagementName: apim.outputs.apimName
+    apimName: apim.outputs.apimName
     apimLoggerId: apim.outputs.apimLoggerId
-    anthropicServicesConfig: anthropicServicesConfig
-    anthropicApiKey: anthropicApiKey
+    location: location
+    apimSku: 'Standardv2'
+    gatewayAuthenticationType: authType
+    acceptedTenantIds: [subscription().tenantId]
+    foundryInstances: foundryInstances
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
-    appInsightsId: appInsightsId
+    appInsightsResourceId: appInsightsId
   }
   dependsOn: [apim_update]
 }
@@ -121,7 +116,7 @@ module aiGatewayAnthropicConnectionStatic '../ai/connection-apim-gateway.bicep' 
     aiFoundryName: aiFoundryName
     connectionName: 'apim-${resourceToken}-anthropic-static'
     apimResourceId: apim.outputs.apimResourceId
-    apiName: anthropic_inference_api.outputs.anthropicApiName
+    apiName: common_ai_gateway_setup.outputs.inferenceApiName
     apimSubscriptionName: first(apim.outputs.subscriptions).name
     isSharedToAll: true
     staticModels: anthropicStaticModels
@@ -139,12 +134,24 @@ module aiGatewayAnthropicProjectConnectionStatic '../ai/connection-apim-gateway.
       aiFoundryProjectName: projectName
       connectionName: 'apim-${resourceToken}-anthropic-static-for-${projectName}'
       apimResourceId: apim.outputs.apimResourceId
-      apiName: anthropic_inference_api.outputs.anthropicApiName
+      apiName: common_ai_gateway_setup.outputs.inferenceApiName
       apimSubscriptionName: first(filter(apim.outputs.subscriptions, (sub) => contains(sub.name, projectName))).name
       isSharedToAll: false
       staticModels: anthropicStaticModels
       deploymentInPath: 'false'
       authType: authType
+    }
+  }
+]
+
+module apim_role_assignments '../iam/role-assignment-cognitiveServices.bicep' = [
+  for (instance, i) in foundryInstances: if (!(instance.?isApim ?? false)) {
+    name: 'apim-role-${i}-${resourceToken}'
+    scope: resourceGroup(split(instance.resourceId, '/')[2], split(instance.resourceId, '/')[4])
+    params: {
+      accountName: last(split(instance.resourceId, '/'))
+      principalId: apim.outputs.apimPrincipalId
+      roleName: 'Cognitive Services User'
     }
   }
 ]

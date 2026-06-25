@@ -12,7 +12,9 @@
 
     NOTE: deliberately NOT inheriting `<base />` so the API-level per-model
     routing fragment (which expects a `/deployments/{name}/...` URL) doesn't
-    fire on the listing path.
+    fire on the listing path. {JWT_VALIDATION} below is injected by Bicep
+    (common-apim-setup.bicep) so the API-level Entra ID auth is preserved
+    even though we skip <base />.
 -->
 <policies>
     <inbound>
@@ -30,6 +32,7 @@
                 <header>*</header>
             </expose-headers>
         </cors>
+        {JWT_VALIDATION}
         <return-response>
             <set-status code="200" reason="OK" />
             <set-header name="Content-Type" exists-action="override">

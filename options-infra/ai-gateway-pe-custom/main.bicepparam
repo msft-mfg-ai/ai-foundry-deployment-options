@@ -1,7 +1,7 @@
 using 'main.bicep'
 
-var openAiLocationValue = readEnvironmentVariable('OPENAI_LOCATION', '')
-param openAiLocation = empty(openAiLocationValue) ? null : openAiLocationValue
+// Foundry instances discovered by the `preprovision-list-foundry-models` hook.
+param foundryInstances = json(readEnvironmentVariable('FOUNDRY_INSTANCES_JSON', '[]'))
 
 var apimPublicEnabledValue = readEnvironmentVariable('APIM_PUBLIC_ENABLED', '')
 param apimPublicEnabled = toLower(apimPublicEnabledValue) == 'true' ? true : false

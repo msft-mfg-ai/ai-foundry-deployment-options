@@ -12,13 +12,17 @@
 //   Foundry instance. Location is included in the name for uniqueness and clarity.
 //
 // Pool naming convention:
-//   {model-clean}-ptu-pool  — Mixed pool: PTU at priority 1, PAYG at priority 2
-//                              Circuit breaker on PTU backends handles failover.
-//   {model-clean}-payg-pool — PAYG backends only (used by Standard callers)
+//   {model-clean}-pool      — Mixed pool: PTU at priority 1, in-region PAYG at
+//                              priority 50, out-of-region PAYG at priority 100.
+//                              Circuit breaker on PTU backends handles PTU→PAYG
+//                              failover. Created only when both PTU + PAYG
+//                              backends exist for the model.
+//   {model-clean}-payg-pool — PAYG backends only (used by Standard callers and
+//                              as a fallback when no PTU exists).
 //
-// Production callers route to the mixed pool where APIM's circuit breaker
-// handles PTU→PAYG failover natively. Standard callers route directly to
-// the PAYG-only pool to avoid consuming PTU capacity.
+// Production (priority=1) callers route to the mixed pool where APIM's circuit
+// breaker handles PTU→PAYG failover natively. Standard (priority>1) callers
+// route directly to the PAYG-only pool to avoid consuming PTU capacity.
 //
 // IMPORTANT: All instances serving the same model MUST use the same deployment
 // name (= modelName). This is enforced by the type system (no deploymentName
@@ -28,6 +32,8 @@
 import { foundryInstanceType } from 'types.bicep'
 
 param apimServiceName string
+@description('APIM deployment region. PAYG backends in this region get priority 50; other regions get priority 100.')
+param apimLocation string
 param configureCircuitBreaker bool = true
 
 @description('Array of existing Foundry instances to register as backends. Each must be PTU-only or paygo-only.')
@@ -51,7 +57,10 @@ var allDeployments = flatten(map(
       backendName: '${instance.name}-${replace(replace(dep.modelName, '.', ''), '-', '')}-${replace(replace(instance.location, ' ', ''), '.', '')}-backend'
       isPtu: instance.isPtu
       ptuCapacityTpm: dep.?ptuCapacityTpm ?? 0
-      priority: instance.?priority ?? (instance.isPtu ? 1 : 2)
+      // PAYG priority is region-aware so APIM prefers in-region PAYG backends
+      // for lower latency before failing over to out-of-region PAYG. PTU
+      // always wins via priority 1.
+      priority: instance.isPtu ? 1 : (toLower(instance.location) == toLower(apimLocation) ? 50 : 100)
       weight: instance.?weight ?? 1
       location: instance.location
       // We support two connection shapes on the same APIM `/inference` API:
@@ -146,28 +155,29 @@ var paygoCountPerModel = reduce(
     })
 )
 
-// -- Mixed Pools (PTU at priority 1 + PAYG at priority 2) ---------------------
-// Used by Production callers. Circuit breaker on PTU backends handles failover
-// to PAYG automatically when PTU returns 429/503.
+// -- Mixed Pools (PTU at priority 1 + region-aware PAYG priorities) ----------
+// Used by priority=1 (production) callers. Pool name `{model}-pool` is what
+// per-model-routing-fragment.xml picks when priority==1. Circuit breaker on
+// PTU backends handles failover to PAYG automatically when PTU returns 429/503.
 @batchSize(1)
 resource mixedPools 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' = [
   for (model, i) in uniqueModels: if (ptuCountPerModel[model] > 0 && paygoCountPerModel[model] > 0) {
     parent: apimService
-    name: '${replace(replace(model, '.', ''), '-', '')}-ptu-pool'
+    name: '${replace(replace(model, '.', ''), '-', '')}-pool'
     dependsOn: [backends]
     properties: {
-      description: 'PTU pool for ${model} — ${ptuCountPerModel[model]} PTU (pri 1) + ${paygoCountPerModel[model]} PAYG (pri 2) with circuit breaker failover'
+      description: 'Mixed pool for ${model} — ${ptuCountPerModel[model]} PTU (pri 1) + ${paygoCountPerModel[model]} PAYG (in-region pri 50 / out-of-region pri 100) with circuit breaker failover'
       type: 'Pool'
       pool: {
         services: concat(
           map(filter(allDeployments, d => d.modelName == model && d.isPtu), d => {
             id: '/backends/${d.backendName}'
-            priority: 1
+            priority: d.priority
             weight: d.weight
           }),
           map(filter(allDeployments, d => d.modelName == model && !d.isPtu), d => {
             id: '/backends/${d.backendName}'
-            priority: 2
+            priority: d.priority
             weight: d.weight
           })
         )
@@ -176,8 +186,8 @@ resource mixedPools 'Microsoft.ApiManagement/service/backends@2024-06-01-preview
   }
 ]
 
-// -- PAYG-Only Pools (for Standard callers) -----------------------------------
-// Standard callers should not consume PTU capacity.
+// -- PAYG-Only Pools (for Standard / non-priority callers) -------------------
+// All PAYG backends, region-aware priority (in-region 50 / out-of-region 100).
 @batchSize(1)
 resource paygoOnlyPools 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' = [
   for (model, i) in uniqueModels: if (paygoCountPerModel[model] > 0) {
@@ -190,7 +200,7 @@ resource paygoOnlyPools 'Microsoft.ApiManagement/service/backends@2024-06-01-pre
       pool: {
         services: map(filter(allDeployments, d => d.modelName == model && !d.isPtu), d => {
           id: '/backends/${d.backendName}'
-          priority: 1
+          priority: d.priority
           weight: d.weight
         })
       }
@@ -203,7 +213,7 @@ output backendNames array = [for (dep, i) in allDeployments: backends[i].name]
 output poolNames array = [
   for (model, i) in uniqueModels: {
     model: model
-    mixedPool: '${replace(replace(model, '.', ''), '-', '')}-ptu-pool'
+    mixedPool: '${replace(replace(model, '.', ''), '-', '')}-pool'
     paygoPool: '${replace(replace(model, '.', ''), '-', '')}-payg-pool'
     hasPtu: length(filter(allDeployments, d => d.modelName == model && d.isPtu)) > 0
     hasPaygo: paygoCountPerModel[model] > 0

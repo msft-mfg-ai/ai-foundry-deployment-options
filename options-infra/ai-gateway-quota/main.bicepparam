@@ -6,17 +6,14 @@ using 'main.bicep'
 //   and use 2 PAYG-only access contracts referencing that model.
 //
 // BYO MODE:
-//   Set FOUNDRY_PTU_RESOURCE_ID / FOUNDRY_ONE_RESOURCE_ID / FOUNDRY_TWO_RESOURCE_ID
-//   (with matching _ENDPOINT vars) to register existing Foundry accounts as
-//   backends instead. Self-hosted Foundry is skipped when any BYO instance is
-//   provided.
+//   Set EXISTING_FOUNDRY_RESOURCE_IDS (or OPENAI_RESOURCE_ID) before `azd up`.
+//   The preprovision hook writes FOUNDRY_INSTANCES_JSON, which registers those
+//   accounts as backends instead. Self-hosted Foundry is skipped when any BYO
+//   instance is provided.
 // ============================================================================
 
-var ptuResourceId = readEnvironmentVariable('FOUNDRY_PTU_RESOURCE_ID', '')
-var oneResourceId = readEnvironmentVariable('FOUNDRY_ONE_RESOURCE_ID', '')
-var twoResourceId = readEnvironmentVariable('FOUNDRY_TWO_RESOURCE_ID', '')
-
-var hasBYO = !empty(ptuResourceId) || !empty(oneResourceId) || !empty(twoResourceId)
+var discoveredFoundryInstances = json(readEnvironmentVariable('FOUNDRY_INSTANCES_JSON', '[]'))
+var hasBYO = !empty(discoveredFoundryInstances)
 
 // ============================================================================
 // Foundry Instances — existing backends to register with APIM (BYO mode)
@@ -29,57 +26,7 @@ var hasBYO = !empty(ptuResourceId) || !empty(oneResourceId) || !empty(twoResourc
 // APIM policy handles instant retry for the current request.
 // ============================================================================
 
-var ptuInstance = !empty(ptuResourceId)
-  ? [
-      {
-        name: 'foundry-eastus2-ptu'
-        resourceId: ptuResourceId
-        endpoint: readEnvironmentVariable('FOUNDRY_PTU_ENDPOINT', '')
-        location: 'eastus2'
-        isPtu: true
-        deployments: [
-          { modelName: 'gpt-4.1-mini', ptuCapacityTpm: 2000 }
-          { modelName: 'gpt-4.1', ptuCapacityTpm: 1000 }
-        ]
-      }
-    ]
-  : []
-
-var oneInstance = !empty(oneResourceId)
-  ? [
-      {
-        name: 'foundry-eastus2-paygo'
-        resourceId: oneResourceId
-        endpoint: readEnvironmentVariable('FOUNDRY_ONE_ENDPOINT', '')
-        location: 'eastus2'
-        isPtu: false
-        deployments: [
-          { modelName: 'gpt-4.1-mini' }
-          { modelName: 'gpt-4.1' }
-          { modelName: 'gpt-5.1-chat' }
-          { modelName: 'gpt-oss-120b' }
-        ]
-      }
-    ]
-  : []
-
-var twoInstance = !empty(twoResourceId)
-  ? [
-      {
-        name: 'foundry-westus-paygo'
-        resourceId: twoResourceId
-        endpoint: readEnvironmentVariable('FOUNDRY_TWO_ENDPOINT', '')
-        location: 'westus'
-        isPtu: false
-        deployments: [
-          { modelName: 'gpt-4.1-mini' }
-          { modelName: 'gpt-oss-120b' }
-        ]
-      }
-    ]
-  : []
-
-param foundryInstances = union(ptuInstance, oneInstance, twoInstance)
+param foundryInstances = discoveredFoundryInstances
 
 // Self-contained: deploy a Foundry with gpt-4.1-mini unless any BYO is set.
 param createFoundryDeployments = hasBYO
@@ -188,6 +135,4 @@ var selfContainedContracts = [
 ]
 
 param accessContracts = hasBYO ? byoContracts : selfContainedContracts
-
-
 
