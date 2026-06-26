@@ -115,5 +115,69 @@ def access_token() -> str:
 
 
 @pytest.fixture(scope='session')
+def deployed_models(access_token) -> list[dict]:
+    """Discover what's deployed by calling the gateway's /inference/deployments
+    endpoint once per session. Returns the raw `value[]` list, where each
+    entry has shape `{"name": str, "properties": {"model": {"name", "version",
+    "format"}}}`. Used by capability-conditional fixtures (anthropic_model,
+    embedding_model) to skip tests when a model class isn't present.
+    """
+    import requests
+    from gateway import GATEWAY_URL
+    r = requests.get(
+        f'{GATEWAY_URL}/inference/deployments',
+        headers={'Authorization': f'Bearer {access_token}'},
+        timeout=30,
+    )
+    if r.status_code != 200:
+        return []
+    try:
+        return r.json().get('value', []) or []
+    except Exception:
+        return []
+
+
+def _model_format(d: dict) -> str:
+    """Extract the model format ('OpenAI', 'Anthropic', 'Cohere', ...) from a
+    deployment dict returned by /inference/deployments."""
+    return (((d.get('properties') or {}).get('model') or {}).get('format') or '').strip()
+
+
+def _pick_model(deployed_models: list[dict], match) -> str | None:
+    """Return the first deployment name where `match(deployment)` is True.
+    `match` receives the full deployment dict."""
+    for d in deployed_models:
+        name = (d.get('name') or '').strip()
+        if name and match(d):
+            return name
+    return None
+
+
+@pytest.fixture(scope='session')
+def anthropic_model(deployed_models) -> str:
+    """First deployed Anthropic model, or skip the test if none.
+    Detected by `properties.model.format == 'Anthropic'`."""
+    name = _pick_model(deployed_models, lambda d: _model_format(d).lower() == 'anthropic')
+    if not name:
+        pytest.skip('No Anthropic model deployed (no deployment with format=Anthropic)')
+    return name
+
+
+@pytest.fixture(scope='session')
+def embedding_model(deployed_models) -> str:
+    """First deployed embedding model, or skip the test if none.
+    Detected by name (e.g. text-embedding-3-small, ada-002) — embeddings use
+    the same OpenAI format value as chat models so we can't filter on format."""
+    name = _pick_model(
+        deployed_models,
+        lambda d: 'embedding' in (d.get('name') or '').lower()
+                  or (d.get('name') or '').lower().startswith('ada-'),
+    )
+    if not name:
+        pytest.skip('No embedding model deployed in /inference/deployments')
+    return name
+
+
+@pytest.fixture(scope='session')
 def subscription_key() -> str:
     return APIM_SUBSCRIPTION_KEY

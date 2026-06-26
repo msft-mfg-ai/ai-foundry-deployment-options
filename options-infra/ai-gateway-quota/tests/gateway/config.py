@@ -47,6 +47,12 @@ CLIENT_SECRET: str = _first('CLIENT_SECRET', 'AZURE_CLIENT_SECRET')
 # Optional — only needed if the deployed gateway requires APIM subscription keys.
 APIM_SUBSCRIPTION_KEY: str = _first('APIM_SUBSCRIPTION_KEY', 'APIM_API_KEY')
 
+# Optional — APIM SKU the gateway is deployed on. Used to skip tests that
+# require features only available on higher tiers (e.g. the OpenAI v1 API
+# surface needs 100+ API operations, which only StandardV2 and Premium
+# support). Leave empty to attempt every test regardless of tier.
+APIM_SKU: str = _optional('APIM_SKU')
+
 # Optional explicit bearer token. When set, the suite skips Azure credentials.
 TEST_ACCESS_TOKEN: str = _optional('TEST_ACCESS_TOKEN')
 

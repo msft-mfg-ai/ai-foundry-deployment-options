@@ -3,25 +3,31 @@
         <base />
 
         <!-- ================================================================ -->
-        <!-- Legacy path compatibility                                        -->
+        <!-- Path compatibility shims                                         -->
         <!--                                                                  -->
-        <!-- The Azure OpenAI SDK historically sends                          -->
-        <!--   /inference/openai/deployments/{name}/chat/completions          -->
-        <!-- Our API operations are defined at                                -->
-        <!--   /inference/deployments/{name}/chat/completions                 -->
+        <!-- This single policy is shared by three APIs with different inbound -->
+        <!-- shapes; the rewrite picks the right one based on OriginalUrl:    -->
         <!--                                                                  -->
-        <!-- APIM strips the API base path (/inference) BEFORE policies run,  -->
-        <!-- so inside this policy context.Request.Url.Path is one of:        -->
-        <!--   /openai/deployments/{name}/...   (legacy SDK shape)            -->
-        <!--   /deployments/{name}/...          (modern shape)                -->
-        <!-- The backend URL already ends in /openai, so we forward the      -->
-        <!-- relative path WITHOUT the /openai prefix to avoid /openai/openai -->
-        <!-- doubling. We strip the leading /openai when present and          -->
-        <!-- preserve the original query string.                              -->
+        <!--   /inference/openai/...  (legacy AzureOpenAI SDK)                -->
+        <!--     APIM strips /inference → policy sees /openai/...             -->
+        <!--     Backend URL ends in /openai, so we strip the leading /openai -->
+        <!--     to avoid /openai/openai doubling.                            -->
+        <!--                                                                  -->
+        <!--   /inference/...         (modern AzureOpenAI shape)              -->
+        <!--     /openai/deployments/{name}/... ; no rewrite needed.          -->
+        <!--                                                                  -->
+        <!--   /openai-v1/...         (OpenAI native shape)                   -->
+        <!--     Body has {"model": "..."}; URL has no /deployments segment   -->
+        <!--     and no api-version. Foundry's "Next-generation v1 API" (GA  -->
+        <!--     2025) accepts this shape at /openai/v1/... — so we prepend  -->
+        <!--     /v1 to land on that surface (final = /openai/v1/...).        -->
         <!-- ================================================================ -->
         <choose>
             <when condition="@(context.Request.OriginalUrl.Path.StartsWith(&quot;/inference/openai/&quot;, StringComparison.OrdinalIgnoreCase))">
                 <rewrite-uri template="@(context.Request.OriginalUrl.Path.Substring(&quot;/inference/openai&quot;.Length))" />
+            </when>
+            <when condition="@(context.Request.OriginalUrl.Path.StartsWith(&quot;/openai-v1/&quot;, StringComparison.OrdinalIgnoreCase))">
+                <rewrite-uri template="@(&quot;/v1&quot; + context.Request.Url.Path)" />
             </when>
         </choose>
 

@@ -28,6 +28,7 @@ import requests
 
 from gateway import (
     API_URL,
+    APIM_SKU,
     APIM_SUBSCRIPTION_KEY,
     CONFIG_UPDATE_URL,
     DEFAULT_MODEL,
@@ -479,6 +480,19 @@ def test_azure_openai_surface(model, expected_contract):
 # 12. OpenAI v1 surface — auth must work even if backend isn't fully wired.
 # ---------------------------------------------------------------------------
 
+# Tiers that can host the full OpenAI v1 OpenAPI spec (100+ operations).
+# BasicV2 / StandardV1 / Developer / Consumption cap out below that limit,
+# so the openai-v1 API simply isn't routed at all on those SKUs.
+_OPENAI_V1_SKUS = {'StandardV2', 'Premium'}
+
+
+@pytest.mark.skipif(
+    APIM_SKU != '' and APIM_SKU not in _OPENAI_V1_SKUS,
+    reason=(
+        f'APIM_SKU={APIM_SKU!r} cannot host the OpenAI v1 spec '
+        f'(>100 operations); only StandardV2/Premium do.'
+    ),
+)
 def test_openai_v1_surface(access_token, model):
     """WHAT: POST to /openai/v1/chat/completions (OpenAI-shape compatibility surface).
     HOW:   Calls with a real bearer; payload uses the OpenAI v1 shape (no
@@ -511,6 +525,73 @@ def test_openai_v1_surface(access_token, model):
     assert r.status_code not in (401, 403), (
         f'OpenAI v1 surface returned auth error {r.status_code}: {r.text[:200]}'
     )
+
+
+# ---------------------------------------------------------------------------
+# 12a. Anthropic / Claude family — only when an Anthropic model is deployed.
+# ---------------------------------------------------------------------------
+
+def test_chat_anthropic_model(anthropic_model, expected_contract):
+    """WHAT: Send a chat completion to a deployed Anthropic (Claude) model.
+    HOW:   Auto-discovered via /inference/deployments (skipped when no
+           deployment has properties.model.format == 'Anthropic'). Uses the
+           standard /inference/ path — the gateway policy auto-injects
+           `anthropic-version` for claude-* models so the OpenAI SDK shape
+           works against the Anthropic backend transparently.
+    WHY:   Anthropic models reach the same JWT/contract pipeline through a
+           different backend (api.anthropic.com style) than Azure OpenAI.
+           This test ensures contract enforcement and per-model routing work
+           for non-OpenAI backends too.
+    """
+    r = send_request(model=anthropic_model, prompt='hi', max_tokens=4)
+    print(f'│  → POST {r.url}')
+    print(f'│  ← {_summary(r)}')
+    assert r.status_code in (200, 429), (
+        f'Anthropic chat ({anthropic_model}) failed: {r.status_code} {r.body_text[:200]}'
+    )
+    assert r.caller_name == expected_contract, (
+        f'Caller mismatch on Anthropic surface: {r.caller_name!r}'
+    )
+
+
+# ---------------------------------------------------------------------------
+# 12b. Embeddings — only when an embedding model is deployed.
+# ---------------------------------------------------------------------------
+
+def test_embeddings_model(access_token, embedding_model, expected_contract):
+    """WHAT: POST to /inference/deployments/{model}/embeddings.
+    HOW:   Auto-discovered via /inference/deployments (skipped when no
+           deployment name matches 'embedding' / 'ada-'). Sends a single
+           short input and expects an embedding vector in the response.
+    WHY:   Embeddings use the same APIM path-routing as chat completions but
+           a different OpenAI endpoint shape (no `messages`, no `max_tokens`).
+           This test ensures the per-model pool routing + JWT pipeline work
+           for non-chat OpenAI endpoints.
+    """
+    url = (
+        f'{GATEWAY_URL}/inference/deployments/{embedding_model}/embeddings'
+        f'?api-version={API_VERSION}'
+    )
+    r = requests.post(
+        url,
+        headers=_headers(Authorization=f'Bearer {access_token}', **{'Content-Type': 'application/json'}),
+        json={'input': 'hello world', 'model': embedding_model},
+        timeout=30,
+    )
+    caller = r.headers.get('x-caller-name')
+    print(f'│  → POST {url}')
+    print(f'│  ← status={r.status_code}  caller={caller!r}  model={embedding_model}')
+    assert r.status_code in (200, 429), (
+        f'Embeddings ({embedding_model}) failed: {r.status_code} {r.text[:200]}'
+    )
+    assert caller == expected_contract, (
+        f'Caller mismatch on embeddings surface: {caller!r}'
+    )
+    if r.status_code == 200:
+        data = r.json().get('data', [])
+        assert data and isinstance(data[0].get('embedding'), list) and len(data[0]['embedding']) > 0, (
+            f'Embeddings response missing vector: {r.text[:200]}'
+        )
 
 
 # ---------------------------------------------------------------------------
