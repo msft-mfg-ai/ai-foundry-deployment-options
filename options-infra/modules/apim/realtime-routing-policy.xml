@@ -5,22 +5,23 @@
         Applied to the auto-created `onHandshake` operation of the realtime
         WebSocket API. WebSocket APIs cannot use APIM backend *pools* (a
         connection is 1:1 between client and backend and can't be
-        load-balanced), so we route per-deployment to a concrete APIM backend
-        with a `wss://` URL via `set-backend-service backend-id="…"`.
+        load-balanced), so instead of `set-backend-service backend-id="<pool>"`
+        we route per-deployment to a concrete `wss://` base URL via
+        `set-backend-service base-url="…"`.
 
         Token replacement (done in v2/realtime-ws-api.bicep before load):
           {JWT_VALIDATION}  optional <validate-jwt> block (empty = no inbound
                             caller-token validation).
           {ROUTING_MAP}     XML-encoded JSON object mapping deployment/model
-                            name -> concrete APIM backend ID, e.g.
-                            {"gpt-realtime":"foundry-gptrealtime-eastus-realtime-backend"}.
+                            name -> wss base URL, e.g.
+                            {"gpt-realtime":"wss://acct.openai.azure.com/openai/realtime"}.
 
         Flow:
           1. (optional) validate the caller's Entra ID token.
           2. Read the requested deployment from the `deployment` query param
              (legacy realtime URL) falling back to `model` (GA realtime URL).
-          3. Look the deployment up in the routing map and select the concrete
-             APIM backend. Unknown/empty deployments fall back to the first entry.
+          3. Look the deployment up in the routing map and override the backend
+             base URL. Unknown/empty deployments fall back to the first entry.
           4. Acquire an APIM managed-identity token for Cognitive Services and
              set it as the backend `Authorization` header (replaces the caller
              token). APIM's system-assigned identity has `Cognitive Services
@@ -35,7 +36,7 @@
     <inbound>
         <base />
         {JWT_VALIDATION}
-        <!-- Routing map: deployment/model name -> concrete APIM backend ID. -->
+        <!-- Routing map: deployment/model name -> wss base URL. -->
         <set-variable name="realtimeRoutingMap" value="{ROUTING_MAP}" />
         <!-- Requested deployment: `deployment` (legacy) then `model` (GA). -->
         <set-variable name="requestedDeployment" value="@{
@@ -45,8 +46,8 @@
             }
             return dep ?? &quot;&quot;;
         }" />
-        <!-- Resolve the concrete APIM backend ID from the map. -->
-        <set-variable name="realtimeBackendId" value="@{
+        <!-- Resolve the backend wss base URL from the map. -->
+        <set-variable name="realtimeBackendUrl" value="@{
             var map = Newtonsoft.Json.JsonConvert.DeserializeObject&lt;System.Collections.Generic.Dictionary&lt;string, string&gt;&gt;((string)context.Variables[&quot;realtimeRoutingMap&quot;]);
             var dep = (string)context.Variables[&quot;requestedDeployment&quot;];
             if (!string.IsNullOrEmpty(dep) &amp;&amp; map.ContainsKey(dep)) {
@@ -57,7 +58,7 @@
             }
             return &quot;&quot;;
         }" />
-        <set-backend-service backend-id="@((string)context.Variables[&quot;realtimeBackendId&quot;])" />
+        <set-backend-service base-url="@((string)context.Variables[&quot;realtimeBackendUrl&quot;])" />
         <authentication-managed-identity resource="https://cognitiveservices.azure.com" output-token-variable-name="managed-id-access-token" ignore-error="false" />
         <set-header name="Authorization" exists-action="override">
             <value>@("Bearer " + (string)context.Variables["managed-id-access-token"])</value>

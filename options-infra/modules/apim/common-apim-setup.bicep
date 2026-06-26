@@ -93,7 +93,6 @@ var realtimeRoutes realtimeRouteType[] = flatten(map(
     filter(inst.deployments, d => toLower(d.?modelFormat ?? '') == 'realtime' || (startsWith(toLower(d.modelName), 'gpt-') && contains(toLower(d.modelName), 'realtime'))),
     d => {
       deploymentName: d.modelName
-      backendId: '${inst.name}-${replace(replace(d.modelName, '.', ''), '-', '')}-${replace(replace(inst.location, ' ', ''), '.', '')}-realtime-backend'
       endpoint: '${replace(inst.endpoint, 'https:', 'wss:')}${endsWith(inst.endpoint, '/') ? '' : '/'}openai/realtime'
     }
   )
