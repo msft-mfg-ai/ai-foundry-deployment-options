@@ -25,6 +25,7 @@ import textwrap
 import pytest
 
 from gateway import (
+    APIM_SKU,
     APIM_SUBSCRIPTION_KEY,
     DEFAULT_CONTRACT_NAME,
     DEFAULT_MODEL,
@@ -43,6 +44,11 @@ from gateway import (
 
 def pytest_configure(config) -> None:
     validate_required_config()
+    config.addinivalue_line(
+        'markers',
+        'quota: test requires the gateway to be deployed with access contracts (quota mode). '
+        'Auto-skipped on open-mode deployments (no /ai-gateway/config.json endpoint).',
+    )
 
 
 def pytest_report_header(config) -> list[str]:
@@ -50,12 +56,13 @@ def pytest_report_header(config) -> list[str]:
     return [
         '',
         '=' * 78,
-        'ai-gateway-quota live integration tests',
+        'ai-gateway live integration tests',
         '=' * 78,
         f'  gateway:  {GATEWAY_URL}',
         f'  model:    {DEFAULT_MODEL}',
         f'  failover: {FAILOVER_MODEL}',
         f'  contract: {DEFAULT_CONTRACT_NAME}',
+        f'  apim sku: {APIM_SKU or "(not set — v1 spec tests will run)"}',
         f'  sub-key:  {"set" if APIM_SUBSCRIPTION_KEY else "(not set)"}',
         f'  token:    {"explicit (TEST_ACCESS_TOKEN)" if TEST_ACCESS_TOKEN else "client secret / DefaultAzureCredential"}',
         '',
@@ -63,6 +70,42 @@ def pytest_report_header(config) -> list[str]:
         'A line starting with "→" shows the URL/path hit; "←" shows what came back.',
         '=' * 78,
     ]
+
+
+def _probe_gateway_mode() -> str:
+    """Detect whether the gateway is in quota mode or open mode.
+
+    quota mode: contracts are wired, /ai-gateway/config.json returns 200.
+    open mode:  no contracts, /ai-gateway/config.json returns 404 (endpoint
+                isn't deployed).
+
+    Returns 'quota' or 'open'. We probe ANONYMOUSLY because the config.json
+    endpoint is intentionally public (the page is a viewer). Even if the
+    endpoint requires a key, 404 vs 401/403 still disambiguates.
+    """
+    import requests
+    try:
+        r = requests.get(f'{GATEWAY_URL}/ai-gateway/config.json', timeout=10)
+    except Exception:
+        return 'open'
+    # 200 → endpoint is wired (quota mode). 401/403 → endpoint exists but
+    # requires auth → still quota. Only a clean 404 means the endpoint isn't
+    # deployed at all (open mode).
+    return 'open' if r.status_code == 404 else 'quota'
+
+
+def pytest_collection_modifyitems(config, items) -> None:
+    """Auto-skip @pytest.mark.quota tests on open-mode deployments."""
+    mode = _probe_gateway_mode()
+    config._gateway_mode = mode  # exposed via the gateway_mode fixture
+    if mode == 'open':
+        skip_quota = pytest.mark.skip(
+            reason='Gateway is in open mode (no /ai-gateway/config.json). '
+                   'Deploy ai-gateway-quota with contracts to exercise these tests.'
+        )
+        for item in items:
+            if 'quota' in item.keywords:
+                item.add_marker(skip_quota)
 
 
 def pytest_runtest_setup(item) -> None:
@@ -94,18 +137,49 @@ def gateway_url() -> str:
 
 
 @pytest.fixture(scope='session')
-def model() -> str:
+def gateway_mode(request) -> str:
+    """'quota' if /ai-gateway/config.json is wired, else 'open'. Cached by
+    pytest_collection_modifyitems; falls back to a fresh probe for ad-hoc
+    runs (e.g. --collect-only didn't run)."""
+    return getattr(request.config, '_gateway_mode', None) or _probe_gateway_mode()
+
+
+def _deployed_model_names(deployed_models: list[dict]) -> set[str]:
+    return {(d.get('name') or '').strip() for d in deployed_models if d.get('name')}
+
+
+@pytest.fixture(scope='session')
+def model(deployed_models) -> str:
+    """Configured TEST_MODEL. Skips when not present in /inference/deployments.
+    Keeps the suite portable across gateways with different model catalogs."""
+    if deployed_models and DEFAULT_MODEL not in _deployed_model_names(deployed_models):
+        pytest.skip(
+            f"Configured TEST_MODEL={DEFAULT_MODEL!r} is not in "
+            f"/inference/deployments. Available: "
+            f"{sorted(_deployed_model_names(deployed_models))!r}. "
+            f"Set TEST_MODEL to one of those, or deploy {DEFAULT_MODEL!r}."
+        )
     return DEFAULT_MODEL
 
 
 @pytest.fixture(scope='session')
-def failover_model() -> str:
+def failover_model(deployed_models) -> str:
+    """Configured TEST_FAILOVER_MODEL. Skips when not deployed."""
+    if deployed_models and FAILOVER_MODEL not in _deployed_model_names(deployed_models):
+        pytest.skip(
+            f"Configured TEST_FAILOVER_MODEL={FAILOVER_MODEL!r} is not in "
+            f"/inference/deployments."
+        )
     return FAILOVER_MODEL
 
 
 @pytest.fixture(scope='session')
-def expected_contract() -> str:
-    return DEFAULT_CONTRACT_NAME
+def expected_contract(gateway_mode) -> str:
+    """In quota mode → the configured TEST_CONTRACT (e.g. 'Team Alpha').
+    In open mode → 'anonymous' (the caller-identity default when no contracts
+    are wired). This lets the same generic chat tests pass in both modes;
+    contract-specific assertions belong on @pytest.mark.quota tests."""
+    return DEFAULT_CONTRACT_NAME if gateway_mode == 'quota' else 'anonymous'
 
 
 @pytest.fixture(scope='session')
@@ -119,11 +193,11 @@ def deployed_models(access_token) -> list[dict]:
     """Discover what's deployed by calling the gateway's /inference/deployments
     endpoint once per session. Returns the raw `value[]` list, where each
     entry has shape `{"name": str, "properties": {"model": {"name", "version",
-    "format"}}}`. Used by capability-conditional fixtures (anthropic_model,
-    embedding_model) to skip tests when a model class isn't present.
+    "format"}}}`. Used by capability-conditional fixtures (model,
+    failover_model, anthropic_model, embedding_model) to skip tests when a
+    model class isn't present.
     """
     import requests
-    from gateway import GATEWAY_URL
     r = requests.get(
         f'{GATEWAY_URL}/inference/deployments',
         headers={'Authorization': f'Bearer {access_token}'},
@@ -153,29 +227,86 @@ def _pick_model(deployed_models: list[dict], match) -> str | None:
     return None
 
 
-@pytest.fixture(scope='session')
-def anthropic_model(deployed_models) -> str:
-    """First deployed Anthropic model, or skip the test if none.
-    Detected by `properties.model.format == 'Anthropic'`."""
-    name = _pick_model(deployed_models, lambda d: _model_format(d).lower() == 'anthropic')
-    if not name:
-        pytest.skip('No Anthropic model deployed (no deployment with format=Anthropic)')
-    return name
-
-
-@pytest.fixture(scope='session')
-def embedding_model(deployed_models) -> str:
-    """First deployed embedding model, or skip the test if none.
-    Detected by name (e.g. text-embedding-3-small, ada-002) — embeddings use
-    the same OpenAI format value as chat models so we can't filter on format."""
-    name = _pick_model(
-        deployed_models,
-        lambda d: 'embedding' in (d.get('name') or '').lower()
-                  or (d.get('name') or '').lower().startswith('ada-'),
+def _has_backend_pool(access_token: str, model_name: str) -> bool:
+    """Probe the inference path for a model — returns False on 404 (no APIM
+    backend pool exists, even though /inference/deployments listed the model).
+    Sends a tiny chat completion; any non-404 reply (200, 400, 429, 500…)
+    proves the pool is routed. Foundry's /inference/deployments may list
+    models that APIM hasn't been given a pool for yet."""
+    import requests
+    url = (
+        f'{GATEWAY_URL}/inference/deployments/{model_name}/chat/completions'
+        f'?api-version=2025-03-01-preview'
     )
-    if not name:
+    try:
+        r = requests.post(
+            url,
+            headers={'Authorization': f'Bearer {access_token}', 'Content-Type': 'application/json'},
+            json={'messages': [{'role': 'user', 'content': 'ping'}], 'max_tokens': 1},
+            timeout=15,
+        )
+    except Exception:
+        return False
+    return r.status_code != 404
+
+
+@pytest.fixture(scope='session')
+def anthropic_model(deployed_models, access_token) -> str:
+    """First deployed Anthropic model that ALSO has an APIM backend pool, or
+    skip the test if none. Detected by `properties.model.format == 'Anthropic'`
+    in /inference/deployments + a probe POST that doesn't 404."""
+    candidates = [
+        (d.get('name') or '').strip()
+        for d in deployed_models
+        if _model_format(d).lower() == 'anthropic' and (d.get('name') or '').strip()
+    ]
+    if not candidates:
+        pytest.skip('No Anthropic model deployed (no deployment with format=Anthropic)')
+    for name in candidates:
+        if _has_backend_pool(access_token, name):
+            return name
+    pytest.skip(
+        f'Anthropic deployments found ({candidates!r}) but none have an APIM '
+        f'backend pool — probe POSTs all returned 404. Pool wiring is missing '
+        f'in multi-foundry-backends.bicep for these models.'
+    )
+
+
+@pytest.fixture(scope='session')
+def embedding_model(deployed_models, access_token) -> str:
+    """First deployed embedding model that ALSO has an APIM backend pool, or
+    skip the test if none. Detected by name (embedding/ada-*) + probe POST."""
+    candidates = [
+        (d.get('name') or '').strip()
+        for d in deployed_models
+        if 'embedding' in (d.get('name') or '').lower()
+           or (d.get('name') or '').lower().startswith('ada-')
+    ]
+    if not candidates:
         pytest.skip('No embedding model deployed in /inference/deployments')
-    return name
+    # Embeddings use a different endpoint than chat; probe via a HEAD-like
+    # POST to the embeddings path. Same logic — 404 means no pool wired.
+    import requests
+    for name in candidates:
+        url = (
+            f'{GATEWAY_URL}/inference/deployments/{name}/embeddings'
+            f'?api-version=2025-03-01-preview'
+        )
+        try:
+            r = requests.post(
+                url,
+                headers={'Authorization': f'Bearer {access_token}', 'Content-Type': 'application/json'},
+                json={'input': 'ping', 'model': name},
+                timeout=15,
+            )
+        except Exception:
+            continue
+        if r.status_code != 404:
+            return name
+    pytest.skip(
+        f'Embedding deployments found ({candidates!r}) but none have an APIM '
+        f'backend pool — probe POSTs all returned 404.'
+    )
 
 
 @pytest.fixture(scope='session')
