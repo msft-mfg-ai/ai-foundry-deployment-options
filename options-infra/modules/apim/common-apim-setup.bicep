@@ -113,6 +113,9 @@ module perModelRoutingFragment 'per-model-routing-fragment.bicep' = {
   name: 'per-model-routing-fragment'
   params: {
     apiManagementName: apimName
+    // common-apim-setup treats all instances as PAYG (see comment below); no
+    // PTU pools are ever created here, so the ptu-models list is empty.
+    ptuModels: []
   }
 }
 

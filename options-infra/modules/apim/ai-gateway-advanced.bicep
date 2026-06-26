@@ -76,6 +76,25 @@ var validStorageMode = useStorageAccount ? true : fail('ai-gateway-advanced.bice
 var effectiveAcceptedTenantIds = empty(acceptedTenantIds) ? [tenant().tenantId] : acceptedTenantIds
 var acceptedTenantId = first(effectiveAcceptedTenantIds)
 
+// -- Derived: list of models whose mixed (PTU+PAYG) pool will be created ------
+// multi-foundry-backends.bicep creates `{model}-ptu-pool` only when a model has
+// BOTH at least one PTU backend and at least one PAYG backend. The per-model
+// routing fragment uses this list to decide whether a priority==1 caller can
+// be routed to the ptu-pool (else falls back to payg-pool).
+var advancedAllDeployments = flatten(map(
+  foundryInstances,
+  inst => map(inst.deployments, d => {
+    modelName: d.modelName
+    isPtu: inst.isPtu
+  })
+))
+var advancedUniqueModels = reduce(
+  advancedAllDeployments,
+  [],
+  (acc, d) => contains(acc, d.modelName) ? acc : concat(acc, [d.modelName])
+)
+var ptuPoolModelsClean = map(filter(advancedUniqueModels, m => length(filter(advancedAllDeployments, d => d.modelName == m && d.isPtu)) > 0 && length(filter(advancedAllDeployments, d => d.modelName == m && !d.isPtu)) > 0), m => replace(replace(m, '.', ''), '-', ''))
+
 // Replaces the `{JWT_VALIDATION}` token in policy-per-model.xml. Each accepted
 // tenant contributes BOTH the v1 (`sts.windows.net`) and v2
 // (`login.microsoftonline.com/.../v2.0`) issuer URLs since Entra tokens can
@@ -259,6 +278,12 @@ module perModelRoutingFragment 'per-model-routing-fragment.bicep' = {
   name: 'per-model-routing-fragment'
   params: {
     apiManagementName: apiManagementName
+    // Compute the list of model-clean names that have a {model}-ptu-pool
+    // deployed by multi-foundry-backends.bicep. A ptu-pool is created only when
+    // a model has BOTH at least one PTU and at least one PAYG backend (mixed
+    // pool). Models without PTU only get a payg-pool, so priority==1 callers
+    // for those models must fall back to payg routing.
+    ptuModels: ptuPoolModelsClean
   }
 }
 

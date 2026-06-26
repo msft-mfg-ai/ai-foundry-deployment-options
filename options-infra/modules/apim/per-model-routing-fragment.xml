@@ -59,10 +59,21 @@
          priority=2 (set in caller-identity-fragment.xml), so they hit the
          PAYG-only pool — matching the old behavior. -->
     <set-variable name="model-clean" value="@(((string)context.Variables[&quot;requestedModel&quot;]).Replace(&quot;.&quot;, &quot;&quot;).Replace(&quot;-&quot;, &quot;&quot;))" />
+    <!-- Models that have a {model-clean}-ptu-pool deployed (rendered at deploy
+         time by per-model-routing-fragment.bicep). Priority==1 callers route to
+         the PTU pool only when the requested model is in this list; otherwise
+         they fall back to the PAYG pool. -->
+    <set-variable name="ptu-models" value="{PTU_MODELS}" />
     <set-variable name="backend-pool" value="@{
         var clean = (string)context.Variables[&quot;model-clean&quot;];
         int priority = context.Variables.ContainsKey(&quot;priority&quot;) ? (int)context.Variables[&quot;priority&quot;] : 2;
-        return priority == 1 ? clean + &quot;-ptu-pool&quot; : clean + &quot;-payg-pool&quot;;
+        if (priority == 1) {
+            var ptuList = Newtonsoft.Json.JsonConvert.DeserializeObject&lt;string[]&gt;((string)context.Variables[&quot;ptu-models&quot;]);
+            if (ptuList != null &amp;&amp; System.Array.IndexOf(ptuList, clean) &gt;= 0) {
+                return clean + &quot;-ptu-pool&quot;;
+            }
+        }
+        return clean + &quot;-payg-pool&quot;;
     }" />
 
     <!-- Route to the per-model pool. `backend-id` accepts a pool name when the
