@@ -82,34 +82,23 @@ resource backends 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' 
       circuitBreaker: configureCircuitBreaker
         ? {
             rules: [
-              // Rule 1: 429 (rate-limit) — trip on a single occurrence so we
-              // fail over to the next priority backend immediately, and honor
-              // the upstream Retry-After header for trip duration.
+              // APIM permits exactly one circuit-breaker rule per backend.
+              // Trip on a single failover-worthy status (429 throttle, 408
+              // timeout, or 5xx) and respect upstream Retry-After when present
+              // so we fail over to the next priority backend immediately.
               {
-                name: '${dep.modelClean}-429-breaker'
+                name: '${dep.modelClean}-breaker'
                 failureCondition: {
                   count: 1
                   interval: 'PT1M'
-                  statusCodeRanges: [{ min: 429, max: 429 }]
-                }
-                tripDuration: 'PT1M'
-                acceptRetryAfter: true
-              }
-              // Rule 2: transient transport / 5xx errors — require 3 failures
-              // in 1 minute to avoid tripping on one-off blips.
-              {
-                name: '${dep.modelClean}-5xx-breaker'
-                failureCondition: {
-                  count: 3
-                  errorReasons: ['Server errors']
-                  interval: 'PT1M'
                   statusCodeRanges: [
                     { min: 408, max: 408 }
+                    { min: 429, max: 429 }
                     { min: 500, max: 504 }
                   ]
                 }
                 tripDuration: 'PT1M'
-                acceptRetryAfter: false
+                acceptRetryAfter: true
               }
             ]
           }

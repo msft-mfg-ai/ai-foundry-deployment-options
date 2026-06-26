@@ -61,12 +61,8 @@
     <set-variable name="model-clean" value="@(((string)context.Variables[&quot;requestedModel&quot;]).Replace(&quot;.&quot;, &quot;&quot;).Replace(&quot;-&quot;, &quot;&quot;))" />
     <set-variable name="backend-pool" value="@{
         var clean = (string)context.Variables[&quot;model-clean&quot;];
-        int p = 2;
-        object pv;
-        if (context.Variables.TryGetValue(&quot;priority&quot;, out pv) &amp;&amp; pv != null) {
-            int.TryParse(pv.ToString(), out p);
-        }
-        return p == 1 ? clean + &quot;-pool&quot; : clean + &quot;-payg-pool&quot;;
+        var priority = context.Variables.ContainsKey(&quot;priority&quot;) ? (string)context.Variables[&quot;priority&quot;] : &quot;2&quot;;
+        return priority == &quot;1&quot; ? clean + &quot;-pool&quot; : clean + &quot;-payg-pool&quot;;
     }" />
 
     <!-- Route to the per-model pool. `backend-id` accepts a pool name when the
