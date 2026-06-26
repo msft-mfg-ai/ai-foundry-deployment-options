@@ -227,86 +227,58 @@ def _pick_model(deployed_models: list[dict], match) -> str | None:
     return None
 
 
-def _has_backend_pool(access_token: str, model_name: str) -> bool:
-    """Probe the inference path for a model — returns False on 404 (no APIM
-    backend pool exists, even though /inference/deployments listed the model).
-    Sends a tiny chat completion; any non-404 reply (200, 400, 429, 500…)
-    proves the pool is routed. Foundry's /inference/deployments may list
-    models that APIM hasn't been given a pool for yet."""
-    import requests
-    url = (
-        f'{GATEWAY_URL}/inference/deployments/{model_name}/chat/completions'
-        f'?api-version=2025-03-01-preview'
-    )
-    try:
-        r = requests.post(
-            url,
-            headers={'Authorization': f'Bearer {access_token}', 'Content-Type': 'application/json'},
-            json={'messages': [{'role': 'user', 'content': 'ping'}], 'max_tokens': 1},
-            timeout=15,
-        )
-    except Exception:
-        return False
-    return r.status_code != 404
-
-
 @pytest.fixture(scope='session')
-def anthropic_model(deployed_models, access_token) -> str:
-    """First deployed Anthropic model that ALSO has an APIM backend pool, or
-    skip the test if none. Detected by `properties.model.format == 'Anthropic'`
-    in /inference/deployments + a probe POST that doesn't 404."""
-    candidates = [
-        (d.get('name') or '').strip()
-        for d in deployed_models
-        if _model_format(d).lower() == 'anthropic' and (d.get('name') or '').strip()
-    ]
-    if not candidates:
+def anthropic_model(deployed_models) -> str:
+    """First deployed Anthropic model, or skip the test if none.
+    Detected by `properties.model.format == 'Anthropic'` in
+    /inference/deployments. Discovery is authoritative — if a 404 comes back
+    from the actual test call, that's a gateway bug, not a test problem."""
+    name = _pick_model(deployed_models, lambda d: _model_format(d).lower() == 'anthropic')
+    if not name:
         pytest.skip('No Anthropic model deployed (no deployment with format=Anthropic)')
-    for name in candidates:
-        if _has_backend_pool(access_token, name):
-            return name
-    pytest.skip(
-        f'Anthropic deployments found ({candidates!r}) but none have an APIM '
-        f'backend pool — probe POSTs all returned 404. Pool wiring is missing '
-        f'in multi-foundry-backends.bicep for these models.'
-    )
+    return name
 
 
 @pytest.fixture(scope='session')
-def embedding_model(deployed_models, access_token) -> str:
-    """First deployed embedding model that ALSO has an APIM backend pool, or
-    skip the test if none. Detected by name (embedding/ada-*) + probe POST."""
-    candidates = [
-        (d.get('name') or '').strip()
-        for d in deployed_models
-        if 'embedding' in (d.get('name') or '').lower()
-           or (d.get('name') or '').lower().startswith('ada-')
-    ]
-    if not candidates:
-        pytest.skip('No embedding model deployed in /inference/deployments')
-    # Embeddings use a different endpoint than chat; probe via a HEAD-like
-    # POST to the embeddings path. Same logic — 404 means no pool wired.
-    import requests
-    for name in candidates:
-        url = (
-            f'{GATEWAY_URL}/inference/deployments/{name}/embeddings'
-            f'?api-version=2025-03-01-preview'
-        )
-        try:
-            r = requests.post(
-                url,
-                headers={'Authorization': f'Bearer {access_token}', 'Content-Type': 'application/json'},
-                json={'input': 'ping', 'model': name},
-                timeout=15,
-            )
-        except Exception:
-            continue
-        if r.status_code != 404:
-            return name
-    pytest.skip(
-        f'Embedding deployments found ({candidates!r}) but none have an APIM '
-        f'backend pool — probe POSTs all returned 404.'
+def embedding_model(deployed_models) -> str:
+    """First deployed embedding model, or skip the test if none.
+    Detected by name (embedding/ada-*) — embeddings share the OpenAI format
+    value with chat models, so name matching is the only signal."""
+    name = _pick_model(
+        deployed_models,
+        lambda d: 'embedding' in (d.get('name') or '').lower()
+                  or (d.get('name') or '').lower().startswith('ada-'),
     )
+    if not name:
+        pytest.skip('No embedding model deployed in /inference/deployments')
+    return name
+
+
+@pytest.fixture(scope='session')
+def tts_model(deployed_models) -> str:
+    """First deployed text-to-speech model (tts-* or any deployment named
+    containing 'tts'), or skip. Used by test_tts_binary and
+    test_whisper_transcription (which synthesizes its input first)."""
+    name = _pick_model(
+        deployed_models,
+        lambda d: (d.get('name') or '').lower().startswith('tts')
+                  or 'tts' in (d.get('name') or '').lower(),
+    )
+    if not name:
+        pytest.skip('No TTS model deployed in /inference/deployments')
+    return name
+
+
+@pytest.fixture(scope='session')
+def whisper_model(deployed_models) -> str:
+    """First deployed Whisper / speech-to-text model, or skip."""
+    name = _pick_model(
+        deployed_models,
+        lambda d: 'whisper' in (d.get('name') or '').lower(),
+    )
+    if not name:
+        pytest.skip('No Whisper model deployed in /inference/deployments')
+    return name
 
 
 @pytest.fixture(scope='session')

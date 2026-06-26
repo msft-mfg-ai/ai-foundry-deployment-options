@@ -226,21 +226,21 @@ def test_responses_azure_spec(model):
 # 8. TTS — exercises a binary response; verifies caller header is present.
 # ---------------------------------------------------------------------------
 
-def test_tts_binary(access_token):
-    """WHAT: Generate a tiny MP3 via /deployments/tts-hd/audio/speech.
-    HOW:   POSTs {model: 'tts-hd', input: 'Hello.', voice: 'alloy',
-           response_format: 'mp3'} with a real bearer token, then sniffs the
-           response body for an MP3/ID3 frame header.
+def test_tts_binary(access_token, tts_model):
+    """WHAT: Generate a tiny MP3 via /deployments/{tts_model}/audio/speech.
+    HOW:   Auto-discovered via /inference/deployments (skipped when no
+           deployment name contains 'tts'). POSTs a short input and sniffs
+           the response body for an MP3/ID3 frame header.
     WHY:   Binary response paths historically broke because APIM would try to
            apply transformation policies. Verifies the gateway streams audio
            bytes verbatim AND still injects the x-caller-name header on
            non-JSON responses — important for downstream telemetry/billing.
     """
-    url = f'{API_URL}/deployments/tts-hd/audio/speech?api-version={API_VERSION}'
+    url = f'{API_URL}/deployments/{tts_model}/audio/speech?api-version={API_VERSION}'
     r = requests.post(
         url,
         headers=_headers(Authorization=f'Bearer {access_token}', **{'Content-Type': 'application/json'}),
-        json={'model': 'tts-hd', 'input': 'Hello.', 'voice': 'alloy', 'response_format': 'mp3'},
+        json={'model': tts_model, 'input': 'Hello.', 'voice': 'alloy', 'response_format': 'mp3'},
         timeout=30,
     )
     ct = r.headers.get('Content-Type', '')
@@ -248,10 +248,6 @@ def test_tts_binary(access_token):
     print(f'│  ← status={r.status_code}  content-type={ct!r}  bytes={len(r.content)}  caller={r.headers.get("x-caller-name")!r}')
     if r.status_code == 429:
         pytest.skip('TTS TPM exhausted — auth/routing OK.')
-    if r.status_code == 500 and 'could not be found' in r.text:
-        pytest.skip(f'No TTS backend pool deployed: {r.text[:200]}')
-    if r.status_code == 404:
-        pytest.skip('TTS endpoint not routed on this gateway (no tts deployment)')
     assert r.status_code == 200, f'TTS failed: {r.status_code} {r.text[:200]}'
     assert ct.startswith('audio/'), f'Expected audio/*, got {ct!r}'
     assert len(r.content) > 1000, f'Audio body suspiciously small ({len(r.content)} bytes)'
@@ -267,12 +263,13 @@ def test_tts_binary(access_token):
 # 8b. STT — Whisper transcription via multipart upload.
 # ---------------------------------------------------------------------------
 
-def test_whisper_transcription(access_token):
-    """WHAT: Transcribe a short MP3 via /deployments/whisper/audio/transcriptions.
-    HOW:   First synthesizes audio with TTS (`tts-hd` → MP3 bytes), then POSTs
-           that MP3 as multipart/form-data to the Whisper deployment and
-           asserts the returned text contains a recognizable keyword from the
-           input phrase.
+def test_whisper_transcription(access_token, tts_model, whisper_model):
+    """WHAT: Transcribe a short MP3 via /deployments/{whisper_model}/audio/transcriptions.
+    HOW:   Both tts_model and whisper_model are auto-discovered via
+           /inference/deployments (skipped when either isn't present). First
+           synthesizes audio with TTS, then POSTs that MP3 as
+           multipart/form-data to the Whisper deployment and asserts the
+           returned text contains a recognizable keyword from the input.
     WHY:   Whisper is the only inbound-audio path through the gateway. The
            multipart upload pipeline is fundamentally different from JSON
            chat completions — APIM must NOT mangle the form body, and the
@@ -283,33 +280,28 @@ def test_whisper_transcription(access_token):
     phrase = 'The quick brown fox jumps over the lazy dog.'
 
     # --- 1) Synthesize the audio with TTS -------------------------------------
-    tts_url = f'{API_URL}/deployments/tts-hd/audio/speech?api-version={API_VERSION}'
+    tts_url = f'{API_URL}/deployments/{tts_model}/audio/speech?api-version={API_VERSION}'
     tts = requests.post(
         tts_url,
         headers=_headers(Authorization=f'Bearer {access_token}', **{'Content-Type': 'application/json'}),
-        json={'model': 'tts-hd', 'input': phrase, 'voice': 'alloy', 'response_format': 'mp3'},
+        json={'model': tts_model, 'input': phrase, 'voice': 'alloy', 'response_format': 'mp3'},
         timeout=30,
     )
     print(f'│  → POST {tts_url}')
     print(f'│  ← status={tts.status_code}  bytes={len(tts.content)}  caller={tts.headers.get("x-caller-name")!r}')
     if tts.status_code == 429:
         pytest.skip('TTS TPM exhausted while preparing Whisper input — auth/routing OK.')
-    if tts.status_code != 200:
-        # TTS itself is broken (e.g. backend pool missing) — that's covered by
-        # test_tts_binary. Don't double-fail; skip so this test stays focused
-        # on Whisper.
-        pytest.skip(
-            f'Skipping Whisper test — TTS prerequisite failed: '
-            f'{tts.status_code} {tts.text[:200]}'
-        )
+    assert tts.status_code == 200, (
+        f'TTS prerequisite failed: {tts.status_code} {tts.text[:200]}'
+    )
     assert tts.content[:3] == b'ID3' or tts.content[:2] in (b'\xff\xfb', b'\xff\xf3', b'\xff\xf2', b'\xff\xfa'), (
         f'TTS did not return MP3 bytes (header: {tts.content[:3].hex()})'
     )
 
     # --- 2) Transcribe with Whisper -------------------------------------------
-    stt_url = f'{API_URL}/deployments/whisper/audio/transcriptions?api-version={API_VERSION}'
+    stt_url = f'{API_URL}/deployments/{whisper_model}/audio/transcriptions?api-version={API_VERSION}'
     files = {'file': ('speech.mp3', tts.content, 'audio/mpeg')}
-    data = {'model': 'whisper', 'response_format': 'json', 'language': 'en'}
+    data = {'model': whisper_model, 'response_format': 'json', 'language': 'en'}
     stt = requests.post(
         stt_url,
         headers=_headers(Authorization=f'Bearer {access_token}'),  # no Content-Type — requests sets multipart boundary
@@ -555,10 +547,6 @@ def test_chat_anthropic_model(anthropic_model, expected_contract):
     r = send_request(model=anthropic_model, prompt='hi', max_tokens=4)
     print(f'│  → POST {r.url}')
     print(f'│  ← {_summary(r)}')
-    if r.status_code == 404:
-        pytest.skip(f'Anthropic model {anthropic_model!r} returned 404 — pool may be flaky.')
-    if r.status_code == 500 and 'could not be found' in r.body_text:
-        pytest.skip(f'Anthropic backend pool missing: {r.body_text[:200]}')
     assert r.status_code in (200, 429), (
         f'Anthropic chat ({anthropic_model}) failed: {r.status_code} {r.body_text[:200]}'
     )
@@ -594,10 +582,6 @@ def test_embeddings_model(access_token, embedding_model, expected_contract):
     caller = r.headers.get('x-caller-name')
     print(f'│  → POST {url}')
     print(f'│  ← status={r.status_code}  caller={caller!r}  model={embedding_model}')
-    if r.status_code == 404:
-        pytest.skip(f'Embeddings ({embedding_model!r}) returned 404 — pool may be flaky.')
-    if r.status_code == 500 and 'could not be found' in r.text:
-        pytest.skip(f'Embeddings backend pool missing: {r.text[:200]}')
     assert r.status_code in (200, 429), (
         f'Embeddings ({embedding_model}) failed: {r.status_code} {r.text[:200]}'
     )
