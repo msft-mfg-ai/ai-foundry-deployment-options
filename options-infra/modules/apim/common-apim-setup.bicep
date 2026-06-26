@@ -29,6 +29,9 @@ param acceptedTenantIds string[] = []
 @description('Existing Foundry/AI Services instances to register as backends.')
 param foundryInstances foundryInstanceType[]
 
+@description('When true, create a dedicated {model}-ptu-pool for every model with at least one PTU backend and route priority==1 callers there. When false (default), all backends (PTU + PAYG) live in a single {model}-pool with PTU at low priority (200) acting as overflow capacity.')
+param priorityRouting bool = false
+
 @description('Application Insights instrumentation key for logging.')
 param appInsightsInstrumentationKey string = ''
 @description('Application Insights resource ID for logging.')
@@ -113,18 +116,23 @@ module perModelRoutingFragment 'per-model-routing-fragment.bicep' = {
   name: 'per-model-routing-fragment'
   params: {
     apiManagementName: apimName
-    // common-apim-setup treats all instances as PAYG (see comment below); no
-    // PTU pools are ever created here, so the ptu-models list is empty.
-    ptuModels: []
+    foundryInstances: foundryInstances
+    priorityRouting: priorityRouting
   }
 }
 
 // ============================================================================
-// -- Per-model backends + per-model PAYG pools
+// -- Per-model backends + per-model pools
 // ============================================================================
-// All instances are treated as PAYG (isPtu=false) — PTU routing belongs in the
-// advanced gateway. Circuit breaker is still useful: it isolates a throttled
-// (instance, model) pair so APIM falls through to the next backend in the pool.
+// foundryInstances is honored as-is — instances flagged isPtu=true contribute
+// PTU backends. Pool topology depends on `priorityRouting`:
+//   false (default): single {model}-pool per model contains every backend
+//                    (PAYG pri 50/100, PTU pri 200 overflow). One pool.
+//   true:            {model}-pool is PAYG-only; {model}-ptu-pool (when at
+//                    least one PTU backend) contains PTU pri 1 + PAYG pri
+//                    50/100 fallback. priority==1 callers hit ptu-pool.
+// Circuit breaker isolates throttled (instance, model) pairs so APIM falls
+// through to the next backend in the pool.
 module foundryBackends 'advanced/multi-foundry-backends.bicep' = {
   name: 'foundry-backend-pools'
   params: {
@@ -132,6 +140,7 @@ module foundryBackends 'advanced/multi-foundry-backends.bicep' = {
     apimLocation: location
     foundryInstances: foundryInstances
     configureCircuitBreaker: true
+    priorityRouting: priorityRouting
   }
 }
 

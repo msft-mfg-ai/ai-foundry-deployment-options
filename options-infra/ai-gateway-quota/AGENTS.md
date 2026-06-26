@@ -6,7 +6,7 @@ This project implements the unified **APIM AI Gateway** for Azure AI Foundry. It
 
 - **Single policy stack**: `options-infra/modules/apim/policy-per-model.xml` is the canonical inference policy for the passthrough `inference` API, spec-backed `inference-api-azure` API, conditional `openai-api-v1` API (Premium/StandardV2 SKUs), and static-discovery operations.
 - **Access contract enforcement**: Each caller has a blob-backed contract defining TPM, monthly token quota, priority, and allowed models. Contracts are wired through `caller-identity-fragment.bicep`'s `contractsBlobUrl` parameter.
-- **2-tier priority routing**: `priority == 1` routes to `{model}-pool` (mixed PTU+PAYG); other priorities route to `{model}-payg-pool` (PAYG only).
+- **2-tier priority routing**: When `priorityRouting=true` (the default for this sample), `priority == 1` callers route to `{model}-ptu-pool` (PTU pri 1 + PAYG fallback); other priorities route to the default `{model}-pool` (PAYG only). When `priorityRouting=false`, both kinds of backends share a single `{model}-pool` (PTU at pri 200 as overflow).
 - **PTU + PAYG spillover**: PTU backends are priority 1, in-region PAYG priority 50, out-of-region PAYG priority 100. Circuit breakers isolate failover per `(instance, model, location)` backend.
 - **Portal dashboard**: `dashboard/dashboard.bicep` visualizes caller token usage, quota consumption, rate limits, failover counts, and remaining quota from APIM diagnostic headers.
 
@@ -49,10 +49,12 @@ Canonical request policy for all inference surfaces. It includes the shared frag
 
 ### `per-model-routing`
 
-Extracts the requested model from URL/body, computes `model-clean`, and selects the pool:
+Extracts the requested model from URL/body, computes `model-clean`, and selects the pool. With `priorityRouting=true` (this sample's default):
 
-- `priority == 1` → `{model-clean}-pool` (mixed PTU+PAYG)
-- otherwise → `{model-clean}-payg-pool` (PAYG only)
+- `priority == 1` AND model has PTU backends → `{model-clean}-ptu-pool` (PTU pri 1 + PAYG pri 50/100 fallback)
+- otherwise → `{model-clean}-pool` (PAYG only)
+
+With `priorityRouting=false`, the `ptu-models` list is empty so every caller routes to `{model-clean}-pool` (contains PAYG pri 50/100 and PTU pri 200 overflow).
 
 ### Config endpoints
 
@@ -64,10 +66,12 @@ Extracts the requested model from URL/body, computes `model-clean`, and selects 
 
 `advanced/multi-foundry-backends.bicep` creates one APIM backend per `(instance, model, location)`. This scopes circuit breakers per model so one throttled model does not disable other models on the same Foundry instance.
 
-Per model, it creates:
+Per model (with `priorityRouting=true`, this sample's default):
 
-- `{model-clean}-pool` when PTU and PAYG exist: PTU priority 1, in-region PAYG priority 50, out-of-region PAYG priority 100.
-- `{model-clean}-payg-pool`: PAYG-only pool for standard/open callers.
+- `{model-clean}-pool`: PAYG-only default pool (in-region PAYG pri 50, out-of-region PAYG pri 100). Created when ≥1 PAYG backend exists for the model.
+- `{model-clean}-ptu-pool`: PTU pri 1 + PAYG fallback (pri 50/100). Created when ≥1 PTU backend exists for the model.
+
+With `priorityRouting=false`, only a single `{model-clean}-pool` is created per model, containing every backend (PAYG pri 50/100, PTU pri 200 overflow).
 
 ## AZD Discovery Flow
 

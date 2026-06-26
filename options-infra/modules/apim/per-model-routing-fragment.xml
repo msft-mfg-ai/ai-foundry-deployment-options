@@ -5,7 +5,8 @@
         Extracts the requested model name from the inbound request and picks
         the matching per-model APIM backend pool (created by
         advanced/multi-foundry-backends.bicep with the naming convention
-        `{model-clean}-payg-pool`).
+        `{model-clean}-pool` (default) and optionally `{model-clean}-ptu-pool`
+        when priority routing is enabled).
 
         Output context variables (for downstream policies / observability):
           - requestedModel  raw model name from the URL or request body
@@ -42,27 +43,27 @@
 
     <!-- Compute pool name — must match advanced/multi-foundry-backends.bicep.
 
-         Two pools per model (when both kinds of backends exist):
-           {model-clean}-pool       — mixed pool (PTU pri 1 + in-region PAYG
-                                       pri 50 + out-of-region PAYG pri 100)
-                                       with circuit-breaker driven PTU→PAYG
-                                       failover. Created only when at least
-                                       one PTU backend exists for the model.
-           {model-clean}-payg-pool  — PAYG-only pool. Always created when at
-                                       least one PAYG backend exists.
+         priorityRouting=false (default): one {model-clean}-pool per model
+           containing ALL backends (PAYG pri 50/100, PTU pri 200 overflow).
+           Routing fragment always selects {model-clean}-pool.
+
+         priorityRouting=true:
+           {model-clean}-pool       — PAYG-only (Standard callers).
+           {model-clean}-ptu-pool   — PTU pri 1 + PAYG pri 50/100 fallback.
+                                       Created only when ≥1 PTU backend exists.
 
          Selection rule (priority comes from the caller-identity fragment):
-           priority == 1   → mixed pool (PTU preferred, PAYG fallback)
-           else            → PAYG-only pool
+           priority == 1 AND ptu-pool exists for model  → {model-clean}-ptu-pool
+           else                                          → {model-clean}-pool
 
          Callers without an identity fragment in the inbound chain default to
-         priority=2 (set in caller-identity-fragment.xml), so they hit the
-         PAYG-only pool — matching the old behavior. -->
+         priority=2 (set in caller-identity-fragment.xml), so they always hit
+         the default {model-clean}-pool. -->
     <set-variable name="model-clean" value="@(((string)context.Variables[&quot;requestedModel&quot;]).Replace(&quot;.&quot;, &quot;&quot;).Replace(&quot;-&quot;, &quot;&quot;))" />
     <!-- Models that have a {model-clean}-ptu-pool deployed (rendered at deploy
-         time by per-model-routing-fragment.bicep). Priority==1 callers route to
-         the PTU pool only when the requested model is in this list; otherwise
-         they fall back to the PAYG pool. -->
+         time by per-model-routing-fragment.bicep). Non-empty only when
+         priorityRouting=true. When empty, priority==1 callers fall through to
+         the default {model-clean}-pool. -->
     <set-variable name="ptu-models" value="{PTU_MODELS}" />
     <set-variable name="backend-pool" value="@{
         var clean = (string)context.Variables[&quot;model-clean&quot;];
@@ -73,7 +74,7 @@
                 return clean + &quot;-ptu-pool&quot;;
             }
         }
-        return clean + &quot;-payg-pool&quot;;
+        return clean + &quot;-pool&quot;;
     }" />
 
     <!-- Route to the per-model pool. `backend-id` accepts a pool name when the

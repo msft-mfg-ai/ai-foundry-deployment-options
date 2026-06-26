@@ -114,7 +114,7 @@
         <!-- Sets: requestedModel (if not already set by identity fragment),  -->
         <!--       model-clean, backend-pool                                  -->
         <!-- Priority-aware: priority==1 → {model}-pool (mixed PTU+PAYG),     -->
-        <!--                 else        → {model}-payg-pool                  -->
+        <!--                 else        → {model}-pool                       -->
         <!-- ================================================================ -->
         <include-fragment fragment-id="per-model-routing" />
 

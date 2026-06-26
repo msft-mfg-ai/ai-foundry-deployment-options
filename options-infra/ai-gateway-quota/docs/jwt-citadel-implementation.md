@@ -35,7 +35,7 @@
 - **Two-API loopback architecture** — Priority API handles identity/authorization/routing; PTU Gate API enforces PTU capacity. The loopback call is caught by `<retry>` — if PTU returns 429, the Priority API falls back to PAYG.
 - **Monthly quota is PAYG-only** — PTU is pre-paid, so P1 monthly quota enforcement would penalize teams for using capacity they already paid for.
 - **Policy fragments extracted** — Identity/contract resolution in `fragment-identity.xml` (~80 lines) shared across both APIs via `<include-fragment>`.
-- **Pools fully separated** — PTU-only (`{model}-ptu-pool`) and PAYG-only (`{model}-payg-pool`), no mixed pools. The routing policy selects the correct pool.
+- **Pools per priority routing mode** — With `priorityRouting=true` (this sample's default): `{model}-ptu-pool` (PTU pri 1 + PAYG fallback) for `priority==1` callers, and the default `{model}-pool` (PAYG-only) for everyone else. The routing fragment selects the correct pool.
 
 ## Implementation Files
 

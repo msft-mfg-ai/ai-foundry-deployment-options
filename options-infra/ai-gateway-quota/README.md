@@ -33,17 +33,17 @@ The gateway uses **APIM's native circuit breaker and priority-based backend pool
        │    Bearer token           │   │ 3. Per-model TPM check (llm-token-limit)          │  │
        ├──────────────────────────►│   │ 4. Monthly quota check (conditional)              │  │
        │                           │   │ 5. Route by priority:                             │  │
-       │                           │   │    P1 → Mixed pool (PTU pri 1, PAYG pri 50/100)        │  │
-       │                           │   │    P2 → PAYG-only pool                            │  │
+       │                           │   │    P1 → PTU pool (PTU pri 1, PAYG pri 50/100 fallback) │  │
+       │                           │   │    P2 → Default pool (PAYG only)                  │  │
        │                           │   └──────────────┬──────────────────┬─────────────────┘  │
        │                           └──────────────────┼──────────────────┼──────────────────────┘
                                                       │                  │
                                                       ▼                  ▼
                                            ┌───────────────────┐ ┌──────────────────┐
-                                           │ {model}-pool      │ │ {model}-payg-pool│
+                                           │ {model}-ptu-pool  │ │ {model}-pool     │
                                            │  PTU (pri 1)      │ │  PAYG backends   │
-                                           │  PAYG (pri 50/100)     │ │  (Standard only) │
-                                           │  circuit breaker   │ └──────────────────┘
+                                           │  PAYG (pri 50/100)│ │  (Standard only) │
+                                           │  circuit breaker  │ └──────────────────┘
                                            └───────────────────┘
                                              │               │
                                       ┌──────┴──────┐ ┌─────┴──────┐
@@ -65,8 +65,8 @@ Client → APIM Gateway
   5. Per-Model TPM       — llm-token-limit (counter-key = "caller:model", tokens-per-minute) → 429 if over
   6. Monthly Quota       — llm-token-limit (conditional — see Quota Compromise) → 429 if over
   7. Priority Routing    — `per-model-routing` chooses a backend pool based on priority tier:
-       P1 (Production): Mixed pool `{model}-pool` (PTU pri 1, in-region PAYG pri 50, out-of-region PAYG pri 100)
-       P2/other:        PAYG-only pool `{model}-payg-pool`, quota always enforced
+       P1 (Production): PTU pool `{model}-ptu-pool` (PTU pri 1, in-region PAYG pri 50, out-of-region PAYG pri 100 fallback)
+       P2/other:        Default pool `{model}-pool` (PAYG-only), quota always enforced
 ```
 
 
@@ -82,14 +82,14 @@ Client → APIM Gateway
 Two fragments keep the policy reusable:
 
 - `caller-identity` sets observability defaults in open mode. When `caller-identity-fragment.bicep` receives `contractsBlobUrl`, `{contracts-load-section}` injects JWT validation, blob lookup, identity matching, and per-model authorization. Without contracts, neutral defaults flow through and `<llm-token-limit>` blocks short-circuit because they are wrapped in `<choose when="model-tpm > 0">`.
-- `per-model-routing` extracts the requested model and routes `priority == 1` callers to `{model}-pool` (mixed PTU+PAYG) and other callers to `{model}-payg-pool` (PAYG only). PAYG backends are region-aware: in-region priority 50, out-of-region priority 100.
+- `per-model-routing` extracts the requested model and routes `priority == 1` callers to `{model}-ptu-pool` (PTU pri 1 + PAYG fallback) when a PTU pool exists for that model; all other callers (and `priority == 1` callers for models without PTU) go to the default `{model}-pool` (PAYG only). PAYG backends are region-aware: in-region priority 50, out-of-region priority 100.
 
 ## Priority Tiers
 
 | Priority | Label | Routing | Quota Enforcement |
 |----------|-------|---------|-------------------|
-| **P1** | Production | Mixed pool (PTU pri 1, PAYG pri 50/100) — circuit breaker failover | Conditional (see [Quota Compromise](#quota-compromise)) |
-| **P2** | Standard | PAYG only | Always enforced |
+| **P1** | Production | PTU pool `{model}-ptu-pool` (PTU pri 1, PAYG pri 50/100 fallback) — circuit breaker failover | Conditional (see [Quota Compromise](#quota-compromise)) |
+| **P2** | Standard | Default pool `{model}-pool` (PAYG only) | Always enforced |
 
 ## Quota Compromise
 
@@ -175,11 +175,11 @@ Backends created:
   ✓ foundry-ptu-gpt41mini-eastus-backend            (PTU: true,  Location: eastus)
 
 Pools created (per-model only, not per-region):
-  ✓ gpt41mini-pool        → mixed pool: PTU priority 1 + PAYG priority 50/100
-  ✓ gpt41mini-payg-pool   → PAYG-only pool: priority 50 in-region, 100 out-of-region
+  ✓ gpt41mini-pool       → default pool: PAYG-only, priority 50 in-region / 100 out-of-region
+  ✓ gpt41mini-ptu-pool   → PTU pool: PTU priority 1 + PAYG fallback priority 50/100
 ```
 
-**Pools remain model-scoped** — a mixed `{model}-pool` contains PTU plus PAYG backends when PTU exists, and `{model}-payg-pool` contains PAYG backends only. Circuit breakers on PTU backends handle automatic failover to PAYG without requiring region-based pool separation.
+**Pools remain model-scoped** — when `priorityRouting=true` (the default for this sample), the default `{model}-pool` is PAYG-only and a dedicated `{model}-ptu-pool` carries PTU at priority 1 with PAYG as fallback. Circuit breakers on PTU backends handle automatic failover to PAYG without requiring region-based pool separation. When `priorityRouting=false`, both kinds of backends collapse into a single `{model}-pool` (PTU at priority 200 as overflow).
 
 ## ⚠️ Critical: Consistent Deployment Names
 

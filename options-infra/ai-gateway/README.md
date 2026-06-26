@@ -19,7 +19,7 @@ This deployment creates a Foundry environment with an **external Azure API Manag
 │                        │ Azure API Management Basicv2 (Public)               │            │
 │                        │ - /inference/openai + /azure APIs                  │            │
 │                        │ - Per-model routing fragment                        │            │
-│                        │ - PAYG pools: {model-clean}-payg-pool             │            │
+│                        │ - Pools: {model-clean}-pool                       │            │
 │                        └──────────────────────────┬──────────────────────────┘            │
 │                                                   │                                       │
 │  Supporting Services: VNet │ Key Vault │ Storage │ Cosmos │ AI Search │ Private DNS       │
@@ -78,7 +78,7 @@ The `azure.yaml` `preprovision` hook runs [`preprovision-list-foundry-models.sh`
 All gateway variants use [`per-model-gateway.bicep`](../modules/apim/per-model-gateway.bicep) for APIM orchestration:
 
 - [`multi-foundry-backends.bicep`](../modules/apim/advanced/multi-foundry-backends.bicep) creates one APIM backend per `(instance, model)`, so a throttled deployment only disables that backend while sibling deployments continue serving traffic.
-- One PAYG backend pool is created per model, named `{model-clean}-payg-pool` after removing `.` and `-` from the model name; all instances serving that model join the same pool for APIM load balancing.
+- A single backend pool is created per model, named `{model-clean}-pool` after removing `.` and `-` from the model name; all instances serving that model join the same pool for APIM load balancing. The `ai-gateway-quota` sample sets `priorityRouting=true` to additionally create a dedicated `{model-clean}-ptu-pool` for `priority==1` callers.
 - The shared [`per-model-routing`](../modules/apim/per-model-routing-fragment.xml) policy fragment is wired into both `/inference/openai` and `/azure`. It reads the model from `/deployments/{name}/...` or the request body's `model`, computes `model-clean`, and routes to the matching pool.
 - APIM's system-assigned managed identity is granted **Cognitive Services User** on every backing instance, including instances in other resource groups or subscriptions.
 

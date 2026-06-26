@@ -40,7 +40,7 @@ Defined in `azure.yaml`:
 Contracts live in `main.bicepparam` and are typed by `../modules/apim/advanced/types.bicep` (`accessContractType`). One contract per caller team:
 
 - `name` — counter key and `x-caller-name`.
-- `priority: 1 | 2` — **1 = Production** (`{model}-pool`, mixed PTU+PAYG), **2 = Standard** (`{model}-payg-pool`, PAYG only).
+- `priority: 1 | 2` — **1 = Production** (`{model}-ptu-pool` when the model has PTU, else default pool), **2 = Standard** (`{model}-pool`, PAYG only when `priorityRouting=true`).
 - `identities: []` — deploy dynamically creates an Entra app reg; populate to bring your own app / MI / OID.
 - `models[]` — allow-list with per-model `tpm` and optional `ptuTpm`.
 - `monthlyQuota` — P1 with 100% PTU is exempt; partial-PTU and P2 are enforced.
@@ -51,7 +51,7 @@ Contracts are compiled into a JSON blob and loaded by the `caller-identity` frag
 
 - `policy-per-model.xml` is the only canonical inference policy. It applies to the passthrough `inference` API, spec-backed `inference-api-azure`, conditional `openai-api-v1`, and static-discovery operations.
 - `caller-identity` provides observability in open mode and JWT + blob contract authz in quota mode via `{contracts-load-section}`.
-- `per-model-routing` maps `priority == 1` to `{model}-pool`; all other callers go to `{model}-payg-pool`. PAYG priority is region-aware: in-region 50, out-of-region 100.
+- `per-model-routing` maps `priority == 1` to `{model}-ptu-pool` (when it exists for the requested model); all other callers go to the default `{model}-pool`. The `priorityRouting bool` param controls topology: `true` (this sample's default) gives a PAYG-only `{model}-pool` plus a `{model}-ptu-pool` containing PTU pri 1 + PAYG fallback; `false` collapses both into a single `{model}-pool` with PTU at pri 200 as overflow. PAYG priority is region-aware: in-region 50, out-of-region 100.
 - Backends are scoped per `(instance, model, location)` so circuit breakers do not disable unrelated models on the same Foundry.
 
 ## Config endpoints

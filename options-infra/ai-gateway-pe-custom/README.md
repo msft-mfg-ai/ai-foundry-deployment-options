@@ -77,7 +77,7 @@ No external Foundry / Azure OpenAI resource is required. This sample provisions 
 All gateway variants use [`per-model-gateway.bicep`](../modules/apim/per-model-gateway.bicep) for APIM orchestration:
 
 - [`multi-foundry-backends.bicep`](../modules/apim/advanced/multi-foundry-backends.bicep) creates one APIM backend per `(instance, model, location)`, so a throttled model only disables that backend while sibling models on the same Foundry continue serving traffic.
-- The backend module supports two pools per model: `{model-clean}-pool` for priority-1 mixed PTU+PAYG and `{model-clean}-payg-pool` for PAYG-only. These non-quota samples run in open mode, so traffic uses the PAYG-only pool.
+- The backend module supports a single `{model-clean}-pool` per model containing every backend (PAYG at priority 50 in-region / 100 out-of-region, PTU at priority 200 as overflow). The `ai-gateway-quota` sample sets `priorityRouting=true` to enable a dedicated `{model-clean}-ptu-pool`.
 - The shared [`per-model-routing`](../modules/apim/per-model-routing-fragment.xml) policy fragment is wired into the passthrough and spec-backed APIs. It reads the model from `/deployments/{name}/...` or the request body's `model`, computes `model-clean`, and routes to the matching pool.
 - APIM's system-assigned managed identity is granted **Cognitive Services User** on every backing instance, including instances in other resource groups or subscriptions.
 

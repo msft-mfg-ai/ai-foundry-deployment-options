@@ -136,3 +136,9 @@ var selfContainedContracts = [
 
 param accessContracts = hasBYO ? byoContracts : selfContainedContracts
 
+// Priority routing: create dedicated {model}-ptu-pool per PTU model and route
+// priority==1 callers there. The quota gateway showcases the full priority
+// contract semantics, so this is on by default. Set to false to collapse
+// every model into a single {model}-pool (PTU at low priority as overflow).
+param priorityRouting = true
+

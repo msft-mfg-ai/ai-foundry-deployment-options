@@ -67,6 +67,9 @@ param aiFoundryProjectNames string[] = []
 @description('Static model definitions for Foundry model discovery (optional)')
 param staticModels ModelType[] = []
 
+@description('When true, create a dedicated {model}-ptu-pool per model with PTU backends and route priority==1 callers there. When false (default), all backends live in a single {model}-pool with PTU at priority 200 (overflow).')
+param priorityRouting bool = false
+
 // -- Derived ------------------------------------------------------------------
 
 var apiManagementName = 'apim-ai-${resourceToken}'
@@ -75,25 +78,6 @@ var connectionPerProject = createFoundryConnections && !empty(aiFoundryProjectNa
 var validStorageMode = useStorageAccount ? true : fail('ai-gateway-advanced.bicep now requires useStorageAccount=true because advanced config endpoints read and update the contracts blob.')
 var effectiveAcceptedTenantIds = empty(acceptedTenantIds) ? [tenant().tenantId] : acceptedTenantIds
 var acceptedTenantId = first(effectiveAcceptedTenantIds)
-
-// -- Derived: list of models whose mixed (PTU+PAYG) pool will be created ------
-// multi-foundry-backends.bicep creates `{model}-ptu-pool` only when a model has
-// BOTH at least one PTU backend and at least one PAYG backend. The per-model
-// routing fragment uses this list to decide whether a priority==1 caller can
-// be routed to the ptu-pool (else falls back to payg-pool).
-var advancedAllDeployments = flatten(map(
-  foundryInstances,
-  inst => map(inst.deployments, d => {
-    modelName: d.modelName
-    isPtu: inst.isPtu
-  })
-))
-var advancedUniqueModels = reduce(
-  advancedAllDeployments,
-  [],
-  (acc, d) => contains(acc, d.modelName) ? acc : concat(acc, [d.modelName])
-)
-var ptuPoolModelsClean = map(filter(advancedUniqueModels, m => length(filter(advancedAllDeployments, d => d.modelName == m && d.isPtu)) > 0 && length(filter(advancedAllDeployments, d => d.modelName == m && !d.isPtu)) > 0), m => replace(replace(m, '.', ''), '-', ''))
 
 // Replaces the `{JWT_VALIDATION}` token in policy-per-model.xml. Each accepted
 // tenant contributes BOTH the v1 (`sts.windows.net`) and v2
@@ -153,6 +137,7 @@ module foundryBackends 'advanced/multi-foundry-backends.bicep' = {
     apimLocation: location
     foundryInstances: foundryInstances
     configureCircuitBreaker: true
+    priorityRouting: priorityRouting
   }
 }
 
@@ -278,12 +263,8 @@ module perModelRoutingFragment 'per-model-routing-fragment.bicep' = {
   name: 'per-model-routing-fragment'
   params: {
     apiManagementName: apiManagementName
-    // Compute the list of model-clean names that have a {model}-ptu-pool
-    // deployed by multi-foundry-backends.bicep. A ptu-pool is created only when
-    // a model has BOTH at least one PTU and at least one PAYG backend (mixed
-    // pool). Models without PTU only get a payg-pool, so priority==1 callers
-    // for those models must fall back to payg routing.
-    ptuModels: ptuPoolModelsClean
+    foundryInstances: foundryInstances
+    priorityRouting: priorityRouting
   }
 }
 

@@ -119,14 +119,18 @@ Instances must be **PTU-only or paygo-only** — do not mix on the same instance
 
 ### 6.1 Pool Design
 
-Each model gets **two pools** (PTU-only and PAYG-only):
+Each model can get **one or two pools**, controlled by the `priorityRouting` parameter on `multi-foundry-backends.bicep`:
 
 ```
-{model}-ptu-pool:      PTU backends only (for P1 routing via PTU Gate)
-{model}-payg-pool:     PAYG backends only (for P2/P3 and P1 PAYG fallback)
+priorityRouting=true  (ai-gateway-quota default):
+  {model}-ptu-pool:   PTU pri 1 + PAYG pri 50/100 fallback (P1 callers)
+  {model}-pool:       PAYG-only default pool (P2/P3 callers)
+
+priorityRouting=false (other samples' default):
+  {model}-pool:       All backends — PAYG pri 50/100 + PTU pri 200 overflow
 ```
 
-> **Resolution:** Pools were further separated from the original mixed-pool design. Each model now gets PTU-only and PAYG-only pools — no mixed pools. The Priority API policy selects the correct pool based on the routing case, and the PTU Gate API always targets the PTU-only pool.
+> **Resolution:** The single-pool topology is the default for samples that don't enforce contracts. The quota gateway opts into `priorityRouting=true` so PTU is reserved for `priority==1` callers and isolated from Standard traffic.
 
 ### 6.2 APIM Topology Options
 
@@ -170,8 +174,8 @@ Pools remain **model-scoped**, not region-scoped. This allows:
 - No region-based pool selection logic
 
 ```
-{model-clean}-ptu-pool      PTU backends from all regions at priority 1
-{model-clean}-payg-pool     PAYG backends from all regions at priority 2
+{model-clean}-ptu-pool     PTU pri 1 + PAYG fallback from all regions
+{model-clean}-pool         PAYG-only default pool from all regions
 ```
 
 ### Regional Preference (Optional)
