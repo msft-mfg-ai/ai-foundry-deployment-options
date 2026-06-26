@@ -532,27 +532,45 @@ def test_openai_v1_surface(access_token, model):
 # 12a. Anthropic / Claude family — only when an Anthropic model is deployed.
 # ---------------------------------------------------------------------------
 
-def test_chat_anthropic_model(anthropic_model, expected_contract):
-    """WHAT: Send a chat completion to a deployed Anthropic (Claude) model.
+def test_chat_anthropic_model(access_token, anthropic_model, expected_contract):
+    """WHAT: Send a chat completion to a deployed Anthropic (Claude) model
+           using the Anthropic-native /v1/messages surface.
     HOW:   Auto-discovered via /inference/deployments (skipped when no
-           deployment has properties.model.format == 'Anthropic'). Uses the
-           standard /inference/ path — the gateway policy auto-injects
-           `anthropic-version` for claude-* models so the OpenAI SDK shape
-           works against the Anthropic backend transparently.
-    WHY:   Anthropic models reach the same JWT/contract pipeline through a
-           different backend (api.anthropic.com style) than Azure OpenAI.
-           This test ensures contract enforcement and per-model routing work
-           for non-OpenAI backends too.
+           deployment has properties.model.format == 'Anthropic'). Calls
+           POST /inference/v1/messages with the Anthropic request shape.
+    WHY:   Foundry serves Anthropic models ONLY via the Anthropic-native
+           Messages API; the OpenAI /chat/completions deployment surface is
+           not supported for claude-* models. This test exercises the
+           JWT/contract pipeline through that distinct API surface.
     """
-    r = send_request(model=anthropic_model, prompt='hi', max_tokens=4)
-    print(f'│  → POST {r.url}')
-    print(f'│  ← {_summary(r)}')
+    url = f'{GATEWAY_URL}/inference/v1/messages'
+    r = requests.post(
+        url,
+        headers=_headers(
+            Authorization=f'Bearer {access_token}',
+            **{'Content-Type': 'application/json', 'anthropic-version': '2023-06-01'},
+        ),
+        json={
+            'model': anthropic_model,
+            'max_tokens': 16,
+            'messages': [{'role': 'user', 'content': 'hi'}],
+        },
+        timeout=30,
+    )
+    caller = r.headers.get('x-caller-name')
+    print(f'│  → POST {url}')
+    print(f'│  ← status={r.status_code}  caller={caller!r}  model={anthropic_model}')
     assert r.status_code in (200, 429), (
-        f'Anthropic chat ({anthropic_model}) failed: {r.status_code} {r.body_text[:200]}'
+        f'Anthropic chat ({anthropic_model}) failed: {r.status_code} {r.text[:300]}'
     )
-    assert r.caller_name == expected_contract, (
-        f'Caller mismatch on Anthropic surface: {r.caller_name!r}'
+    assert caller == expected_contract, (
+        f'Caller mismatch on Anthropic surface: {caller!r}'
     )
+    if r.status_code == 200:
+        body = r.json()
+        assert body.get('type') == 'message' and body.get('content'), (
+            f'Anthropic response missing content: {r.text[:300]}'
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -570,7 +588,7 @@ def test_embeddings_model(access_token, embedding_model, expected_contract):
            for non-chat OpenAI endpoints.
     """
     url = (
-        f'{GATEWAY_URL}/inference/deployments/{embedding_model}/embeddings'
+        f'{API_URL}/deployments/{embedding_model}/embeddings'
         f'?api-version={API_VERSION}'
     )
     r = requests.post(

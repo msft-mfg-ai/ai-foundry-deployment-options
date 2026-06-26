@@ -70,6 +70,8 @@ var allDeployments = flatten(map(
       weight: instance.?weight ?? 1
       location: instance.location
       endpoint: instance.endpoint
+      isApim: instance.?isApim ?? false
+      modelFormat: dep.?modelFormat ?? 'OpenAI'
     })
 ))
 
@@ -81,7 +83,20 @@ resource backends 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' 
     name: dep.backendName
     properties: {
       description: '${dep.isPtu ? 'PTU' : 'Paygo'} backend: ${dep.instanceName} → ${dep.modelName} (${dep.location})'
-      url: '${dep.endpoint}openai'
+      // URL path depends on (isApim, modelFormat):
+      //   • Direct Foundry/Cognitive Services account: backend exposes `/openai/deployments/{m}/...`
+      //     → URL = `{endpoint}openai`
+      //   • Chained APIM upstream serving OpenAI-style deployments:
+      //     → URL = `{endpoint}inference/openai` (upstream gateway path is `/inference`)
+      //   • Chained APIM upstream serving Anthropic-native /v1/messages:
+      //     → URL = `{endpoint}inference` (downstream calls /inference/v1/messages, policy
+      //       strips /inference/openai only; for non-openai paths it falls through unchanged
+      //       and we append the upstream's API prefix here)
+      url: dep.isApim
+        ? (toLower(dep.modelFormat) == 'anthropic'
+            ? '${dep.endpoint}inference'
+            : '${dep.endpoint}inference/openai')
+        : '${dep.endpoint}openai'
       protocol: 'http'
       credentials: {
         #disable-next-line BCP037
