@@ -418,37 +418,85 @@ async def apim_gateway_connection(project_client) -> str:
     return name
 
 
-def _pick_random_model(deployed_models: list[dict], match) -> str | None:
+def _pick_agent_model(
+    deployed_models: list[dict],
+    *,
+    env_var: str,
+    format_name: str,
+    name_predicate=None,
+) -> str | None:
+    """Pick a deployment for an agent-service test, preferring an explicit
+    env-var override over random selection.
+
+    Resolution order:
+      1. `env_var` is set → use that exact value, but **validate** it appears in
+         /inference/deployments (so a typo / stale config surfaces immediately
+         instead of producing a confusing 404 deep in the agent run).
+      2. Otherwise → pick a random deployment matching `format` and (optionally)
+         `name_predicate(name)` from /inference/deployments.
+
+    Returns None when no candidate is found; callers convert that into
+    `pytest.skip` with a contextual message.
+    """
+    explicit = (os.environ.get(env_var) or '').strip()
+    deployed_names = {(d.get('name') or '').strip() for d in deployed_models}
+    if explicit:
+        if explicit not in deployed_names:
+            pytest.skip(
+                f'{env_var}={explicit!r} is not in /inference/deployments. '
+                f'Available: {sorted(n for n in deployed_names if n)!r}'
+            )
+        return explicit
     candidates = [
         (d.get('name') or '').strip()
         for d in deployed_models
-        if (d.get('name') or '').strip() and match(d)
+        if (d.get('name') or '').strip()
+        and _model_format(d).lower() == format_name.lower()
+        and (name_predicate is None or name_predicate((d.get('name') or '').lower()))
     ]
     return random.choice(candidates) if candidates else None
 
 
 @pytest.fixture(scope='session')
 def random_openai_chat_model(deployed_models) -> str:
-    """Random OpenAI chat-capable deployment from /inference/deployments,
-    excluding embeddings, TTS/Whisper/realtime/image/video. Skips if none."""
+    """OpenAI chat-capable deployment for agent tests.
+
+    Resolution:
+      • TEST_AGENT_OPENAI_MODEL env var → use that (validated against discovery).
+      • Otherwise → random OpenAI deployment from /inference/deployments,
+        excluding embeddings / TTS / Whisper / realtime / image / video models.
+    """
     excludes = ('embedding', 'ada-', 'tts', 'whisper', 'realtime', 'sora', 'image', 'dall')
-    name = _pick_random_model(
+    name = _pick_agent_model(
         deployed_models,
-        lambda d: _model_format(d).lower() == 'openai'
-                  and not any(t in (d.get('name') or '').lower() for t in excludes),
+        env_var='TEST_AGENT_OPENAI_MODEL',
+        format_name='OpenAI',
+        name_predicate=lambda n: not any(t in n for t in excludes),
     )
     if not name:
-        pytest.skip('No OpenAI chat-capable model deployed in /inference/deployments')
+        pytest.skip(
+            'No OpenAI chat-capable model deployed in /inference/deployments. '
+            'Override with TEST_AGENT_OPENAI_MODEL=<deployment-name>.'
+        )
     return name
 
 
 @pytest.fixture(scope='session')
 def random_anthropic_model(deployed_models) -> str:
-    """Random Anthropic deployment from /inference/deployments. Skips if none."""
-    name = _pick_random_model(
+    """Anthropic deployment for agent tests.
+
+    Resolution:
+      • TEST_AGENT_ANTHROPIC_MODEL env var → use that (validated against discovery).
+      • Otherwise → random Anthropic deployment from /inference/deployments.
+    """
+    name = _pick_agent_model(
         deployed_models,
-        lambda d: _model_format(d).lower() == 'anthropic',
+        env_var='TEST_AGENT_ANTHROPIC_MODEL',
+        format_name='Anthropic',
     )
     if not name:
-        pytest.skip('No Anthropic model deployed in /inference/deployments')
+        pytest.skip(
+            'No Anthropic model deployed in /inference/deployments. '
+            'Override with TEST_AGENT_ANTHROPIC_MODEL=<deployment-name>.'
+        )
     return name
