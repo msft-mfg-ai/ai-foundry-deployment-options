@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Live pytest integration suite for the ai-gateway-quota APIM deployment"
 requires-python = ">=3.12"
 dependencies = [
+    "aiohttp>=3.10.0",
     "anthropic>=0.75.0",
+    "azure-ai-projects==2.0.1",
     "azure-identity>=1.25.0",
     "httpx>=0.28.0",
     "msal>=1.34.0",

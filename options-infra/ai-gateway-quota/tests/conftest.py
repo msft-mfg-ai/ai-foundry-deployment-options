@@ -284,3 +284,171 @@ def whisper_model(deployed_models) -> str:
 @pytest.fixture(scope='session')
 def subscription_key() -> str:
     return APIM_SUBSCRIPTION_KEY
+
+
+# ---------------------------------------------------------------------------
+# Agent-service fixtures (Foundry v2 agents going through the gateway).
+# ---------------------------------------------------------------------------
+
+import os
+import random
+
+
+def _foundry_project_endpoints() -> list[str]:
+    """Discover Foundry project endpoints. Priority:
+      1. FOUNDRY_PROJECT_ENDPOINT       — single endpoint override (.env)
+      2. FOUNDRY_PROJECT_ENDPOINTS      — comma-separated list override
+      3. FOUNDRY_PROJECTS_CONNECTION_STRINGS — JSON array (azd env, as set by
+         the gateway's preprovision hook)
+    """
+    import json
+    single = (os.environ.get('FOUNDRY_PROJECT_ENDPOINT') or '').strip()
+    if single:
+        return [single]
+    multi = (os.environ.get('FOUNDRY_PROJECT_ENDPOINTS') or '').strip()
+    if multi:
+        return [s.strip() for s in multi.split(',') if s.strip()]
+    raw = (os.environ.get('FOUNDRY_PROJECTS_CONNECTION_STRINGS') or '').strip()
+    if raw:
+        try:
+            value = json.loads(raw)
+            if isinstance(value, list):
+                return [str(v).strip() for v in value if str(v).strip()]
+        except Exception:
+            pass
+    return []
+
+
+@pytest.fixture(scope='session')
+def foundry_project_endpoint() -> str:
+    """Pick the first available Foundry project endpoint or skip the test."""
+    endpoints = _foundry_project_endpoints()
+    if not endpoints:
+        pytest.skip(
+            'No Foundry project endpoint configured. Set FOUNDRY_PROJECT_ENDPOINT, '
+            'FOUNDRY_PROJECT_ENDPOINTS, or FOUNDRY_PROJECTS_CONNECTION_STRINGS '
+            '(JSON array, as written by the gateway preprovision hook).'
+        )
+    return endpoints[0]
+
+
+@pytest.fixture
+async def project_client(foundry_project_endpoint):
+    """Async AIProjectClient pointed at the discovered project endpoint.
+    Function-scoped because pytest-asyncio creates a fresh event loop per
+    test by default — session-scoped async fixtures end up bound to a loop
+    that's already closed by the time the test runs.
+    Uses DefaultAzureCredential — the developer's az login (or a managed
+    identity in CI) must have at least 'Azure AI User' on the project."""
+    from azure.ai.projects.aio import AIProjectClient
+    from azure.identity.aio import DefaultAzureCredential
+    cred = DefaultAzureCredential()
+    client = AIProjectClient(endpoint=foundry_project_endpoint, credential=cred)
+    try:
+        yield client
+    finally:
+        await client.close()
+        await cred.close()
+
+
+async def _find_apim_connection(project_client, *, deployment_in_path: bool, format_hint: str) -> str | None:
+    """Find an ApiManagement-type project connection whose metadata matches the
+    given format. We discriminate by `metadata.deploymentInPath`:
+      • True  → OpenAI-style (URL has /deployments/{m}/...)
+      • False → Anthropic-style (URL has /v1/messages, model in body)
+    Falls back to a name-substring match when metadata is missing.
+    """
+    async for conn in project_client.connections.list():
+        if (getattr(conn, 'type', '') or '').lower() != 'apimanagement':
+            continue
+        md = getattr(conn, 'metadata', {}) or {}
+        raw = md.get('deploymentInPath')
+        # metadata values come back as strings — normalize to bool
+        if isinstance(raw, str):
+            dip = raw.strip().lower() == 'true'
+        elif raw is None:
+            dip = format_hint in (conn.name or '').lower()
+        else:
+            dip = bool(raw)
+        if dip == deployment_in_path:
+            return conn.name
+    return None
+
+
+@pytest.fixture
+async def openai_apim_connection(project_client) -> str:
+    """ApiManagement project connection wired for OpenAI-style models
+    (metadata.deploymentInPath=True). Skips if none."""
+    name = await _find_apim_connection(project_client, deployment_in_path=True, format_hint='openai')
+    if not name:
+        pytest.skip(
+            'No project connection of type=ApiManagement with deploymentInPath=true. '
+            'Wire the OpenAI-flavored APIM connection (modules/ai/connection-apim-gateway.bicep).'
+        )
+    return name
+
+
+@pytest.fixture
+async def anthropic_apim_connection(project_client) -> str:
+    """ApiManagement project connection wired for Anthropic-style models
+    (metadata.deploymentInPath=False). Skips if none."""
+    name = await _find_apim_connection(project_client, deployment_in_path=False, format_hint='anthropic')
+    if not name:
+        pytest.skip(
+            'No project connection of type=ApiManagement with deploymentInPath=false. '
+            'Wire the Anthropic-flavored APIM connection (modules/ai/connection-apim-gateway.bicep).'
+        )
+    return name
+
+
+@pytest.fixture
+async def apim_gateway_connection(project_client) -> str:
+    """Name of the project connection whose type is 'ApiManagement' (the APIM
+    gateway connection). Skips when none is wired."""
+    name = None
+    async for conn in project_client.connections.list():
+        if (getattr(conn, 'type', '') or '').lower() == 'apimanagement':
+            name = conn.name
+            break
+    if not name:
+        pytest.skip(
+            'No project connection of type=ApiManagement found. Wire the APIM '
+            'gateway as a Foundry connection (modules/ai/connection-apim-gateway.bicep).'
+        )
+    return name
+
+
+def _pick_random_model(deployed_models: list[dict], match) -> str | None:
+    candidates = [
+        (d.get('name') or '').strip()
+        for d in deployed_models
+        if (d.get('name') or '').strip() and match(d)
+    ]
+    return random.choice(candidates) if candidates else None
+
+
+@pytest.fixture(scope='session')
+def random_openai_chat_model(deployed_models) -> str:
+    """Random OpenAI chat-capable deployment from /inference/deployments,
+    excluding embeddings, TTS/Whisper/realtime/image/video. Skips if none."""
+    excludes = ('embedding', 'ada-', 'tts', 'whisper', 'realtime', 'sora', 'image', 'dall')
+    name = _pick_random_model(
+        deployed_models,
+        lambda d: _model_format(d).lower() == 'openai'
+                  and not any(t in (d.get('name') or '').lower() for t in excludes),
+    )
+    if not name:
+        pytest.skip('No OpenAI chat-capable model deployed in /inference/deployments')
+    return name
+
+
+@pytest.fixture(scope='session')
+def random_anthropic_model(deployed_models) -> str:
+    """Random Anthropic deployment from /inference/deployments. Skips if none."""
+    name = _pick_random_model(
+        deployed_models,
+        lambda d: _model_format(d).lower() == 'anthropic',
+    )
+    if not name:
+        pytest.skip('No Anthropic model deployed in /inference/deployments')
+    return name
