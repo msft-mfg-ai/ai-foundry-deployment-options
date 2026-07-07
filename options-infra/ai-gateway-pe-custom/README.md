@@ -1,6 +1,6 @@
 # Option: AI Gateway (APIM Standard v2 + Private Endpoint) with In-Deployment OpenAI
 
-This deployment creates a Foundry environment with an **Azure API Management (APIM) Standardv2** instance in **External VNet injection** mode plus an APIM private endpoint. It uses [`per-model-gateway.bicep`](../modules/apim/per-model-gateway.bicep) for **per-model smart routing**; instead of external fan-out, this sample provisions one local Azure OpenAI account and synthesizes the same gateway instance shape from it.
+This deployment creates a Foundry environment with an **Azure API Management (APIM) Standardv2** instance in **External VNet injection** mode plus an APIM private endpoint. It uses [`common-apim-setup.bicep`](../modules/apim/common-apim-setup.bicep) for **per-model smart routing**; instead of external fan-out, this sample provisions one local Azure OpenAI account and synthesizes the same gateway instance shape from it.
 
 
 > **Unified architecture note:** This sample uses the shared APIM stack in open mode: `policy-per-model.xml` is applied to the passthrough `inference` API, spec-backed `inference-api-azure` API, and (on Premium/StandardV2-capable SKUs) `openai-api-v1`. The `caller-identity` fragment emits observability headers without contract enforcement, while `per-model-routing` sends traffic to the PAYG-only pool because no contracts set `priority == 1`.
@@ -74,7 +74,7 @@ No external Foundry / Azure OpenAI resource is required. This sample provisions 
 
 ## Per-model smart routing
 
-All gateway variants use [`per-model-gateway.bicep`](../modules/apim/per-model-gateway.bicep) for APIM orchestration:
+All gateway variants use [`common-apim-setup.bicep`](../modules/apim/common-apim-setup.bicep) for APIM orchestration:
 
 - [`multi-foundry-backends.bicep`](../modules/apim/advanced/multi-foundry-backends.bicep) creates one APIM backend per `(instance, model, location)`, so a throttled model only disables that backend while sibling models on the same Foundry continue serving traffic.
 - The backend module supports a single `{model-clean}-pool` per model containing every backend (PAYG at priority 50 in-region / 100 out-of-region, PTU at priority 200 as overflow). The `ai-gateway-quota` sample sets `priorityRouting=true` to enable a dedicated `{model-clean}-ptu-pool`.

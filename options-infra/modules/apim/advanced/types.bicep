@@ -55,7 +55,7 @@ type foundryInstanceType = {
   @description('Weight for load balancing within the same priority tier')
   weight: int?
 
-  @description('Whether this "instance" is actually another APIM gateway that already follows our per-model-gateway convention (passthrough at `/inference/openai/*`). When true, the backend URL becomes `{endpoint}inference/openai` regardless of model format, and circuit-breaker isolation operates per (downstream-APIM, model) pair. Useful for chaining: a regional APIM can front several other APIMs that each front different Foundry accounts.')
+  @description('Whether this "instance" is actually another APIM gateway that already follows our unified-inference-gateway convention (passthrough at `/inference/openai/*`). When true, the backend URL becomes `{endpoint}inference/openai` regardless of model format, and circuit-breaker isolation operates per (downstream-APIM, model) pair. Useful for chaining: a regional APIM can front several other APIMs that each front different Foundry accounts.')
   isApim: bool?
 }
 

@@ -23,7 +23,7 @@ param apimSku string = 'Basicv2'
 @allowed(['ApiKey', 'ProjectManagedIdentity'])
 param gatewayAuthenticationType string = 'ProjectManagedIdentity'
 
-@description('Tenant IDs whose Entra ID tokens are accepted as inbound auth. When non-empty, both inference APIs inject a `<validate-jwt>` block that requires `aud=https://cognitiveservices.azure.com` and lists one issuer per tenant (both v1 `sts.windows.net/{tid}/` and v2 `login.microsoftonline.com/{tid}/v2.0`). Empty (default) = no inbound JWT validation — backward-compatible.')
+@description('Tenant IDs whose Entra ID tokens are accepted as inbound auth. When non-empty, both inference APIs inject a `<validate-jwt>` block that requires `aud=https://cognitiveservices.azure.com` and lists one issuer per tenant (both v1 `sts.windows.net/{tid}/` and v2 `login.microsoftonline.com/{tid}/v2.0`). Empty (default) = no inbound JWT validation — backward-compatible with ApiKey / anonymous callers.')
 param acceptedTenantIds string[] = []
 
 @description('Existing Foundry/AI Services instances to register as backends.')
@@ -47,15 +47,17 @@ var passthroughApiName = 'inference-api'
 var specApiPath string = 'azure'
 
 // -- Multi-tenant inbound JWT validation -------------------------------------
-// Replaces the `{JWT_VALIDATION}` token in policy-per-model.xml. When the
-// caller passes no tenants we use the current one.
-// Each accepted tenant contributes BOTH the v1 (`sts.windows.net`)
-// and v2 (`login.microsoftonline.com/.../v2.0`) issuer URLs since AAD tokens
-// can carry either depending on how the caller acquired them.
-var issuersXml = empty(acceptedTenantIds)
-  ? '<issuer>https://sts.windows.net/${tenant().tenantId}/</issuer>\n<issuer>https://login.microsoftonline.com/${tenant().tenantId}/v2.0</issuer>'
-  : join(map(acceptedTenantIds, tid => '<issuer>https://sts.windows.net/${tid}/</issuer>\n<issuer>https://login.microsoftonline.com/${tid}/v2.0</issuer>'), '')
-var jwtValidationXml = '<validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized"><openid-config url="https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration" /><audiences><audience>https://cognitiveservices.azure.com</audience><audience>https://cognitiveservices.azure.com/</audience></audiences><issuers>${issuersXml}</issuers></validate-jwt>'
+// Replaces the `{JWT_VALIDATION}` token in policy-per-model.xml.
+//   acceptedTenantIds empty (default) → emit an XML comment (no validation);
+//     preserves backward compatibility for ApiKey / anonymous samples.
+//   acceptedTenantIds non-empty      → emit a full <validate-jwt> block that
+//     accepts BOTH v1 (`sts.windows.net`) and v2 (`login.microsoftonline.com/.../v2.0`)
+//     issuers since AAD tokens may carry either depending on how the caller
+//     acquired them.
+var issuersXml = join(map(acceptedTenantIds, tid => '<issuer>https://sts.windows.net/${tid}/</issuer>\n<issuer>https://login.microsoftonline.com/${tid}/v2.0</issuer>'), '')
+var jwtValidationXml = empty(acceptedTenantIds)
+  ? '<!-- inbound JWT validation disabled (acceptedTenantIds is empty) -->'
+  : '<validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized"><openid-config url="https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration" /><audiences><audience>https://cognitiveservices.azure.com</audience><audience>https://cognitiveservices.azure.com/</audience></audiences><issuers>${issuersXml}</issuers></validate-jwt>'
 
 var policyPerModelXml = replace(loadTextContent('policy-per-model.xml'), '{JWT_VALIDATION}', jwtValidationXml)
 

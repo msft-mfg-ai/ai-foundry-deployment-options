@@ -1,6 +1,6 @@
 # Option: AI Gateway (External APIM) with Foundry
 
-This deployment creates a Foundry environment with an **external Azure API Management (APIM) Basic v2** instance acting as an AI Gateway. It lets **Foundry Agent Service** use models from APIM, which proxies requests to **one or more** existing Foundry / Azure OpenAI instances with **per-model smart routing** through [`per-model-gateway.bicep`](../modules/apim/per-model-gateway.bicep).
+This deployment creates a Foundry environment with an **external Azure API Management (APIM) Basic v2** instance acting as an AI Gateway. It lets **Foundry Agent Service** use models from APIM, which proxies requests to **one or more** existing Foundry / Azure OpenAI instances with **per-model smart routing** through [`common-apim-setup.bicep`](../modules/apim/common-apim-setup.bicep).
 
 ## Architecture Overview
 
@@ -75,7 +75,7 @@ The `azure.yaml` `preprovision` hook runs [`preprovision-list-foundry-models.sh`
 
 ## Per-model smart routing
 
-All gateway variants use [`per-model-gateway.bicep`](../modules/apim/per-model-gateway.bicep) for APIM orchestration:
+All gateway variants use [`common-apim-setup.bicep`](../modules/apim/common-apim-setup.bicep) for APIM orchestration:
 
 - [`multi-foundry-backends.bicep`](../modules/apim/advanced/multi-foundry-backends.bicep) creates one APIM backend per `(instance, model)`, so a throttled deployment only disables that backend while sibling deployments continue serving traffic.
 - A single backend pool is created per model, named `{model-clean}-pool` after removing `.` and `-` from the model name; all instances serving that model join the same pool for APIM load balancing. The `ai-gateway-quota` sample sets `priorityRouting=true` to additionally create a dedicated `{model-clean}-ptu-pool` for `priority==1` callers.

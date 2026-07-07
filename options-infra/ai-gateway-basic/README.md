@@ -2,7 +2,7 @@
 
 This deployment creates a Foundry Basic environment with an **external Azure API Management (APIM) Basic v2** instance acting as an AI Gateway. The goal is to allow **Foundry Agent Service** to use models from APIM, which proxies requests to **one or more** external Foundry / Azure OpenAI resources with **per-model smart routing**.
 
-Built on the shared [`modules/apim/per-model-gateway.bicep`](../modules/apim/per-model-gateway.bicep) orchestrator — every backing `(instance, model, location)` gets its own APIM backend and model-scoped pool membership, and a reusable [`per-model-routing`](../modules/apim/per-model-routing-fragment.xml) policy fragment dispatches each inbound request to the right pool.
+Built on the shared [`modules/apim/common-apim-setup.bicep`](../modules/apim/common-apim-setup.bicep) orchestrator — every backing `(instance, model, location)` gets its own APIM backend and model-scoped pool membership, and a reusable [`per-model-routing`](../modules/apim/per-model-routing-fragment.xml) policy fragment dispatches each inbound request to the right pool.
 
 
 > **Unified architecture note:** This sample uses the shared APIM stack in open mode: `policy-per-model.xml` is applied to the passthrough `inference` API, spec-backed `inference-api-azure` API, and (on Premium/StandardV2-capable SKUs) `openai-api-v1`. The `caller-identity` fragment emits observability headers without contract enforcement, while `per-model-routing` sends traffic to the PAYG-only pool because no contracts set `priority == 1`.
@@ -76,7 +76,7 @@ The `azure.yaml` `preprovision` hook runs [`preprovision-list-foundry-models.sh`
 
 ## Per-model smart routing
 
-All gateway variants use [`per-model-gateway.bicep`](../modules/apim/per-model-gateway.bicep) for APIM orchestration:
+All gateway variants use [`common-apim-setup.bicep`](../modules/apim/common-apim-setup.bicep) for APIM orchestration:
 
 - [`multi-foundry-backends.bicep`](../modules/apim/advanced/multi-foundry-backends.bicep) creates one APIM backend per `(instance, model, location)`, so a throttled model only disables that backend while sibling models on the same Foundry continue serving traffic.
 - The backend module supports a single `{model-clean}-pool` per model containing every backend (PAYG at priority 50 in-region / 100 out-of-region, PTU at priority 200 as overflow). The `ai-gateway-quota` sample sets `priorityRouting=true` to enable a dedicated `{model-clean}-ptu-pool`.

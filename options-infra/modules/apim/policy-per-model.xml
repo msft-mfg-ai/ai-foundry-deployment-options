@@ -33,7 +33,7 @@
 
         <!-- ================================================================ -->
         <!-- Optional: multi-tenant inbound JWT validation                    -->
-        <!-- Replaced by per-model-gateway.bicep with a <validate-jwt> block  -->
+        <!-- Replaced by common-apim-setup.bicep with a <validate-jwt> block  -->
         <!-- listing one issuer per accepted tenant, or a comment when no     -->
         <!-- tenants are configured (backward-compatible default).            -->
         <!-- ================================================================ -->

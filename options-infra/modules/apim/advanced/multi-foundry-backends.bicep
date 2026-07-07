@@ -218,28 +218,31 @@ resource ptuPools 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' 
 
 // -- Default Pools (always created) -------------------------------------------
 // `{model}-pool` is the default routing target for every caller.
-//   priorityRouting=true  → PAYG-only (PTU lives in its own pool).
+//   priorityRouting=true  → PAYG-only when the model has PAYG backends; when
+//                            the model is PTU-only we still create the pool
+//                            with the PTU backend(s) at overflow priority 200
+//                            so priority=2 callers do not hit a missing pool.
 //   priorityRouting=false → ALL backends; PTU joins at pri 200 as overflow.
-// A pool is created for every model that has at least one backend that
-// qualifies under the current mode (always true given uniqueModels is derived
-// from allDeployments).
+// A pool is created for every model that has ≥1 backend.
 @batchSize(1)
 resource defaultPools 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' = [
-  for (model, i) in uniqueModels: if (priorityRouting ? paygoCountPerModel[model] > 0 : true) {
+  for (model, i) in uniqueModels: {
     parent: apimService
     name: '${replace(replace(model, '.', ''), '-', '')}-pool'
     dependsOn: [backends]
     properties: {
       description: priorityRouting
-        ? 'Default pool for ${model} — ${paygoCountPerModel[model]} PAYG backend(s) (Standard callers; PTU served separately by ${model}-ptu-pool)'
+        ? (paygoCountPerModel[model] > 0
+          ? 'Default pool for ${model} — ${paygoCountPerModel[model]} PAYG backend(s) (Standard callers; PTU served separately by ${model}-ptu-pool)'
+          : 'Default pool for ${model} — ${ptuCountPerModel[model]} PTU backend(s) at overflow pri 200 (model has no PAYG; Standard callers fall back to PTU)')
         : 'Default pool for ${model} — ${paygoCountPerModel[model]} PAYG (pri 50/100) + ${ptuCountPerModel[model]} PTU (pri 200 overflow)'
       type: 'Pool'
       pool: {
         services: map(
-          filter(allDeployments, d => d.modelName == model && (priorityRouting ? !d.isPtu : true)),
+          filter(allDeployments, d => d.modelName == model && (priorityRouting ? (!d.isPtu || paygoCountPerModel[model] == 0) : true)),
           d => {
             id: '/backends/${d.backendName}'
-            priority: d.priority
+            priority: (priorityRouting && d.isPtu && paygoCountPerModel[model] == 0) ? 200 : d.priority
             weight: d.weight
           }
         )

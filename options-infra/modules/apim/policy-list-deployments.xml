@@ -4,7 +4,7 @@
     Returns the static deployment list captured at IaC deploy time. No upstream
     call — Foundry / clients see exactly the models the gateway is configured
     to route. The body is rendered from `staticModels` in
-    per-model-gateway.bicep and injected as a single replacement token.
+    common-apim-setup.bicep and injected as a single replacement token.
 
     Wrapped as `{ "value": [...] }` to mirror the ARM
     `Microsoft.CognitiveServices/accounts/deployments` list response shape that
