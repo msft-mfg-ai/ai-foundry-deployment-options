@@ -1,5 +1,7 @@
 # Option: Foundry Public with OpenRouter Integration
 
+> **Unified architecture note:** This sample is not part of the APIM `policy-per-model.xml` stack. It uses a Foundry Model Gateway connection to OpenRouter directly; use the APIM gateway samples when you need the unified caller-identity/per-model-routing architecture.
+
 This deployment creates a **public Foundry** environment (without agent subnet) that connects to **OpenRouter** as an external model gateway. The goal is to allow **Foundry projects** to use models from OpenRouter, enabling access to a wide variety of AI models through a single API endpoint.
 
 ## Architecture Overview

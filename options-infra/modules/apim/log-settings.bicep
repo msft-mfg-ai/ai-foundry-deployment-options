@@ -58,12 +58,29 @@ var responseHeaders array = [
   'x-caller-id'
   'x-caller-project'
   'x-caller-foundry'
-  // Backend routing / error context (set by APIM policies that support it)
+  'x-caller-priority'
+  // Backend routing / failover trail
   'x-backend-pool'
+  'x-backend-id'
   'x-backend-type'
+  'x-backend-retry-count'
+  'x-backend-attempt-trail'
+  'x-inference-failover'
   'x-route-trace'
   'x-retry-count'
   'x-spillover'
+  'x-requested-model'
+  // Quota / PTU observability (set by policy-per-model.xml when contracts wired)
+  'x-quota-limit-tokens'
+  'x-quota-remaining-tokens'
+  'x-quota-tokens-consumed'
+  'x-tokens-consumed'
+  'x-ptu-limit'
+  // Foundry-side passthrough headers
+  'x-foundry-agent-id'
+  'x-foundry-project-name'
+  'x-foundry-project-id'
+  // Error context
   'x-error-reason'
   'x-error-source'
 ]

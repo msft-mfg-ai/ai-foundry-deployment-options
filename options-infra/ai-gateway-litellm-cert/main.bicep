@@ -461,6 +461,17 @@ module acaAppGateway '../modules/appgtw/application-gateway.bicep' = {
   }
 }
 
+module dashboard '../modules/dashboard/dashboard.bicep' = {
+  name: 'dashboard-deployment-${resourceToken}'
+  params: {
+    location: location
+    dashboardDisplayName: 'APIM Token Usage Dashboard for ${resourceToken}'
+    applicationInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    applicationInsightsName: logAnalytics.outputs.APPLICATION_INSIGHTS_NAME
+    logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
+  }
+}
+
 module models_policy '../modules/policy/models-policy.bicep' = {
   scope: subscription()
   name: 'policy-definition-deployment-${resourceToken}'

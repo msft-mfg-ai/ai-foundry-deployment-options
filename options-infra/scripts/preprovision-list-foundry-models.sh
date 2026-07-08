@@ -147,14 +147,14 @@ process_instance() {
   instance_count=$((instance_count + 1))
 }
 
-# Process an EXISTING APIM gateway that already follows our per-model-gateway
-# convention (passthrough at `/inference/openai/*` + the static-discovery ops).
+# Process an EXISTING APIM gateway that exposes AI Gateway discovery at
+# `/inference/deployments`.
 # Identified by its gateway URL — no ARM resource id needed, so this works
 # across tenants where the developer can hit the endpoint but doesn't have ARM
 # perms (or doesn't have `az login` for that tenant in their shell).
 #
 # We treat each model exposed by the downstream as an (instance, model) pair
-# backed by `{apim-gateway-url}/inference/openai`. The upstream caller-side
+# backed by `{apim-gateway-url}`. The upstream caller-side
 # gateway then load-balances + circuit-breaks across chained APIMs the same
 # way it does across Foundries.
 #
@@ -192,7 +192,7 @@ process_apim() {
     exit 1
   fi
 
-  listing_url="${base}/inference/openai/deployments"
+  listing_url="${base}/inference/deployments"
   listing=$(curl -sS -H "Authorization: Bearer $token" "$listing_url" 2>/dev/null) || listing=""
 
   if [ -z "$listing" ] || ! printf '%s' "$listing" | grep -q '"value"'; then
@@ -240,9 +240,11 @@ for i, r in enumerate(rows):
 
   total_deployments=$((total_deployments + dep_count))
 
-  # Endpoint = gateway URL with trailing /. Bicep appends `inference/openai`
-  # for APIM-flagged instances (see multi-foundry-backends.bicep), so the
-  # backend URL becomes `{gateway}/inference/openai` regardless of model format.
+  # Endpoint = gateway URL with trailing /. Bicep appends the per-format
+  # backend base path for APIM-flagged instances (see
+  # multi-foundry-backends.bicep):
+  #   OpenAI    -> `{gateway}/inference/openai`
+  #   Anthropic -> `{gateway}/inference/anthropic`
   gateway_url="${base}/"
 
   # resourceId is intentionally the URL — keeps the foundryInstanceType shape
@@ -288,7 +290,7 @@ if [ -z "$raw_ids" ] && [ -z "$apim_urls" ]; then
   printf '%s     • EXISTING_FOUNDRY_RESOURCE_IDS (comma-separated, multi-instance)%s\n' "$C_DIM" "$C_RESET"
   printf '%s     • EXISTING_FOUNDRY_RESOURCE_ID  (single instance)%s\n'                  "$C_DIM" "$C_RESET"
   printf '%s     • OPENAI_RESOURCE_ID            (AI Gateway sample fallback)%s\n'       "$C_DIM" "$C_RESET"
-  printf '%s     • EXISTING_APIM_URLS            (comma-separated gateway URLs — chained per-model-gateway APIMs)%s\n' "$C_DIM" "$C_RESET"
+  printf '%s     • EXISTING_APIM_URLS            (comma-separated AI Gateway URLs exposing /inference/deployments)%s\n' "$C_DIM" "$C_RESET"
   azd env set FOUNDRY_INSTANCES_JSON "[]" >/dev/null
   printf '\n'
   ok "Wrote FOUNDRY_INSTANCES_JSON=[] (deployment will fail with a clear 'no instances' message)"

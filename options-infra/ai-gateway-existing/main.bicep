@@ -12,6 +12,9 @@
 // ============================================================================
 targetScope = 'resourceGroup'
 
+import { foundryInstanceType } from '../modules/apim/advanced/types.bicep'
+import { ModelType } from '../modules/ai/connection-apim-gateway.bicep'
+
 // -- Core Parameters ----------------------------------------------------------
 
 param location string = resourceGroup().location
@@ -43,7 +46,7 @@ param inferenceAPIVersion string = '2025-03-01-preview'
 // -- Static Models ------------------------------------------------------------
 
 @description('Static model definitions for Foundry model discovery')
-param staticModels array = [
+param staticModels ModelType[] = [
   {
     name: 'gpt-4.1-mini'
     properties: {
@@ -57,6 +60,9 @@ param staticModels array = [
     }
   }
 ]
+
+@description('Optional Foundry / AI Services instances discovered by the `preprovision-list-foundry-models` hook. When staticModels is empty, their deployments seed the existing APIM connection model list.')
+param foundryInstances foundryInstanceType[] = []
 
 // -- Existing Dependencies (optional — created when empty) --------------------
 
@@ -83,6 +89,26 @@ var tags = {
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
 var foundryName = 'ai-foundry-${resourceToken}'
 var projectName = 'ai-project-${resourceToken}'
+
+var allDeployments = flatten(map(foundryInstances, inst => inst.deployments))
+var dedupedDeployments = reduce(
+  allDeployments,
+  [],
+  (acc, d) => contains(map(acc, x => x.modelName), d.modelName) ? acc : concat(acc, [d])
+)
+var discoveredStaticModels ModelType[] = [
+  for d in dedupedDeployments: {
+    name: d.modelName
+    properties: {
+      model: {
+        name: d.modelName
+        version: d.?modelVersion ?? '2025-01-01-preview'
+        format: d.?modelFormat ?? 'OpenAI'
+      }
+    }
+  }
+]
+var effectiveStaticModels = empty(staticModels) ? discoveredStaticModels : staticModels
 
 // Parse APIM resource ID
 var apimParts = split(apimResourceId, '/')
@@ -252,7 +278,7 @@ var subscriptionKey = !empty(apimSubscriptionName) ? apimSub.listSecrets(apimSub
 var baseMetadata = {
   deploymentInPath: 'true'
   inferenceAPIVersion: inferenceAPIVersion
-  models: string(staticModels)
+  models: string(effectiveStaticModels)
 }
 
 var customHeadersMetadata = apimAuthType == 'ProjectManagedIdentity' && !empty(apimSubscriptionName)
@@ -271,6 +297,20 @@ module apimConnection './modules/connection-apim.bicep' = {
     authType: apimAuthType
     metadata: apimConnectionMetadata
     subscriptionKey: apimAuthType == 'ApiKey' ? subscriptionKey : null
+  }
+}
+
+// Deploy the shared APIM dashboard for the sample-created monitoring resources.
+// Skipped when an existing App Insights resource is supplied because this sample
+// does not accept a matching Log Analytics workspace id for the dashboard scope.
+module dashboard '../modules/dashboard/dashboard.bicep' = if (empty(existingAppInsightsResourceId)) {
+  name: 'dashboard-deployment-${resourceToken}'
+  params: {
+    location: location
+    dashboardDisplayName: 'APIM Token Usage Dashboard for ${resourceToken}'
+    applicationInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    applicationInsightsName: logAnalytics.outputs.APPLICATION_INSIGHTS_NAME
+    logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
   }
 }
 

@@ -1,5 +1,16 @@
 # Priority Queue for PTU OpenAI with APIM + Foundry
 
+> ## Historical design doc — kept for context
+>
+> This document captures the 2025 evaluation of routing options and the initial
+> implementation notes. The **current** canonical stack is described in
+> `../AGENTS.md`, `../README.md`, and `../.github/copilot-instructions.md`.
+> Names below (`fragment-identity.xml`, mixed-pool per-model, P3, etc.) do NOT
+> match the code in this branch — the shipped stack uses
+> `policy-per-model.xml` + `caller-identity-fragment.xml` +
+> `per-model-routing-fragment.xml` (+ optional `advanced/contract-match.xml`),
+> and priority tiers are `1` (Production) and `2` (Standard) only.
+>
 > ## Implementation Outcome (July 2025)
 >
 > After evaluating all 5 options below, the production implementation uses **APIM's native circuit breaker + priority-based backend pools**:

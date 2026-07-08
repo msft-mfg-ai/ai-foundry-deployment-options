@@ -9,11 +9,8 @@
 //    PARAMETERS
 // ------------------
 
-@description('The suffix to append to the API Management instance name. Defaults to a unique string based on subscription and resource group IDs.')
-param resourceSuffix string = uniqueString(subscription().id, resourceGroup().id)
-
-@description('The name of the API Management instance. Defaults to "apim-<resourceSuffix>".')
-param apiManagementName string = 'apim-${resourceSuffix}'
+@description('The name of the API Management instance.".')
+param apiManagementName string
 
 @description('Id of the APIM Logger')
 param apimLoggerId string = ''
@@ -301,7 +298,7 @@ resource inferenceBackend 'Microsoft.ApiManagement/service/backends@2024-06-01-p
       managedIdentity: empty(backendApiKey) ? {
           resource: 'https://cognitiveservices.azure.com'
       } : null
-      header: !empty(backendApiKey) ? { 'Authorization': ['Bearer ${backendApiKey}'] } : {}
+      header: !empty(backendApiKey) ? { Authorization: ['Bearer ${backendApiKey}'] } : {}
     }
   }
 }]

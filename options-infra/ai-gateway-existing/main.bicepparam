@@ -14,18 +14,7 @@ param existingCosmosDBResourceId = '/subscriptions/0721e282-2773-4021-af16-e0064
 param existingStorageAccountResourceId = '/subscriptions/0721e282-2773-4021-af16-e00641ed5e36/resourceGroups/rg-foundry-sbd/providers/Microsoft.Storage/storageAccounts/projstorage26xvo6gnq5edo'
 param existingAiSearchResourceId = '/subscriptions/0721e282-2773-4021-af16-e00641ed5e36/resourceGroups/rg-foundry-sbd/providers/Microsoft.Search/searchServices/project-search-26xvo6gnq5edo'
 
-// Static models available through APIM
-param staticModels = [
-  {
-    name: 'gpt-4.1-mini'
-    properties: {
-      model: { name: 'gpt-4.1-mini', version: '2025-01-01-preview', format: 'OpenAI' }
-    }
-  }
-  {
-    name: 'gpt-4o'
-    properties: {
-      model: { name: 'gpt-4o', version: '2025-01-01-preview', format: 'OpenAI' }
-    }
-  }
-]
+// Static models available through APIM are discovered from existing Foundry
+// accounts by the preprovision hook.
+param staticModels = []
+param foundryInstances = json(readEnvironmentVariable('FOUNDRY_INSTANCES_JSON', '[]'))

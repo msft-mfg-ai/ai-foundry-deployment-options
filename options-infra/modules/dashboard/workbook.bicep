@@ -429,6 +429,67 @@ var workbookContent = {
       }
       name: 'cost-table'
     }
+    // Gateway routing and quota headers
+    {
+      type: 1
+      content: {
+        json: '## 🔁 Gateway Routing, Quota, and Foundry Headers'
+      }
+      name: 'gateway-routing-header'
+    }
+    {
+      type: 3
+      content: {
+        version: 'KqlItem/1.0'
+        query: '''
+          ApiManagementGatewayLogs
+          | where ResponseHeaders has_any ("x-backend-pool", "x-backend-retry-count", "x-backend-attempt-trail", "x-inference-failover")
+          | extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
+          | extend CallerPriority = extract(@'"x-caller-priority":"([^"]+)"', 1, tostring(ResponseHeaders))
+          | extend BackendPool = extract(@'"x-backend-pool":"([^"]+)"', 1, tostring(ResponseHeaders))
+          | extend RetryCount = toint(extract(@'"x-backend-retry-count":"([^"]+)"', 1, tostring(ResponseHeaders)))
+          | extend AttemptTrail = extract(@'"x-backend-attempt-trail":"([^"]+)"', 1, tostring(ResponseHeaders))
+          | extend FailoverTrail = extract(@'"x-inference-failover":"([^"]+)"', 1, tostring(ResponseHeaders))
+          | summarize Requests = count(), RetryEvents = countif(RetryCount > 0), FailoverEvents = countif(isnotempty(FailoverTrail) and FailoverTrail != "none" and FailoverTrail != "false"), MaxRetries = max(RetryCount) by CallerName, CallerPriority, BackendPool
+          | order by RetryEvents desc, Requests desc
+        '''
+        size: 0
+        title: 'Retry / Failover by Caller and Backend Pool'
+        timeContext: { durationMs: 0 }
+        timeContextFromParameter: 'TimeRange'
+        queryType: 0
+        resourceType: 'microsoft.operationalinsights/workspaces'
+        visualization: 'table'
+      }
+      name: 'retry-failover-table'
+    }
+    {
+      type: 3
+      content: {
+        version: 'KqlItem/1.0'
+        query: '''
+          ApiManagementGatewayLogs
+          | where ResponseHeaders has_any ("x-quota-tokens-consumed", "x-quota-remaining-tokens", "x-foundry-agent-id", "x-foundry-project-name", "x-foundry-project-id")
+          | extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
+          | extend QuotaTokensConsumed = tolong(extract(@'"x-quota-tokens-consumed":"([^"]+)"', 1, tostring(ResponseHeaders)))
+          | extend QuotaRemaining = tolong(extract(@'"x-quota-remaining-tokens":"([^"]+)"', 1, tostring(ResponseHeaders)))
+          | extend AgentId = extract(@'"x-foundry-agent-id":"([^"]+)"', 1, tostring(ResponseHeaders))
+          | extend ProjectName = extract(@'"x-foundry-project-name":"([^"]+)"', 1, tostring(ResponseHeaders))
+          | extend ProjectId = extract(@'"x-foundry-project-id":"([^"]+)"', 1, tostring(ResponseHeaders))
+          | summarize arg_max(TimeGenerated, QuotaRemaining), QuotaTokensConsumed = sum(QuotaTokensConsumed), Requests = count() by CallerName, AgentId, ProjectName, ProjectId
+          | project CallerName, AgentId, ProjectName, ProjectId, QuotaTokensConsumed, LatestQuotaRemaining = QuotaRemaining, Requests
+          | order by QuotaTokensConsumed desc
+        '''
+        size: 0
+        title: 'Quota Consumption and Foundry Agent Activity'
+        timeContext: { durationMs: 0 }
+        timeContextFromParameter: 'TimeRange'
+        queryType: 0
+        resourceType: 'microsoft.operationalinsights/workspaces'
+        visualization: 'table'
+      }
+      name: 'quota-foundry-table'
+    }
   ]
   fallbackResourceIds: [
     logAnalyticsWorkspaceId

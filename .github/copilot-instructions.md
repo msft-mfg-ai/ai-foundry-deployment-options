@@ -52,7 +52,9 @@ CI uses a standalone `bicep` binary (see `.github/workflows/bicep-validate-reusa
 
 ## Running Python / Agent Scripts
 
-Each agent directory (`agents/`, `agents_v2/`, `agents_v2_maf/`, `subscription-manager/`) is an **isolated Python workspace** — it has its own `pyproject.toml`, `uv.lock`, and `.venv`. They are excluded from the root `pyproject.toml` workspace.
+This repo uses **`uv`** for all Python dependency management — **never** create a `requirements.txt` or use `pip install`. Declare dependencies in a `pyproject.toml` and run with `uv sync` / `uv run`.
+
+Each Python directory (`agents/`, `agents_v2/`, `agents_v2_maf/`, `subscription-manager/`, and per-option `tests/` folders) is an **isolated Python workspace** — it has its own `pyproject.toml`, `uv.lock`, and `.venv`. They are excluded from the root `pyproject.toml` workspace.
 
 ```bash
 # Per-directory setup (do this once per directory)
@@ -108,18 +110,25 @@ val=$(azd env get-value FOO 2>/dev/null) || val=""
 
 ## APIM Module Architecture
 
-The AI Gateway stack has three layers:
+The unified AI Gateway stack uses one APIM service with shared fragments, per-model backends, and up to four API surfaces:
 
 ```
-ai-gateway-pe.bicep  (orchestrator: wires Foundry + APIM + connections)
-  └── apim.bicep     (wrapper: creates APIM instance + one or more inference APIs)
-        ├── v2/apim.bicep           (APIM service resource + subscriptions + loggers)
-        └── v2/inference-api.bicep  (APIM API, backends, backend pool, policy, diagnostics)
+<sample orchestrator>.bicep
+  └── modules/apim/common-apim-setup.bicep or ai-gateway-advanced.bicep
+        ├── v2/apim.bicep                 (APIM service + subscriptions + loggers)
+        ├── v2/inference-api.bicep        (passthrough `inference` API)
+        ├── v2/inference-api-azure.bicep  (spec-backed `inference-api-azure` API)
+        ├── v2/openai-api-v1.bicep        (`openai-api-v1`, Premium/StandardV2 only)
+        ├── static-discovery-operations.bicep (deploy-time model catalog ops)
+        ├── caller-identity-fragment.bicep
+        └── per-model-routing-fragment.bicep
 ```
 
-- **Policy XML files** live in `modules/apim/` (e.g., `policy.xml`, `anthropic-policy.xml`). They use `{backend-id}` and `{retry-count}` as string tokens replaced in Bicep variables before being passed to `inference-api.bicep`.
-- **Multiple inference APIs** on one APIM instance (e.g., OpenAI + Anthropic) are created as separate `inference-api.bicep` deployments with `dependsOn` to avoid a tag race condition.
-- **Foundry connections** (`modules/ai/connection-apim-gateway.bicep`) set `category: 'ApiManagement'` with a `metadata` object containing `deploymentInPath`, `inferenceAPIVersion`, and either `staticModels` or `modelDiscovery` — never both.
+- **Single policy stack**: `modules/apim/policy-per-model.xml` is canonical for the passthrough `inference` API, spec-backed `inference-api-azure`, conditional `openai-api-v1`, and static-discovery operations. Keep references on the current canonical stack rather than legacy per-provider or priority policies.
+- **Policy fragments**: `caller-identity` sets observability headers in open mode and, when `caller-identity-fragment.bicep` receives `contractsBlobUrl`, uses `{contracts-load-section}` to inject JWT validation + blob contract lookup + identity/model authz. `per-model-routing` sends `priority == 1` to `{model}-pool` and other callers to `{model}-payg-pool`.
+- **Backend topology**: `advanced/multi-foundry-backends.bicep` creates one backend per `(instance, model, location)`, so circuit breakers are scoped per model. Mixed pools use PTU priority 1 plus PAYG priority 50 in-region / 100 out-of-region; PAYG-only pools serve non-priority callers.
+- **AZD discovery flow**: `options-infra/scripts/preprovision-list-foundry-models.sh` runs before each `azd up`, discovers Foundry instances and deployments, writes `FOUNDRY_INSTANCES_JSON`, and `main.bicepparam` reads it with `json(readEnvironmentVariable('FOUNDRY_INSTANCES_JSON', '[]'))`.
+- **Foundry connections** (`modules/ai/connection-apim-gateway.bicep`) set `category: 'ApiManagement'` with `metadata` containing `deploymentInPath`, `inferenceAPIVersion`, and either `staticModels` or `modelDiscovery` — never both.
 
 ## Private Endpoint Convention
 

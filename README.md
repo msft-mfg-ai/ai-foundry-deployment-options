@@ -186,15 +186,20 @@ Agent Service with BYO VNet is available in the following regions:
 
 ### 🌐 AI Gateway Options
 
+APIM gateway samples are aligned on a unified per-model architecture: `policy-per-model.xml` is the canonical inference policy, `caller-identity` and `per-model-routing` are shared fragments, `FOUNDRY_INSTANCES_JSON` is discovered before `azd up`, and APIM creates one backend per `(instance, model, location)` plus per-model mixed/PAYG pools.
+
 | Directory | Description | Scope | Features |
 |-----------|-------------|-------|----------|
-| [**ai-gateway**](./options-infra/ai-gateway/) | 🌐 Azure API Management as AI Gateway | Resource Group | Basic v2 SKU APIM, Public Networking |
-| [**ai-gateway-basic**](./options-infra/ai-gateway-basic/) | 🚀 Foundry Basic + APIM Basic v2 (no capability hosts, no agent subnet, public) | Resource Group | Minimal config, quick start |
-| [**ai-gateway-premium**](./options-infra/ai-gateway-premium/) | 💎 APIM v2 Premium with VNet injection (internal mode) as AI Gateway | Resource Group | Premium APIM, VNet injection |
-| [**ai-gateway-internal**](./options-infra/ai-gateway-internal/) | 🔒 Internal APIM (VNet injected) proxying to external Azure OpenAI | Resource Group | Internal VNet mode |
-| [**ai-gateway-pe**](./options-infra/ai-gateway-pe/) | 🔐 APIM Standard v2 with private endpoint to Foundry Agent Service | Resource Group | Private endpoints to backends |
-| [**ai-gateway-openrouter**](./options-infra/ai-gateway-openrouter/) | 🌍 Public Foundry (no agent subnet) with OpenRouter as external model gateway | Resource Group | OpenRouter backend support |
-| [**ai-gateway-litellm**](./options-infra/ai-gateway-litellm/) | ⚡ LiteLLM on ACA + PostgreSQL with Application Gateway and private endpoints | Resource Group | LiteLLM Container Apps deployment |
+| [**ai-gateway-basic**](./options-infra/ai-gateway-basic/) | 🚀 Foundry Basic + APIM Basic v2 (public) | Resource Group | Unified per-model passthrough/spec APIs, quick start |
+| [**ai-gateway-premium**](./options-infra/ai-gateway-premium/) | 💎 APIM Premium v2 with internal VNet injection | Resource Group | Unified per-model stack, custom domain, private networking |
+| [**ai-gateway-internal**](./options-infra/ai-gateway-internal/) | 🔒 Internal APIM proxying to external Azure OpenAI / Foundry | Resource Group | Unified per-model stack, internal VNet mode |
+| [**ai-gateway-pe**](./options-infra/ai-gateway-pe/) | 🔐 APIM Standard v2 with private endpoint | Resource Group | Unified per-model stack, private endpoints to backends |
+| [**ai-gateway-quota**](./options-infra/ai-gateway-quota/) | 📊 Unified APIM gateway with contracts, quotas, and PTU/PAYG priority routing | Resource Group | Blob-backed contracts, policy fragments, dashboard, pytest suite |
+| [**ai-gateway-openrouter**](./options-infra/ai-gateway-openrouter/) | 🌍 Public Foundry with OpenRouter as external model gateway | Resource Group | Non-APIM external gateway connection |
+| [**ai-gateway-litellm**](./options-infra/ai-gateway-litellm/) | ⚡ LiteLLM on ACA + PostgreSQL with Application Gateway and private endpoints | Resource Group | Non-APIM LiteLLM Container Apps deployment |
+
+> [!NOTE]
+> **Anthropic / Claude models** are supported by every APIM sample above via the shared per-model stack. The AZD preprovision hook discovers Anthropic deployments alongside OpenAI ones, `multi-foundry-backends.bicep` creates a per-`(instance, model, location)` backend for each Claude deployment (backend URL is `${endpoint}openai` for direct Foundry or `${endpoint}inference` for chained-APIM upstreams; `policy-per-model.xml` injects the `anthropic-version` header for Anthropic requests and handles the `/openai/v1/*` rewrite when the caller uses the v1 surface), and `connections-apim-gateway.bicep` splits the Foundry connection by `model.format` so each project gets one OpenAI connection and one Anthropic connection. No dedicated `ai-gateway-anthropic` sample is needed.
 
 > [!NOTE]
 > AI Gateway (APIM) integration with Azure AI Foundry is expected to enter **public preview on February 13, 2026**.

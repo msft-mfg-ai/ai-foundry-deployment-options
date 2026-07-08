@@ -75,4 +75,7 @@ output APPLICATION_INSIGHTS_NAME string = useExistingAppInsights
 output APPLICATION_INSIGHTS_INSTRUMENTATION_KEY string = useExistingAppInsights
   ? existingApplicationInsightsResource.?properties.InstrumentationKey ?? ''
   : newApplicationInsightsResource.?properties.InstrumentationKey ?? ''
+output LOG_ANALYTICS_WORKSPACE_RESOURCE_ID string = useExistingAppInsights
+  ? existingApplicationInsightsResource.?properties.WorkspaceResourceId ?? ''
+  : newLogAnalyticsResource.id
 output LOG_ANALYTICS_WORKSPACE_NAME string = useExistingAppInsights ? '' : newLogAnalyticsResource.name

@@ -1,3 +1,5 @@
+import { subscriptionType } from '../modules/apim/v2/apim.bicep'
+
 // This bicep file deploys one resource group with the following resources:
 // 1. Foundry dependencies, such as VNet and
 //    private endpoints for AI Search, Azure Storage and Cosmos DB
@@ -14,6 +16,8 @@ param deployerPrincipalId string?
 param groupPrincipalId string?
 @description('Coma-separated list of students initials to be added to resource names for uniqueness, e.g. "jsa,adb,mba"')
 param studentsInitials string?
+@allowed(['ApiKey', 'ProjectManagedIdentity'])
+param gatewayAuthenticationType string = 'ApiKey'
 
 var tags = {
   'created-by': 'option-ai-gateway'
@@ -73,6 +77,79 @@ module logAnalytics '../modules/monitor/loganalytics.bicep' = {
   }
 }
 
+var deployments = [
+  {
+    name: 'gpt-4o'
+    properties: {
+      model: {
+        format: 'OpenAI'
+        name: 'gpt-4o'
+        version: '2024-11-20'
+      }
+    }
+    sku: {
+      name: 'GlobalStandard'
+      capacity: 20
+    }
+  }
+  {
+    name: 'gpt-5.1'
+    properties: {
+      model: {
+        format: 'OpenAI'
+        name: 'gpt-5.1'
+        version: '2025-11-13'
+      }
+    }
+    sku: {
+      name: 'GlobalStandard'
+      capacity: 100
+    }
+  }
+  {
+    name: 'gpt-5'
+    properties: {
+      model: {
+        format: 'OpenAI'
+        name: 'gpt-5'
+        version: '2025-08-07'
+      }
+    }
+    sku: {
+      name: 'GlobalStandard'
+      capacity: 100
+    }
+  }
+  {
+    name: 'gpt-5-mini'
+    properties: {
+      model: {
+        format: 'OpenAI'
+        name: 'gpt-5-mini'
+        version: '2025-08-07'
+      }
+    }
+    sku: {
+      name: 'GlobalStandard'
+      capacity: 100
+    }
+  }
+  {
+    name: 'text-embedding-3-large'
+    properties: {
+      model: {
+        name: 'text-embedding-3-large'
+        version: '1'
+        format: 'OpenAI'
+      }
+    }
+    sku: {
+      name: 'GlobalStandard'
+      capacity: 100
+    }
+  }
+]
+
 module foundry '../modules/ai/ai-foundry.bicep' = {
   name: 'foundry-deployment-${resourceToken}'
   params: {
@@ -83,78 +160,7 @@ module foundry '../modules/ai/ai-foundry.bicep' = {
     name: 'ai-foundry-${resourceToken}'
     publicNetworkAccess: 'Enabled'
     disableLocalAuth: false // keep local auth in case API KEY is needed
-    deployments: [
-      {
-        name: 'gpt-4o'
-        properties: {
-          model: {
-            format: 'OpenAI'
-            name: 'gpt-4o'
-            version: '2024-11-20'
-          }
-        }
-        sku: {
-          name: 'GlobalStandard'
-          capacity: 20
-        }
-      }
-      {
-        name: 'gpt-5.1'
-        properties: {
-          model: {
-            format: 'OpenAI'
-            name: 'gpt-5.1'
-            version: '2025-11-13'
-          }
-        }
-        sku: {
-          name: 'GlobalStandard'
-          capacity: 100
-        }
-      }
-      {
-        name: 'gpt-5'
-        properties: {
-          model: {
-            format: 'OpenAI'
-            name: 'gpt-5'
-            version: '2025-08-07'
-          }
-        }
-        sku: {
-          name: 'GlobalStandard'
-          capacity: 100
-        }
-      }
-      {
-        name: 'gpt-5-mini'
-        properties: {
-          model: {
-            format: 'OpenAI'
-            name: 'gpt-5-mini'
-            version: '2025-08-07'
-          }
-        }
-        sku: {
-          name: 'GlobalStandard'
-          capacity: 100
-        }
-      }
-      {
-        name: 'text-embedding-3-large'
-        properties: {
-          model: {
-            name: 'text-embedding-3-large'
-            version: '1'
-            format: 'OpenAI'
-          }
-        }
-        sku: {
-          name: 'GlobalStandard'
-          capacity: 100
-        }
-      }
-    ]
+    deployments: deployments
   }
 }
 
@@ -176,27 +182,80 @@ module projects '../modules/ai/ai-project.bicep' = [
   }
 ]
 
-module ai_gateway '../modules/apim/ai-gateway.bicep' = {
-  name: 'ai-gateway-deployment-${resourceToken}'
+var connectionPerProject = !empty(projectNames)
+var subscriptions subscriptionType[] = connectionPerProject
+  ? map(projectNames, (projectName) => {
+      name: 'sub-${projectName}-${resourceToken}'
+      displayName: 'Subscription for ${projectName} in ${foundry.outputs.FOUNDRY_NAME}'
+    })
+  : [
+      {
+        name: 'sub-foundry-${foundry.outputs.FOUNDRY_NAME}'
+        displayName: 'Default Subscription for ${foundry.outputs.FOUNDRY_NAME}'
+      }
+    ]
+
+module ai_gateway '../modules/apim/v2/apim.bicep' = {
+  name: 'apim-deployment'
   params: {
-    tags: tags
+    apiManagementName: 'apim-ai-${resourceToken}'
     location: location
-    resourceToken: resourceToken
-    aiFoundryName: foundry.outputs.FOUNDRY_NAME
-    aiFoundryProjectNames: [for i in range(1, numberOfProjects): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
-    logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
-    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    tags: tags
+    apimSku: 'Basicv2'
+    lawId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
+    appInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
     appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
-    gatewayAuthenticationType: 'ProjectManagedIdentity'
-    staticModels: []
-    aiServicesConfig: [
+    apimSubscriptionsConfig: gatewayAuthenticationType == 'ApiKey' ? subscriptions : []
+    #disable-next-line BCP036
+  }
+}
+
+module common_ai_gateway_setup '../modules/apim/common-apim-setup.bicep' = {
+  name: 'common-ai-gateway-setup'
+  params: {
+    apimName: ai_gateway.outputs.name
+    apimLoggerId: ai_gateway.outputs.loggerId
+    appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
+    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    gatewayAuthenticationType: gatewayAuthenticationType
+    acceptedTenantIds: [tenant().tenantId]
+    foundryInstances: [
       {
         name: foundry.outputs.FOUNDRY_NAME
         resourceId: foundry.outputs.FOUNDRY_RESOURCE_ID
-        endpoint: 'https://${foundry.outputs.FOUNDRY_NAME}.openai.azure.com/'
+        endpoint: foundry.outputs.FOUNDRY_ENDPOINT
         location: location
+        isPtu: false
+        deployments: map(deployments, d => {
+          modelFormat: d.properties.model.format
+          modelVersion: d.properties.model.version
+          modelName: d.properties.model.name
+        })
       }
     ]
+  }
+}
+
+module foundry_connections '../modules/ai/connections-apim-gateway.bicep' = {
+  name: 'apim-connections-for-foundry'
+  params: {
+    aiFoundryName: foundry.outputs.FOUNDRY_NAME
+    aiFoundryProjectNames: projectNames
+    resourceToken: resourceToken
+    gatewayAuthenticationType: gatewayAuthenticationType
+    staticModels: common_ai_gateway_setup.outputs.staticModels
+    apimResourceId: ai_gateway.outputs.id
+    apimSubscriptionNames: map(subscriptions, s => s.name)
+    inferenceApiName: common_ai_gateway_setup.outputs.inferenceApiName
+  }
+}
+
+module public_mcps '../modules/apim/public-mcps.bicep' = {
+  name: 'public-mcps-deployment'
+  params: {
+    apimServiceName: ai_gateway.outputs.name
+    aiFoundryName: foundry.outputs.FOUNDRY_NAME
+    apimAppInsightsLoggerId: ai_gateway.outputs.appInsightsLoggerId
   }
 }
 
@@ -204,7 +263,7 @@ module apim_role_assignment '../modules/iam/role-assignment-cognitiveServices.bi
   name: 'apim-role-assignment-deployment-${resourceToken}'
   params: {
     accountName: foundry.outputs.FOUNDRY_NAME
-    principalId: ai_gateway.outputs.apimPrincipalId
+    principalId: ai_gateway.outputs.principalId
     roleName: 'Cognitive Services User'
   }
 }
@@ -236,9 +295,9 @@ module workshop_mcp 'workshop_mcp.bicep' = {
     logAnalyticsResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
     applicationInsightsConnectionString: logAnalytics.outputs.APPLICATION_INSIGHTS_CONNECTION_STRING
     foundryName: foundry.outputs.FOUNDRY_NAME
-    apimName: ai_gateway.outputs.apimName
-    apimAppInsightsLoggerId: ai_gateway.outputs.apimAppInsightsLoggerId
-    apimGatewayUrl: ai_gateway.outputs.apimGatewayUrl
+    apimName: ai_gateway.outputs.name
+    apimAppInsightsLoggerId: ai_gateway.outputs.appInsightsLoggerId
+    apimGatewayUrl: ai_gateway.outputs.gatewayUrl
   }
 }
 

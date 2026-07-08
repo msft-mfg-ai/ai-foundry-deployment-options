@@ -13,3 +13,6 @@ param foundryInstances = json(readEnvironmentVariable('FOUNDRY_INSTANCES_JSON', 
 
 var projectsCountValue = readEnvironmentVariable('PROJECTS_COUNT', '')
 param projectsCount = empty(projectsCountValue) ? null : int(projectsCountValue)
+
+var acceptedTenantIdsValue = readEnvironmentVariable('ACCEPTED_TENANT_IDS', '')
+param acceptedTenantIds = empty(acceptedTenantIdsValue) ? null : map(split(acceptedTenantIdsValue, ','), t => trim(t))

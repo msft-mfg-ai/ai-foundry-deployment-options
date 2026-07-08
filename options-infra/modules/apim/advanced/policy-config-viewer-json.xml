@@ -1,0 +1,88 @@
+<!--
+    Config Viewer (JSON) operation policy.
+    ======================================
+    Returns the raw access contracts JSON (same data the HTML viewer renders).
+    Use this for machine consumption / scripts. Authentication is enforced by
+    the API-level subscriptionRequired=true setting.
+
+    Variables injected by Bicep:
+      {contracts-load-section}  same blob-fetch snippet used by the HTML viewer
+
+    on-error preserves APIM auth errors (401/403) instead of masking them as
+    500 — otherwise a missing/invalid subscription key would surface as
+    "internal error loading contracts" which is misleading for scripts.
+-->
+<policies>
+    <inbound>
+        <base />
+
+        <!-- Injected by Bicep: blob fetch or named value read -->
+        {contracts-load-section}
+
+        <!-- Return the contracts JSON verbatim -->
+        <return-response>
+            <set-status code="200" reason="OK" />
+            <set-header name="Content-Type" exists-action="override">
+                <value>application/json; charset=utf-8</value>
+            </set-header>
+            <set-header name="Cache-Control" exists-action="override">
+                <value>no-store</value>
+            </set-header>
+            <set-body>@((string)context.Variables["contracts-json"])</set-body>
+        </return-response>
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+        <choose>
+            <when condition="@(context.Response != null && (context.Response.StatusCode == 401 || context.Response.StatusCode == 403))">
+                <return-response>
+                    <set-status code="@(context.Response.StatusCode)" reason="@(context.Response.StatusReason)" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json; charset=utf-8</value>
+                    </set-header>
+                    <set-header name="WWW-Authenticate" exists-action="override">
+                        <value>ApiKey realm="ai-gateway-config"</value>
+                    </set-header>
+                    <set-body>@{
+                        var code = context.Response.StatusCode;
+                        var err = context.LastError;
+                        var msg = err != null && !string.IsNullOrEmpty(err.Message)
+                            ? err.Message
+                            : (code == 401
+                                ? "Missing or invalid APIM subscription key. Include header 'Ocp-Apim-Subscription-Key: <key>' or query string '?subscription-key=<key>'."
+                                : "Access denied.");
+                        var error = code == 401 ? "unauthorized" : "forbidden";
+                        return Newtonsoft.Json.JsonConvert.SerializeObject(new {
+                            error = error,
+                            status = code,
+                            message = msg
+                        });
+                    }</set-body>
+                </return-response>
+            </when>
+            <otherwise>
+                <return-response>
+                    <set-status code="500" reason="Internal Server Error" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json; charset=utf-8</value>
+                    </set-header>
+                    <set-body>@{
+                        var err = context.LastError;
+                        var msg = err != null ? err.Message : "Unknown error loading contracts";
+                        return Newtonsoft.Json.JsonConvert.SerializeObject(new {
+                            error = "internal_error",
+                            status = 500,
+                            message = msg
+                        });
+                    }</set-body>
+                </return-response>
+            </otherwise>
+        </choose>
+    </on-error>
+</policies>

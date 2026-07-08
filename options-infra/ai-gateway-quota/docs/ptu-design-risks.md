@@ -119,14 +119,18 @@ Instances must be **PTU-only or paygo-only** — do not mix on the same instance
 
 ### 6.1 Pool Design
 
-Each model gets **two pools** (PTU-only and PAYG-only):
+Each model can get **one or two pools**, controlled by the `priorityRouting` parameter on `multi-foundry-backends.bicep`:
 
 ```
-{model}-ptu-pool:      PTU backends only (for P1 routing via PTU Gate)
-{model}-payg-pool:     PAYG backends only (for P2/P3 and P1 PAYG fallback)
+priorityRouting=true  (ai-gateway-quota default):
+  {model}-ptu-pool:   PTU pri 1 + PAYG pri 50/100 fallback (P1 callers)
+  {model}-pool:       PAYG-only default pool (P2/P3 callers)
+
+priorityRouting=false (other samples' default):
+  {model}-pool:       All backends — PAYG pri 50/100 + PTU pri 200 overflow
 ```
 
-> **Resolution:** Pools were further separated from the original mixed-pool design. Each model now gets PTU-only and PAYG-only pools — no mixed pools. The Priority API policy selects the correct pool based on the routing case, and the PTU Gate API always targets the PTU-only pool.
+> **Resolution:** The single-pool topology is the default for samples that don't enforce contracts. The quota gateway opts into `priorityRouting=true` so PTU is reserved for `priority==1` callers and isolated from Standard traffic.
 
 ### 6.2 APIM Topology Options
 
@@ -144,11 +148,44 @@ Two APIM policy fragments (`token-estimation-inbound.xml`, `token-estimation-out
 
 ---
 
-## 9. Next Steps
+## 9. Backend Naming & Multi-Region Support ✅ Implemented
 
-- [ ] **Choose APIM topology**: Single Premium multi-region (recommended) vs. separate instances per region
-- [ ] **Create region-specific pools in Bicep**: Refactor `multi-foundry-backends.bicep` to produce `{model}-{region}-pool` with regional PTU + PAYG tiers
-- [ ] **Add `context.Deployment.Region` routing**: Policy selects the right regional pool based on which APIM gateway handles the request
+Multi-region topology is supported through **location-scoped backend naming**, not pool separation:
+
+### Backend Naming Convention
+
+Backends are named `{instance}-{model-clean}-{location-clean}-backend` to ensure uniqueness when multiple Foundry instances serve the same model in different Azure regions:
+
+```
+FOUNDRY_A (eastus2, gpt-4.1-mini)     → backend: foundry-a-gpt41mini-eastus2-backend
+FOUNDRY_B (eastus2, gpt-4.1-mini)     → backend: foundry-b-gpt41mini-eastus2-backend
+FOUNDRY_C (westus, gpt-4.1-mini)      → backend: foundry-c-gpt41mini-westus-backend
+FOUNDRY_PTU (eastus, gpt-4.1-mini)    → backend: foundry-ptu-gpt41mini-eastus-backend
+```
+
+Example: 2 paygo foundries in eastus2 + 1 paygo in westus + 1 PTU in eastus — each gets a unique backend with location in the name. Location must match the Azure region where the Foundry instance is deployed.
+
+### Pool Design — Still Per-Model Only
+
+Pools remain **model-scoped**, not region-scoped. This allows:
+- Single PTU pool per model containing all PTU backends (any region)
+- Single PAYG pool per model containing all PAYAG backends (any region)
+- Circuit breaker on PTU backends handles automatic failover to PAYG
+- No region-based pool selection logic
+
+```
+{model-clean}-ptu-pool     PTU pri 1 + PAYG fallback from all regions
+{model-clean}-pool         PAYG-only default pool from all regions
+```
+
+### Regional Preference (Optional)
+
+If callers need to prefer a specific region (e.g., local foundry first), use the explicit `priority` field on each foundry instance in the configuration. Deployer controls locality preference, not automatic APIM region-based selection.
+
+---
+
+## 10. Future Enhancements
+
 - [ ] **Empirical PTU header test**: Deploy a real PTU deployment and capture all response headers
 - [ ] **Document soft limit behavior**: Make it clear in contract docs that PTU quotas are approximate
 - [ ] **Streaming support**: `context.Response.Body.As<JObject>` may not work for `stream: true` responses — need to handle chunked responses separately

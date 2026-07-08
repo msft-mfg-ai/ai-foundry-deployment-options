@@ -20,6 +20,9 @@ type foundryDeploymentType = {
 
   @description('Model format / publisher namespace (e.g. "OpenAI", "Cohere", "DeepSeek"). Optional — captured by the discovery script for the same reason as `modelVersion`.')
   modelFormat: string?
+
+  @description('SKU capacity units for the deployment. Only used when deploying a new Foundry instance (createFoundryDeployments path). Ignored when the deployment already exists on the backing instance.')
+  skuCapacity: int?
 }
 
 // -- Foundry Instance (existing, passed as parameter) -------------------------
@@ -52,7 +55,7 @@ type foundryInstanceType = {
   @description('Weight for load balancing within the same priority tier')
   weight: int?
 
-  @description('Whether this "instance" is actually another APIM gateway that already follows our per-model-gateway convention (passthrough at `/inference/openai/*`). When true, the backend URL becomes `{endpoint}inference/openai` regardless of model format, and circuit-breaker isolation operates per (downstream-APIM, model) pair. Useful for chaining: a regional APIM can front several other APIMs that each front different Foundry accounts.')
+  @description('Whether this "instance" is actually another APIM gateway that already follows our unified-inference-gateway convention (passthrough at `/inference/openai/*`). When true, the backend URL becomes `{endpoint}inference/openai` regardless of model format, and circuit-breaker isolation operates per (downstream-APIM, model) pair. Useful for chaining: a regional APIM can front several other APIMs that each front different Foundry accounts.')
   isApim: bool?
 }
 

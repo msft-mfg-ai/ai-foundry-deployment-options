@@ -182,7 +182,7 @@
 
   &lt;footer&gt;
     Generated at " + now + @" by APIM policy &amp;middot; Source: APIM Named Value &amp;middot;
-    &lt;code&gt;GET /gateway/config&lt;/code&gt;
+    &lt;code&gt;GET /ai-gateway/config&lt;/code&gt;
   &lt;/footer&gt;
 &lt;/body&gt;
 &lt;/html&gt;";

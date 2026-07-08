@@ -8,7 +8,8 @@ locals {
         is_ptu           = instance.is_ptu
         model_name       = dep.model_name
         model_clean      = replace(replace(dep.model_name, ".", ""), "-", "")
-        backend_name     = "${instance.name}-${replace(replace(dep.model_name, ".", ""), "-", "")}-backend"
+        location         = instance.location
+        backend_name     = "${instance.name}-${replace(replace(dep.model_name, ".", ""), "-", "")}-${replace(replace(instance.location, " ", ""), ".", "")}-backend"
         ptu_capacity_tpm = dep.ptu_capacity_tpm
         priority         = instance.priority
         weight           = instance.weight
@@ -51,16 +52,15 @@ locals {
     ]))
   }
 
-  # Backend map keyed by "{instance}-{model_clean}" for for_each iteration.
-  # One backend per (instance, model) pair so circuit-breaker state is scoped
-  # to a single model — a throttled model can't disable other models on the
-  # same Foundry instance.
+  # Backend map keyed by "{instance}-{model_clean}-{location}" for for_each iteration.
+  # One backend per (instance, model, location) pair so circuit-breaker state is scoped
+  # to a single model on a single Foundry instance in a specific location.
   per_model_backends = {
-    for d in local.all_deployments : "${d.instance_name}-${d.model_clean}" => d
+    for d in local.all_deployments : "${d.instance_name}-${d.model_clean}-${d.location}" => d
   }
 }
 
-# Create individual backends — one per (instance, model) pair.
+# Create individual backends — one per (instance, model, location) pair.
 # Circuit breaker on PTU backends: trips on 429/503, respects Retry-After header.
 # URL stays at {endpoint}/openai; the /deployments/{model}/... path segment
 # is forwarded from the request unchanged.
@@ -74,7 +74,7 @@ resource "azapi_resource" "backend" {
   body = {
     properties = merge(
       {
-        description = "${each.value.is_ptu ? "PTU" : "Paygo"} backend: ${each.value.instance_name} — model ${each.value.model_name}"
+        description = "${each.value.is_ptu ? "PTU" : "Paygo"} backend: ${each.value.instance_name} (${each.value.location}) — model ${each.value.model_name}"
         type        = "single"
         protocol    = "http"
         url         = "${trimsuffix(each.value.endpoint, "/")}/openai"

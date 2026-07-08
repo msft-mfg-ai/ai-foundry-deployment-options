@@ -32,16 +32,55 @@
             <dimension name="API ID" value="@(context.Api.Id)" />
             <dimension name="Model" value="@(context.Request.Headers.GetValueOrDefault(&quot;x-ms-foundry-model-id&quot;, &quot;unknown&quot;))" />
         </azure-openai-emit-token-metric>
+        <set-variable name="backendAttempt" value="@(0)" />
+        <set-variable name="backendsTried" value="@(string.Empty)" />
+        <set-variable name="inferenceFailoverTrail" value="@(string.Empty)" />
     </inbound>
     <backend>
         <!--Policy 1 - Apply load-balancing and retry mechanisms -->
         <!--Set count to one less than the number of backends in the pool to try all backends until the backend pool is temporarily unavailable.-->
-        <retry count="{retry-count}" interval="0" first-fast-retry="true" condition="@(context.Response.StatusCode == 429 || (context.Response.StatusCode == 503 && !context.Response.StatusReason.Contains("Backend pool") && !context.Response.StatusReason.Contains("is temporarily unavailable")))">
+        <retry count="2"
+               interval="0"
+               first-fast-retry="true"
+               condition="@(context.Response == null || context.Response.StatusCode == 408 || (context.Response.StatusCode == 409 &amp;&amp; context.Response.Headers.ContainsKey(&quot;Retry-After&quot;)) || context.Response.StatusCode == 429 || context.Response.StatusCode == 499 || context.Response.StatusCode == 500 || context.Response.StatusCode == 502 || context.Response.StatusCode == 503 || context.Response.StatusCode == 504)">
+            <set-variable name="backendAttempt" value="@(((int)context.Variables[&quot;backendAttempt&quot;]) + 1)" />
             <forward-request buffer-request-body="true" />
+            <set-variable name="backendsTried" value="@{
+                var prev  = (string)context.Variables[&quot;backendsTried&quot;];
+                var host  = context.Request?.Url?.Host ?? &quot;unknown&quot;;
+                var code  = context.Response == null ? &quot;none&quot; : context.Response.StatusCode.ToString();
+                var entry = host + &quot;:&quot; + code;
+                return string.IsNullOrEmpty(prev) ? entry : prev + &quot;,&quot; + entry;
+            }" />
+            <set-variable name="inferenceFailoverTrail" value="@{
+                var prev  = (string)context.Variables[&quot;inferenceFailoverTrail&quot;];
+                var entry = &quot;InferenceAttempt|n=&quot; + ((int)context.Variables[&quot;backendAttempt&quot;]).ToString()
+                          + &quot;|backend=&quot; + (context.Request?.Url?.Host ?? &quot;unknown&quot;)
+                          + &quot;|code=&quot; + (context.Response == null ? &quot;none&quot; : context.Response.StatusCode.ToString());
+                return string.IsNullOrEmpty(prev) ? entry : prev + &quot;; &quot; + entry;
+            }" />
+            <trace source="InferenceFailover" severity="information">
+                <message>@((string)context.Variables["inferenceFailoverTrail"])</message>
+            </trace>
         </retry>
     </backend>
     <outbound>
         <base />
+        <set-header name="x-backend-retry-count" exists-action="override">
+            <value>@(Math.Max(0, ((int)context.Variables["backendAttempt"]) - 1).ToString())</value>
+        </set-header>
+        <set-header name="x-backend-attempt-trail" exists-action="override">
+            <value>@{
+                var t = (string)context.Variables["backendsTried"];
+                return string.IsNullOrEmpty(t) ? "none" : t;
+            }</value>
+        </set-header>
+        <set-header name="x-inference-failover" exists-action="override">
+            <value>@{
+                var t = (string)context.Variables["inferenceFailoverTrail"];
+                return string.IsNullOrEmpty(t) ? "none" : t;
+            }</value>
+        </set-header>
     </outbound>
     <on-error>
         <base />

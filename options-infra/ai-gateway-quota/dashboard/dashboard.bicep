@@ -8,7 +8,7 @@ param location string
 @description('Log Analytics Workspace resource ID')
 param logAnalyticsWorkspaceId string
 
-@description('Caller tier mapping JSON string (for reference in quota panel)')
+@description('Caller tier mapping JSON string (preserved for ai-gateway-quota main.bicep compatibility)')
 param callerTierMapping string = '{}'
 
 // ------------------
@@ -19,16 +19,18 @@ var dashboardName = 'apim-quota-dashboard-${toLower(uniqueString(resourceGroup()
 
 // Helper: join LLM logs with gateway logs to get caller identity
 // ApiManagementGatewayLlmLog has: PromptTokens, CompletionTokens, TotalTokens, DeploymentName, ModelName
-// ApiManagementGatewayLogs has: BackendRequestHeaders containing x-caller-name, x-caller-priority, x-caller-id
+// ApiManagementGatewayLogs has: ResponseHeaders containing x-caller-name, x-caller-priority, x-caller-id
+// (set by the outbound section of policy-per-model.xml; never present on BackendRequestHeaders)
 
 var kqlQuotaOverview = '''
 let callerLogs = ApiManagementGatewayLogs
-| where BackendRequestHeaders has "x-caller-priority"
-| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(BackendRequestHeaders))
-| extend CallerPriority = extract(@'"x-caller-priority":"([^"]+)"', 1, tostring(BackendRequestHeaders))
+| where ResponseHeaders has "x-caller-name"
+| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
+| extend CallerPriority = extract(@'"x-caller-priority":"([^"]+)"', 1, tostring(ResponseHeaders))
 | summarize CallerName = take_any(CallerName), CallerPriority = take_any(CallerPriority) by CorrelationId;
 ApiManagementGatewayLlmLog
 | where TimeGenerated >= startofmonth(now())
+| where TotalTokens > 0 or isnotempty(DeploymentName)
 | join kind=leftouter callerLogs on CorrelationId
 | summarize
     MonthlyTokens = sum(TotalTokens),
@@ -42,8 +44,8 @@ ApiManagementGatewayLlmLog
 
 var kqlTokenUsageOverTime = '''
 let callerLogs = ApiManagementGatewayLogs
-| where BackendRequestHeaders has "x-caller-name"
-| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(BackendRequestHeaders))
+| where ResponseHeaders has "x-caller-name"
+| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
 | summarize CallerName = take_any(CallerName) by CorrelationId;
 ApiManagementGatewayLlmLog
 | where DeploymentName != ""
@@ -55,14 +57,8 @@ ApiManagementGatewayLlmLog
 var kqlRateLimitEvents = '''
 ApiManagementGatewayLogs
 | where ResponseCode == 429
-| extend CallerName = coalesce(
-    extract(@'"x-caller-name":"([^"]+)"', 1, tostring(BackendRequestHeaders)),
-    extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
-  )
-| extend CallerPriority = coalesce(
-    extract(@'"x-caller-priority":"([^"]+)"', 1, tostring(BackendRequestHeaders)),
-    extract(@'"x-caller-priority":"([^"]+)"', 1, tostring(ResponseHeaders))
-  )
+| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
+| extend CallerPriority = extract(@'"x-caller-priority":"([^"]+)"', 1, tostring(ResponseHeaders))
 | summarize
     ThrottledRequests = count(),
     FirstThrottle = min(TimeGenerated),
@@ -73,8 +69,8 @@ ApiManagementGatewayLogs
 
 var kqlModelUsageByCaller = '''
 let callerLogs = ApiManagementGatewayLogs
-| where BackendRequestHeaders has "x-caller-name"
-| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(BackendRequestHeaders))
+| where ResponseHeaders has "x-caller-name"
+| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
 | summarize CallerName = take_any(CallerName) by CorrelationId;
 ApiManagementGatewayLlmLog
 | where DeploymentName != ""
@@ -90,11 +86,12 @@ by CallerName, DeploymentName, ModelName
 
 var kqlDailyUsageByCaller = '''
 let callerLogs = ApiManagementGatewayLogs
-| where BackendRequestHeaders has "x-caller-name"
-| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(BackendRequestHeaders))
-| extend CallerPriority = extract(@'"x-caller-priority":"([^"]+)"', 1, tostring(BackendRequestHeaders))
+| where ResponseHeaders has "x-caller-name"
+| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
+| extend CallerPriority = extract(@'"x-caller-priority":"([^"]+)"', 1, tostring(ResponseHeaders))
 | summarize CallerName = take_any(CallerName), CallerPriority = take_any(CallerPriority) by CorrelationId;
 ApiManagementGatewayLlmLog
+| where TotalTokens > 0 or isnotempty(DeploymentName)
 | join kind=leftouter callerLogs on CorrelationId
 | summarize
     TotalTokens = sum(TotalTokens),
@@ -108,12 +105,24 @@ by bin(TimeGenerated, 1d), CallerName, CallerPriority
 var kqlErrorBreakdown = '''
 ApiManagementGatewayLogs
 | where ResponseCode >= 400
-| extend CallerName = coalesce(
-    extract(@'"x-caller-name":"([^"]+)"', 1, tostring(BackendRequestHeaders)),
-    extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
-  )
+| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
 | summarize Count = count() by ResponseCode, CallerName, bin(TimeGenerated, 1h)
 | order by TimeGenerated desc
+'''
+
+var kqlMonthlyBudgetBurnDown = '''
+let callerLogs = ApiManagementGatewayLogs
+| where ResponseHeaders has "x-caller-name"
+| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
+| summarize CallerName = take_any(CallerName) by CorrelationId;
+ApiManagementGatewayLlmLog
+| where TimeGenerated >= startofmonth(now())
+| where TotalTokens > 0 or isnotempty(DeploymentName)
+| join kind=leftouter callerLogs on CorrelationId
+| summarize CumulativeTokens = sum(TotalTokens) by CallerName, bin(TimeGenerated, 1h)
+| order by CallerName, TimeGenerated asc
+| serialize
+| extend RunningTotal = row_cumsum(CumulativeTokens, CallerName != prev(CallerName))
 '''
 
 var kqlRemainingQuota = '''
@@ -162,18 +171,72 @@ ApiManagementGatewayLogs
 | order by TimeGenerated asc
 '''
 
-var kqlMonthlyBudgetBurnDown = '''
-let callerLogs = ApiManagementGatewayLogs
-| where BackendRequestHeaders has "x-caller-name"
-| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(BackendRequestHeaders))
-| summarize CallerName = take_any(CallerName) by CorrelationId;
-ApiManagementGatewayLlmLog
-| where TimeGenerated >= startofmonth(now())
-| join kind=leftouter callerLogs on CorrelationId
-| summarize CumulativeTokens = sum(TotalTokens) by CallerName, bin(TimeGenerated, 1h)
-| order by CallerName, TimeGenerated asc
-| serialize
-| extend RunningTotal = row_cumsum(CumulativeTokens, CallerName != prev(CallerName))
+// Non-LLM endpoints (TTS, Whisper, embeddings, images). APIM's `largeLanguageModel`
+// diagnostic only enriches DeploymentName/ModelName/Tokens for chat-completion-shaped
+// JSON responses, so TTS (binary) and similar endpoints are invisible in
+// ApiManagementGatewayLlmLog. We derive the deployment from the URL path of
+// ApiManagementGatewayLogs instead.
+var kqlNonLlmEndpoints = '''
+ApiManagementGatewayLogs
+| where Url matches regex @"/deployments/([^/]+)/(audio|images|embeddings)"
+| extend DeploymentName = extract(@"/deployments/([^/]+)/", 1, Url)
+| extend Endpoint = extract(@"/deployments/[^/]+/(audio/[^/?]+|images/[^/?]+|embeddings)", 1, Url)
+| extend CallerName = extract(@'"x-caller-name":"([^"]+)"', 1, tostring(ResponseHeaders))
+| extend CallerPriority = extract(@'"x-caller-priority":"([^"]+)"', 1, tostring(ResponseHeaders))
+| summarize
+    Requests = count(),
+    Errors = countif(ResponseCode >= 400),
+    LastCall = max(TimeGenerated)
+    by CallerName, CallerPriority, DeploymentName, Endpoint
+| order by Requests desc
+'''
+
+// Backend distribution: how many requests each backend pool / individual backend
+// handled, including failover and retry counts.
+//
+// Native APIM columns (preferred source of truth):
+//   BackendId  → resource name of the *individual* backend resolved (multi-backend
+//                pools naturally split across rows). Empty when the request never
+//                reached the routing policy (401/403 rejected early).
+//   BackendUrl → full resolved URL (host + path); used to derive a short label.
+//
+// Header (only used for the logical pool name — not available as a native column):
+//   x-backend-pool → load-balancer pool that owns the resolved BackendId.
+//
+// Retry / failover context (still header-based; APIM has no native columns for these):
+//   x-backend-retry-count, x-backend-attempt-trail, x-inference-failover.
+var kqlBackendDistribution = '''
+ApiManagementGatewayLogs
+| extend BackendPool   = extract(@'"x-backend-pool":"([^"]+)"', 1, tostring(ResponseHeaders))
+| extend BackendPool   = iff(isempty(BackendPool), "(no-pool)", BackendPool)
+| extend BackendShort  = iff(isempty(BackendId), "(none)", BackendId)
+| extend RetryCount    = toint(extract(@'"x-backend-retry-count":"([^"]+)"',  1, tostring(ResponseHeaders)))
+| extend AttemptTrail  = extract(@'"x-backend-attempt-trail":"([^"]+)"',      1, tostring(ResponseHeaders))
+| extend FailoverTrail = extract(@'"x-inference-failover":"([^"]+)"',         1, tostring(ResponseHeaders))
+| extend HadRetry      = isnotempty(AttemptTrail)  and AttemptTrail  != "none"
+| extend HadFailover   = isnotempty(FailoverTrail) and FailoverTrail != "none"
+| summarize
+    Requests       = count(),
+    Errors         = countif(ResponseCode >= 400),
+    Throttled      = countif(ResponseCode == 429),
+    RetryEvents    = countif(HadRetry),
+    FailoverEvents = countif(HadFailover),
+    AvgRetries     = round(avg(RetryCount), 2),
+    MaxRetries     = max(RetryCount),
+    LastCall       = max(TimeGenerated)
+    by BackendPool, Backend = BackendShort
+| extend ErrorRate = round(100.0 * Errors / Requests, 1)
+| project BackendPool, Backend, Requests, Errors, ErrorRate, Throttled, RetryEvents, FailoverEvents, AvgRetries, MaxRetries, LastCall
+| order by BackendPool asc, Requests desc
+'''
+
+// Backend Requests Over Time — stacked column chart of pool traffic over time.
+var kqlBackendOverTime = '''
+ApiManagementGatewayLogs
+| extend BackendPool = extract(@'"x-backend-pool":"([^"]+)"', 1, tostring(ResponseHeaders))
+| where isnotempty(BackendPool)
+| summarize Requests = count() by bin(TimeGenerated, 1h), BackendPool
+| order by TimeGenerated asc
 '''
 
 // Helper function to create a LogsDashboardPart tile
@@ -189,7 +252,7 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
   tags: {
     'hidden-title': 'AI Gateway - Quota Tiers Dashboard'
   }
-  properties: {
+  properties: any({
     lenses: [
       {
         order: 0
@@ -202,7 +265,7 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
               inputs: []
               settings: {
                 content: {
-                  content: '# 🔒 AI Gateway - Quota Tiers Dashboard\n\nMonitor per-caller token usage, quota consumption, and rate limit events.\nPriority Levels: **Production** (P1) · **Economy** (P3)\n\nData sourced from `ApiManagementGatewayLlmLog` joined with `ApiManagementGatewayLogs` for caller identification.'
+                  content: '# 🔒 AI Gateway - Quota Tiers Dashboard\n\nMonitor per-caller token usage, quota consumption, and rate limit events.\nPriority Levels: **Production** (P1) · **Standard** (P2)\n\nData sourced from `ApiManagementGatewayLlmLog` joined with `ApiManagementGatewayLogs` for caller identification.'
                   title: ''
                   subtitle: ''
                   markdownSource: 1
@@ -509,15 +572,106 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
               }
             }
           }
-          // Caller Tier Config Reference
+          // Non-LLM Endpoint Usage (TTS, Whisper, embeddings, images) - Row 37
           {
-            position: { x: 0, y: 37, colSpan: 17, rowSpan: 2 }
+            position: { x: 0, y: 37, colSpan: 17, rowSpan: 4 }
+            metadata: {
+              type: 'Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart'
+              inputs: [
+                { name: 'Scope', value: { resourceIds: [ logAnalyticsWorkspaceId ] }, isOptional: true }
+                { name: 'Version', value: '2.0', isOptional: true }
+                { name: 'TimeRange', value: 'P7D', isOptional: true }
+                { name: 'PartId', value: 'non-llm-endpoints', isOptional: true }
+                { name: 'PartTitle', value: '🎙️ Non-LLM Endpoint Usage (TTS / Whisper / Embeddings)', isOptional: true }
+                { name: 'PartSubTitle', value: 'Derived from URL path — APIM\'s LLM log only enriches chat-completion responses', isOptional: true }
+                { name: 'Query', value: kqlNonLlmEndpoints, isOptional: true }
+                { name: 'ControlType', value: 'AnalyticsGrid', isOptional: true }
+                { name: 'resourceTypeMode', isOptional: true }
+                { name: 'ComponentId', isOptional: true }
+                { name: 'DashboardId', isOptional: true }
+                { name: 'DraftRequestParameters', isOptional: true }
+                { name: 'SpecificChart', isOptional: true }
+                { name: 'Dimensions', isOptional: true }
+                { name: 'LegendOptions', isOptional: true }
+                { name: 'IsQueryContainTimeRange', isOptional: true }
+              ]
+              settings: {}
+            }
+          }
+          // Backend Distribution (grid) - Row 41
+          {
+            position: { x: 0, y: 41, colSpan: 17, rowSpan: 4 }
+            metadata: {
+              type: 'Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart'
+              inputs: [
+                { name: 'Scope', value: { resourceIds: [ logAnalyticsWorkspaceId ] }, isOptional: true }
+                { name: 'Version', value: '2.0', isOptional: true }
+                { name: 'TimeRange', value: 'P7D', isOptional: true }
+                { name: 'PartId', value: 'backend-distribution', isOptional: true }
+                { name: 'PartTitle', value: '⚙️ Backend Distribution', isOptional: true }
+                { name: 'PartSubTitle', value: 'Requests per backend pool & individual backend, with retry / failover counts', isOptional: true }
+                { name: 'Query', value: kqlBackendDistribution, isOptional: true }
+                { name: 'ControlType', value: 'AnalyticsGrid', isOptional: true }
+                { name: 'resourceTypeMode', isOptional: true }
+                { name: 'ComponentId', isOptional: true }
+                { name: 'DashboardId', isOptional: true }
+                { name: 'DraftRequestParameters', isOptional: true }
+                { name: 'SpecificChart', isOptional: true }
+                { name: 'Dimensions', isOptional: true }
+                { name: 'LegendOptions', isOptional: true }
+                { name: 'IsQueryContainTimeRange', isOptional: true }
+              ]
+              settings: {}
+            }
+          }
+          // Backend Requests Over Time (chart) - Row 45
+          {
+            position: { x: 0, y: 45, colSpan: 17, rowSpan: 5 }
+            metadata: {
+              type: 'Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart'
+              inputs: [
+                { name: 'Scope', value: { resourceIds: [ logAnalyticsWorkspaceId ] }, isOptional: true }
+                { name: 'Version', value: '2.0', isOptional: true }
+                { name: 'TimeRange', value: 'P7D', isOptional: true }
+                { name: 'PartId', value: 'backend-over-time', isOptional: true }
+                { name: 'PartTitle', value: '📊 Backend Requests Over Time', isOptional: true }
+                { name: 'PartSubTitle', value: 'Hourly request count per backend pool', isOptional: true }
+                { name: 'Query', value: kqlBackendOverTime, isOptional: true }
+                { name: 'ControlType', value: 'AnalyticsGrid', isOptional: true }
+                { name: 'resourceTypeMode', isOptional: true }
+                { name: 'ComponentId', isOptional: true }
+                { name: 'DashboardId', isOptional: true }
+                { name: 'DraftRequestParameters', isOptional: true }
+                { name: 'SpecificChart', isOptional: true }
+                { name: 'Dimensions', isOptional: true }
+                { name: 'LegendOptions', isOptional: true }
+                { name: 'IsQueryContainTimeRange', isOptional: true }
+              ]
+              settings: {
+                content: {
+                  Query: '${kqlBackendOverTime}\n'
+                  ControlType: 'FrameControlChart'
+                  SpecificChart: 'StackedColumn'
+                  Dimensions: {
+                    xAxis: { name: 'TimeGenerated', type: 'datetime' }
+                    yAxis: [ { name: 'Requests', type: 'long' } ]
+                    splitBy: [ { name: 'BackendPool', type: 'string' } ]
+                    aggregation: 'Sum'
+                  }
+                  LegendOptions: { isEnabled: true, position: 'Bottom' }
+                }
+              }
+            }
+          }
+          // Caller Tier Config Reference (local ai-gateway-quota tile)
+          {
+            position: { x: 0, y: 50, colSpan: 17, rowSpan: 2 }
             metadata: {
               type: 'Extension/HubsExtension/PartType/MarkdownPart'
               inputs: []
               settings: {
                 content: {
-                  content: '## ⚙️ Caller Priority Configuration\n\nCurrent mapping (from APIM Named Value `caller-tier-mapping`):\n```json\n${callerTierMapping}\n```'
+                  content: '## ⚙️ Caller Priority Configuration\n\nCurrent mapping (from APIM contract map):\n```json\n${callerTierMapping}\n```'
                   title: ''
                   subtitle: ''
                   markdownSource: 1
@@ -550,7 +704,7 @@ resource dashboard 'Microsoft.Portal/dashboards@2022-12-01-preview' = {
         }
       }
     }
-  }
+  })
 }
 
 output dashboardId string = dashboard.id

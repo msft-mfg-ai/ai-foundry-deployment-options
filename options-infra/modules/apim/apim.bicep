@@ -2,6 +2,7 @@ import { aiServiceConfigType } from 'v2/inference-api.bicep'
 import { subscriptionType, hostnameConfigurationType } from 'v2/apim.bicep'
 
 param location string = resourceGroup().location
+param apiManagementName string
 param tags object = {}
 param logAnalyticsWorkspaceId string
 param appInsightsInstrumentationKey string = ''
@@ -13,16 +14,6 @@ param gatewayAuthenticationType string = 'ApiKey'
 
 @description('Configuration array for AI Services')
 param aiServicesConfig aiServiceConfigType[] = []
-
-@description('Configuration array for Anthropic AI Services (Foundry-hosted Claude models)')
-param anthropicServicesConfig aiServiceConfigType[] = []
-
-@description('API key for the Anthropic Foundry endpoint. Use for cross-tenant endpoints where managed identity is not available.')
-@secure()
-param anthropicApiKey string = ''
-
-@description('The suffix to append to the API Management instance name. Defaults to a unique string based on subscription and resource group IDs.')
-param resourceSuffix string = uniqueString(subscription().id, resourceGroup().id)
 
 @description('The name of the subscriptions to be created in API Management for the AI Gateway')
 param subscriptions subscriptionType[] = []
@@ -67,13 +58,13 @@ param apimManagedIdentityType string = apimUserAssignedManagedIdentityResourceId
 module apim 'v2/apim.bicep' = {
   name: 'apim-v2'
   params: {
+    apiManagementName: apiManagementName
     location: location
     tags: tags
     apimSubscriptionsConfig: subscriptions
     lawId: logAnalyticsWorkspaceId
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
     appInsightsId: appInsightsId
-    resourceSuffix: resourceSuffix
     apimSku: apimSku
     virtualNetworkType: virtualNetworkType
     subnetResourceId: subnetResourceId
@@ -104,27 +95,14 @@ var updatedJwtInferencePolicyXml = replace(
   subscription().tenantId
 )
 
-var updatedAnthropicPolicyXml = replace(
-  replace(
-    replace(
-      loadTextContent('anthropic-policy.xml'),
-      '{retry-count}',
-      string(max(length(anthropicServicesConfig) - 1, 1))
-    ),
-    'SUBSCRIPTION_ID',
-    subscription().subscriptionId
-  ),
-  'TENANT_ID',
-  subscription().tenantId
-)
-
 // Deploy the shared caller-identity policy fragment. Inbound policies use
 // <include-fragment fragment-id="caller-identity" /> to inherit the canonical
 // x-caller-* headers (name/id/foundry/project) without duplicating logic.
 module callerIdentityFragment 'caller-identity-fragment.bicep' = {
   name: 'caller-identity-fragment'
+  dependsOn: [apim]
   params: {
-    apiManagementName: apim.outputs.name
+    apiManagementName: apiManagementName
   }
 }
 
@@ -133,13 +111,12 @@ module inference_api 'v2/inference-api.bicep' = if (!empty(aiServicesConfig)) {
   dependsOn: [callerIdentityFragment]
   params: {
     policyXml: gatewayAuthenticationType == 'ProjectManagedIdentity' ? updatedJwtInferencePolicyXml : updatedInferencePolicyXml
-    apiManagementName: apim.outputs.name
+    apiManagementName: apiManagementName
     apimLoggerId: apim.outputs.loggerId
     aiServicesConfig: aiServicesConfig
     inferenceAPIType: inferenceAPIType
     inferenceAPIPath: inferenceAPIPath
     configureCircuitBreaker: true
-    resourceSuffix: resourceSuffix
     enableModelDiscovery: true
     // Under PMI the JWT policy authenticates the caller — APIM subscription
     // key is no longer the gating credential, so we can drop the requirement.
@@ -157,7 +134,7 @@ module openAiv2Api 'v2/inference-api.bicep' = if (!empty(aiServicesConfig) && (a
   dependsOn: [inference_api, callerIdentityFragment]
   params: {
     policyXml: gatewayAuthenticationType == 'ProjectManagedIdentity' ? updatedJwtInferencePolicyXml : updatedInferencePolicyXml
-    apiManagementName: apim.outputs.name
+    apiManagementName: apiManagementName
     apimLoggerId: apim.outputs.loggerId
     aiServicesConfig: aiServicesConfig
     inferenceAPIType: 'OpenAI'
@@ -166,7 +143,6 @@ module openAiv2Api 'v2/inference-api.bicep' = if (!empty(aiServicesConfig) && (a
     inferenceAPIDisplayName: 'OpenAI API v1'
     inferenceAPIName: 'openai-api-v1'
     configureCircuitBreaker: true
-    resourceSuffix: resourceSuffix
     enableModelDiscovery: true
     requireSubscriptionKey: gatewayAuthenticationType != 'ProjectManagedIdentity'
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
@@ -174,51 +150,14 @@ module openAiv2Api 'v2/inference-api.bicep' = if (!empty(aiServicesConfig) && (a
   }
 }
 
-// Anthropic API — Foundry-hosted Claude models proxied through APIM.
-// Uses PassThrough spec + JWT validation policy. Backend Anthropic api-key is
-// supplied by APIM (via the `credentials` on the backend resource), so callers
-// don't send any key. Depends on inference_api to avoid race condition on the
-// service-level inference tag.
-module anthropic_api 'v2/inference-api.bicep' = if (!empty(anthropicServicesConfig)) {
-  name: 'anthropic-api-deployment'
-  dependsOn: [inference_api, callerIdentityFragment]
-  params: {
-    policyXml: updatedAnthropicPolicyXml
-    apiManagementName: apim.outputs.name
-    apimLoggerId: apim.outputs.loggerId
-    aiServicesConfig: anthropicServicesConfig
-    inferenceAPIType: 'Anthropic'
-    inferenceAPIPath: 'inference'
-    inferenceAPIDescription: 'Anthropic Claude API for AI Gateway'
-    inferenceAPIDisplayName: 'Anthropic API'
-    inferenceAPIName: 'anthropic-api'
-    configureCircuitBreaker: true
-    resourceSuffix: resourceSuffix
-    enableModelDiscovery: false
-    // anthropic-policy.xml validates the caller's JWT and requires
-    // xms_mirid to belong to this subscription, so APIM subscription auth
-    // is redundant.
-    requireSubscriptionKey: false
-    backendApiKey: anthropicApiKey
-    appInsightsInstrumentationKey: appInsightsInstrumentationKey
-    appInsightsId: appInsightsId
-  }
-}
-
-// OpenAI-compatible Anthropic API was removed: Foundry's ModelGateway requires
-// `deploymentInPath=true` semantics which the compat layer cannot satisfy, and the
-// native Anthropic API at /inference/anthropic already supports both Anthropic SDK
-// clients and Foundry v2 agents end-to-end.
-
 output apimResourceId string = apim.outputs.id
 output apimName string = apim.outputs.name
 output inferenceApiId string = !empty(aiServicesConfig) ? inference_api!.outputs.apiId : ''
 output inferenceApiName string = !empty(aiServicesConfig) ? inference_api!.outputs.apiName : ''
 output inferenceApiPath string = !empty(aiServicesConfig) ? inference_api!.outputs.apiPath : ''
-output anthropicApiName string = !empty(anthropicServicesConfig) ? anthropic_api!.outputs.apiName : ''
-output anthropicApiPath string = !empty(anthropicServicesConfig) ? anthropic_api!.outputs.apiPath : ''
 output subscriptions array = apim.outputs.apimSubscriptions
 output apimPrincipalId string = apim.outputs.principalId
+output apimLoggerId string = apim.outputs.loggerId
 output apimAppInsightsLoggerId string = apim.outputs.appInsightsLoggerId
 output apimPrivateIp string = apim.outputs.apimPrivateIp
 output apimPublicIp string = apim.outputs.apimPublicIp

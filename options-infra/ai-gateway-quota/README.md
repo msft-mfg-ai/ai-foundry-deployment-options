@@ -1,25 +1,26 @@
 # AI Gateway with JWT Auth + Access Contracts + Priority Routing
 
-This deployment creates an **Azure API Management (APIM)** AI Gateway with **JWT Bearer Token authentication** via Entra ID. Client applications are identified by JWT claims, matched to **access contracts** stored in blob storage, and subject to **per-model TPM quotas**, **monthly token budgets**, and **2-tier priority routing** (P1 → mixed PTU+PAYG pool with circuit breaker failover, P2 → PAYG-only with quota enforcement).
+This deployment creates the unified **Azure API Management (APIM)** AI Gateway architecture. A single canonical inference policy, [`policy-per-model.xml`](../modules/apim/policy-per-model.xml), is shared by the passthrough `inference` API, spec-backed `inference-api-azure` API, conditional `openai-api-v1` API (Premium/StandardV2 SKUs), and static-discovery operations. Client applications are identified by JWT claims, matched to blob-backed **access contracts**, and subject to **per-model TPM quotas**, **monthly token budgets**, and **2-tier priority routing** (P1 → mixed PTU+PAYG pool with circuit breaker failover, P2 → PAYG-only with quota enforcement).
 
 ## Features
 
 - **JWT Bearer Token Auth** — `validate-azure-ad-token` against Entra ID (no APIM subscription keys)
-- **Access Contracts** — Per-team configuration (models, TPM limits, PTU allocations, monthly budgets) stored in blob storage (Bicep) or APIM named values (Terraform), cached 5 min
-- **2-Tier Priority Routing** — P1 Production (mixed PTU+PAYG pool with circuit breaker), P2 Standard (PAYG only, quota enforced)
+- **Single Policy Stack** — `policy-per-model.xml` is the canonical policy for all inference API surfaces and static discovery operations
+- **Access Contracts** — Per-team configuration (models, TPM limits, PTU allocations, monthly budgets) stored in blob storage and loaded by the `caller-identity` fragment
+- **2-Tier Priority Routing** — `per-model-routing` sends P1 Production to mixed PTU+PAYG pools and P2/other callers to PAYG-only pools
 - **Circuit Breaker Failover** — PTU backends have circuit breaker rules; when tripped (429/503), APIM automatically routes to PAYG backends in the same pool
 - **Per-Model TPM Quotas** — Hard 429 enforcement via `llm-token-limit` with custom `counter-key`
 - **Monthly Token Budgets** — Native enforcement via `llm-token-limit` with `token-quota-period=Monthly` (conditional — see [Quota Compromise](#quota-compromise))
 - **Automatic Entra ID App Registration** — Dynamic creation per contract via Microsoft Graph Bicep extension
-- **Multi-Backend Routing** — Per-model mixed (PTU+PAYG) and PAYG-only pools with circuit breaker failover
+- **Multi-Backend Routing** — One backend per `(instance, model, location)`, plus per-model mixed and PAYG-only pools with circuit breaker failover
 - **Event Hub Notifications** — Quota-exceeded events for downstream processing
 - **Azure Portal Dashboard** — KQL-based monitoring (token usage, rate limits, routing decisions)
 - **Foundry Headers** — `x-foundry-agent-id`, `x-foundry-project-name`, `x-foundry-project-id` for Foundry agent tracing
-- **Observability Headers** — `x-caller-name`, `x-backend-pool`, `x-backend-type`, `x-backend-id`, etc.
+- **Observability Headers** — Captured by `log-settings.bicep`, including `x-caller-*`, `x-backend-*`, `x-inference-failover`, quota/rate-limit, and Foundry project headers
 
 ## Architecture Overview
 
-The gateway uses **APIM's native circuit breaker and priority-based backend pools** for PTU→PAYG failover. The Inference API (external-facing) handles JWT auth, contract resolution, and quota checks. For P1 (Production) callers, it routes to a **mixed pool** where PTU backends are at priority 1 and PAYG backends are at priority 2. When PTU backends return 429/503, the circuit breaker trips and APIM automatically fails over to PAYG backends. P2 (Standard) callers route directly to a PAYG-only pool to avoid consuming PTU capacity.
+The gateway uses **APIM's native circuit breaker and priority-based backend pools** for PTU→PAYG failover. The same `policy-per-model.xml` and fragments handle JWT auth, contract resolution, quota checks, and routing on every inference API surface. For P1 (Production) callers, it routes to a **mixed pool** where PTU backends are at priority 1 and PAYG backends are at priority 2. When PTU backends return 429/503, the circuit breaker trips and APIM automatically fails over to PAYG backends. P2 (Standard) callers route directly to a PAYG-only pool to avoid consuming PTU capacity.
 
 ```
   Client App                        APIM Gateway (Circuit Breaker Pattern)
@@ -32,17 +33,17 @@ The gateway uses **APIM's native circuit breaker and priority-based backend pool
        │    Bearer token           │   │ 3. Per-model TPM check (llm-token-limit)          │  │
        ├──────────────────────────►│   │ 4. Monthly quota check (conditional)              │  │
        │                           │   │ 5. Route by priority:                             │  │
-       │                           │   │    P1 → Mixed pool (PTU pri 1, PAYG pri 2)        │  │
-       │                           │   │    P2 → PAYG-only pool                            │  │
+       │                           │   │    P1 → PTU pool (PTU pri 1, PAYG pri 50/100 fallback) │  │
+       │                           │   │    P2 → Default pool (PAYG only)                  │  │
        │                           │   └──────────────┬──────────────────┬─────────────────┘  │
        │                           └──────────────────┼──────────────────┼──────────────────────┘
                                                       │                  │
                                                       ▼                  ▼
                                            ┌───────────────────┐ ┌──────────────────┐
-                                           │ {model}-pool      │ │ {model}-payg-pool│
+                                           │ {model}-ptu-pool  │ │ {model}-pool     │
                                            │  PTU (pri 1)      │ │  PAYG backends   │
-                                           │  PAYG (pri 2)     │ │  (Standard only) │
-                                           │  circuit breaker   │ └──────────────────┘
+                                           │  PAYG (pri 50/100)│ │  (Standard only) │
+                                           │  circuit breaker  │ └──────────────────┘
                                            └───────────────────┘
                                              │               │
                                       ┌──────┴──────┐ ┌─────┴──────┐
@@ -59,21 +60,36 @@ The gateway uses **APIM's native circuit breaker and priority-based backend pool
 Client → APIM Gateway
   1. JWT Validation     — Validate token against Entra ID (audience: https://cognitiveservices.azure.com)
   2. Identity Resolution — Extract azp/appid/xms_mirid/oid/sub claims → match to contract
-  3. Contract Lookup     — Load contracts JSON from blob (cached 5 min) → resolve team name, priority, model quotas
+  3. Contract Lookup     — `caller-identity` loads contracts JSON from blob (cached 5 min) → resolve team name, priority, model quotas
   4. Model Authorization — Check requested model is in contract's allow-list, extract TPM/ptuTpm
   5. Per-Model TPM       — llm-token-limit (counter-key = "caller:model", tokens-per-minute) → 429 if over
   6. Monthly Quota       — llm-token-limit (conditional — see Quota Compromise) → 429 if over
-  7. Priority Routing    — Route to backend pool based on priority tier:
-       P1 (Production): Mixed pool (PTU pri 1, PAYG pri 2) — circuit breaker handles failover
-       P2 (Standard):   PAYG-only pool, quota always enforced
+  7. Priority Routing    — `per-model-routing` chooses a backend pool based on priority tier:
+       P1 (Production): PTU pool `{model}-ptu-pool` (PTU pri 1, in-region PAYG pri 50, out-of-region PAYG pri 100 fallback)
+       P2/other:        Default pool `{model}-pool` (PAYG-only), quota always enforced
 ```
+
+
+## Unified Policy Stack
+
+`policy-per-model.xml` is the single inference policy stack. It is applied to:
+
+- the passthrough `inference` API (`/inference/openai/...` and `/inference/anthropic/...`)
+- the spec-backed `inference-api-azure` API (`/azure/openai/...`)
+- the conditional `openai-api-v1` API (`/openai/v1/...`, only on Premium/StandardV2-capable SKUs)
+- static-discovery operations that return the deploy-time model catalog
+
+Two fragments keep the policy reusable:
+
+- `caller-identity` sets observability defaults in open mode. When `caller-identity-fragment.bicep` receives `contractsBlobUrl`, `{contracts-load-section}` injects JWT validation, blob lookup, identity matching, and per-model authorization. Without contracts, neutral defaults flow through and `<llm-token-limit>` blocks short-circuit because they are wrapped in `<choose when="model-tpm > 0">`.
+- `per-model-routing` extracts the requested model and routes `priority == 1` callers to `{model}-ptu-pool` (PTU pri 1 + PAYG fallback) when a PTU pool exists for that model; all other callers (and `priority == 1` callers for models without PTU) go to the default `{model}-pool` (PAYG only). PAYG backends are region-aware: in-region priority 50, out-of-region priority 100.
 
 ## Priority Tiers
 
 | Priority | Label | Routing | Quota Enforcement |
 |----------|-------|---------|-------------------|
-| **P1** | Production | Mixed pool (PTU pri 1, PAYG pri 2) — circuit breaker failover | Conditional (see [Quota Compromise](#quota-compromise)) |
-| **P2** | Standard | PAYG only | Always enforced |
+| **P1** | Production | PTU pool `{model}-ptu-pool` (PTU pri 1, PAYG pri 50/100 fallback) — circuit breaker failover | Conditional (see [Quota Compromise](#quota-compromise)) |
+| **P2** | Standard | Default pool `{model}-pool` (PAYG only) | Always enforced |
 
 ## Quota Compromise
 
@@ -102,7 +118,7 @@ The gateway validates tokens with audience `https://cognitiveservices.azure.com`
 
 ## Access Contracts
 
-Access contracts replace the earlier Gold/Silver/Bronze tier system. Each contract defines a team's identity, priority, allowed models with per-model TPM limits, and monthly token budget. Contracts are defined in `main.bicepparam` and compiled to blob storage at deploy time (cached 5 min in APIM).
+Access contracts replace the earlier Gold/Silver/Bronze tier system. Each contract defines a team's identity, priority, allowed models with per-model TPM limits, and monthly token budget. Contracts are defined in `main.bicepparam` and compiled to blob storage at deploy time (cached 5 min in APIM). Runtime reads use `GET /ai-gateway/config.json`; updates use `POST /ai-gateway/config/update`.
 
 ### Contract Type
 
@@ -143,6 +159,28 @@ The deploying identity needs **`Application.ReadWrite.All`** permission. Client 
 
 Teams with pre-existing Entra apps or managed identities can bring their own identities by populating the `identities` array in their contract — no app registration is created for them.
 
+## Backend Naming & Multi-Region Support
+
+### Backend Naming Convention
+
+Backends are created per `(instance, model, location)` triplet with names like `{instance}-{model-clean}-{location-clean}-backend`. Circuit breaker state is therefore per model, so one throttled model does not disable other models on the same Foundry instance. This ensures unique backend identity when multiple Foundry instances serve the same model in different Azure regions:
+
+```
+Topology: 2 paygo in eastus2 + 1 paygo in westus + 1 PTU in eastus
+
+Backends created:
+  ✓ foundry-paygo-a-gpt41mini-eastus2-backend       (PTU: false, Location: eastus2)
+  ✓ foundry-paygo-b-gpt41mini-eastus2-backend       (PTU: false, Location: eastus2)
+  ✓ foundry-paygo-c-gpt41mini-westus-backend        (PTU: false, Location: westus)
+  ✓ foundry-ptu-gpt41mini-eastus-backend            (PTU: true,  Location: eastus)
+
+Pools created (per-model only, not per-region):
+  ✓ gpt41mini-pool       → default pool: PAYG-only, priority 50 in-region / 100 out-of-region
+  ✓ gpt41mini-ptu-pool   → PTU pool: PTU priority 1 + PAYG fallback priority 50/100
+```
+
+**Pools remain model-scoped** — when `priorityRouting=true` (the default for this sample), the default `{model}-pool` is PAYG-only and a dedicated `{model}-ptu-pool` carries PTU at priority 1 with PAYG as fallback. Circuit breakers on PTU backends handle automatic failover to PAYG without requiring region-based pool separation. When `priorityRouting=false`, both kinds of backends collapse into a single `{model}-pool` (PTU at priority 200 as overflow).
+
 ## ⚠️ Critical: Consistent Deployment Names
 
 All Azure OpenAI / Foundry instances serving the same model **must** use the **same deployment name**, matching the `modelName` in the configuration. APIM backend pools forward the URL path unchanged — mismatched names cause intermittent 404s.
@@ -163,20 +201,22 @@ See [Section 5 of PTU Design Risks](docs/ptu-design-risks.md#5-deployment-naming
 
 ## Config Endpoints
 
-The `config-viewer-api` exposes three **publicly accessible** endpoints (no authentication required):
+The `config-viewer-api` exposes the runtime contract config endpoints:
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/gateway/config` | GET | Styled HTML dashboard showing all team contracts |
-| `/gateway/config.json` | GET | Raw JSON of all access contracts |
-| `/gateway/config/refresh` | POST | Clears blob cache (blob mode) or no-op (named value mode) |
+| `/ai-gateway/config` | GET | Styled HTML dashboard showing all team contracts |
+| `/ai-gateway/config.json` | GET | Raw JSON of all access contracts |
+| `/ai-gateway/config/update` | POST | Writes updated contract JSON back to the contracts blob |
 
 ```bash
 # View contracts as JSON
-curl -s https://<apim-gateway>/gateway/config.json | jq .
+curl -s https://<apim-gateway>/ai-gateway/config.json | jq .
 
-# View HTML dashboard in browser
-open https://<apim-gateway>/gateway/config
+# Update contracts in blob
+curl -X POST https://<apim-gateway>/ai-gateway/config/update \
+  -H "Content-Type: application/json" \
+  --data @contracts.json
 ```
 
 > **⚠️ No authentication** — These endpoints are intentionally public for operational convenience. They expose team names, Entra app IDs, priority tiers, and quota limits. No secrets are exposed (app IDs are not secret). If your security posture requires restricting access, add `subscriptionRequired: true` to the `config-viewer-api` resource or add an internal key check to the policy.
@@ -194,7 +234,7 @@ open https://<apim-gateway>/gateway/config
 | Method | Directory | Tooling | Notes |
 |--------|-----------|---------|-------|
 | **Bicep** (primary) | Root | `azd up` | Main deployment — uses `azd` and `.env` for configuration |
-| **Terraform** | `tf/` | `terraform apply` | Shares policy XMLs from `modules/apim/advanced/`; uses APIM named values instead of blob storage for contracts |
+| **Terraform** | `tf/` | `terraform apply` | Legacy/experimental path; verify it is in sync with the blob-backed Bicep policy stack before use |
 
 ### Quick Start (Bicep)
 
@@ -210,10 +250,19 @@ azd up
 
 The deployment:
 1. Creates Entra ID app registrations dynamically per contract (empty `identities`)
-2. Deploys APIM with priority routing policy, backend pools, blob storage for contracts, and monitoring
-3. Post-provision hook creates client secrets and stores them in `azd env`
+2. Runs `options-infra/scripts/preprovision-list-foundry-models.sh` before each `azd up` to discover Foundry instances/deployments and write `FOUNDRY_INSTANCES_JSON`; `main.bicepparam` reads it via `json(readEnvironmentVariable('FOUNDRY_INSTANCES_JSON', '[]'))`
+3. Deploys APIM with the single `policy-per-model.xml` stack, fragments, backend pools, blob storage for contracts, and monitoring
+4. Post-provision hook creates client secrets and stores them in `azd env`
 
-## Generate Token / Simulate Traffic
+## Test / Generate Token / Simulate Traffic
+
+The live pytest suite is in `tests/` and covers chat, TTS, Whisper, quota, contract, and failover behavior.
+
+```bash
+cd options-infra/ai-gateway-quota/tests
+uv sync
+uv run pytest -v
+```
 
 ### Generate a token
 
@@ -267,29 +316,23 @@ ApiManagementGatewayLogs
 ApiManagementGatewayLogs
 | where ResponseCode == 429
 | extend callerName = tostring(parse_json(RequestHeaders)["x-caller-name"])
-| extend backendType = tostring(parse_json(ResponseHeaders)["x-backend-type"])
-| summarize RateLimitedCount=count() by callerName, backendType, bin(Timestamp, 1m)
+| extend backendPool = tostring(parse_json(ResponseHeaders)["x-backend-pool"])
+| summarize RateLimitedCount=count() by callerName, backendPool, bin(Timestamp, 1m)
 | order by Timestamp desc
 ```
 
 ### Response Headers
 
-Every successful response includes observability headers:
+Every successful response includes observability headers captured by `log-settings.bicep`:
 
 | Header | Description |
 |--------|-------------|
-| `x-caller-name` | Contract name the caller was matched to |
-| `x-caller-priority` | Priority label (`production` / `standard`) |
-| `x-backend-pool` | Which backend pool served the request (e.g., `gpt41-pool`, `gpt41-payg-pool`) |
-| `x-backend-type` | Backend type derived from `context.Backend.Id` (`ptu` or `payg`) |
-| `x-backend-id` | Specific backend entity that served the request (from `context.Backend.Id`) |
-| `x-route-target` | Routing decision (`mixed` or `payg`) |
-| `x-ptu-limit` | PTU TPM allocation for this model from the contract |
-| `x-quota-remaining-tokens` | Remaining tokens in the monthly quota (estimate — see [Known Limitations](#known-limitations)) |
-| `x-ratelimit-remaining-tokens` | Remaining tokens in the current per-minute window |
-| `x-foundry-agent-id` | Foundry agent ID (from `x-ms-foundry-agent-id` request header) |
-| `x-foundry-project-name` | Foundry project name (from `openai-project` request header) |
-| `x-foundry-project-id` | Foundry project ID (from `x-ms-foundry-project-id` request header) |
+| `x-caller-name`, `x-caller-id`, `x-caller-priority`, `x-caller-identity`, `x-caller-foundry`, `x-caller-project` | Caller/contract identity and priority |
+| `x-backend-id`, `x-backend-pool`, `x-backend-retry-count`, `x-backend-attempt-trail`, `x-inference-failover` | Backend selection and failover trail |
+| `x-requested-model`, `x-ptu-limit` | Requested model and contract PTU allocation |
+| `x-tokens-consumed`, `x-ratelimit-remaining-tokens`, `x-ratelimit-limit-tokens` | Per-minute token-limit telemetry |
+| `x-quota-tokens-consumed`, `x-quota-remaining-tokens`, `x-quota-limit-tokens` | Monthly quota telemetry |
+| `x-foundry-agent-id`, `x-foundry-project-name`, `x-foundry-project-id` | Foundry agent/project tracing |
 
 ## Deployment Topologies
 

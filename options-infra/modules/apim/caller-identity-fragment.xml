@@ -102,4 +102,41 @@
     <set-header name="x-caller-project" exists-action="override">
         <value>@((string)context.Variables[&quot;caller-project&quot;])</value>
     </set-header>
+
+    <!-- ===================================================================
+         Default contract-derived variables (used by the downstream
+         policy-per-model.xml). When the orchestrator wires access contracts,
+         the {contracts-load-section} placeholder below is substituted with
+         JWT validate + blob fetch + contract match logic that OVERWRITES
+         these defaults. When no contracts are wired (non-quota samples),
+         the placeholder collapses to an empty string and these defaults
+         propagate: model-tpm=0 and caller-monthly-quota=0 short-circuit
+         the <llm-token-limit> blocks in policy-per-model.xml; priority=2
+         routes to the PAYG-only pool.
+         =================================================================== -->
+    <set-variable name="priority" value="@(2)" />
+    <set-variable name="priority-label" value="@(&quot;standard&quot;)" />
+    <set-variable name="model-tpm" value="@(0)" />
+    <set-variable name="model-ptu-tpm" value="@(0)" />
+    <set-variable name="caller-monthly-quota" value="@((long)0)" />
+    <set-variable name="caller-environment" value="@(&quot;UNKNOWN&quot;)" />
+    <set-variable name="matched-identity" value="@((string)context.Variables[&quot;caller-name&quot;])" />
+    <set-variable name="allowed-models" value="@(string.Empty)" />
+
+    <!-- ===================================================================
+         Optional contracts-load + match section (Bicep-substituted).
+         When non-empty, this:
+           1. Validates the inbound Bearer JWT against the configured tenant
+              (audience https://cognitiveservices.azure.com).
+           2. Loads the contracts JSON (blob or named-value) and matches the
+              caller's claims to a contract entry.
+           3. Overwrites caller-name, priority, priority-label, model-tpm,
+              model-ptu-tpm, caller-monthly-quota, caller-environment,
+              allowed-models, matched-identity from the contract.
+           4. Returns 403 if no matching contract or model is not in the
+              allow-list.
+         When empty, the defaults above remain — fragment behaves as
+         "open mode" (observability only, no quota, PAYG routing).
+         =================================================================== -->
+    {contracts-load-section}
 </fragment>

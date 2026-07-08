@@ -1,0 +1,5 @@
+POST http://localhost:4000/v1/chat/completions
+Authorization: Bearer sk-your-master-key
+Content-Type: application/json
+
+{"model":"azure-gpt-4.1-mini","messages":[{"role":"user","content":"hi"}]}

@@ -1,0 +1,75 @@
+<!--
+    Config Update operation policy.
+    ===============================
+    POST /ai-gateway/config/update — writes a new contracts JSON back to the
+    blob (via APIM MI using https://storage.azure.com/) and clears the cached
+    contracts-blob-cache so the next inference call reloads contracts.
+
+    Variables injected by Bicep:
+      {contracts-blob-url}  full https URL of the contracts JSON blob.
+-->
+<policies>
+    <inbound>
+        <base />
+        <set-variable name="new-contracts-json" value="@((string)context.Request.Body.As<string>(preserveContent: true))" />
+        <choose>
+            <when condition="@(!context.Variables.ContainsKey(&quot;new-contracts-json&quot;) || string.IsNullOrWhiteSpace((string)context.Variables[&quot;new-contracts-json&quot;]))">
+                <return-response>
+                    <set-status code="400" reason="Bad Request" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-body>{"error":"Request body must contain contracts JSON."}</set-body>
+                </return-response>
+            </when>
+            <otherwise>
+                <send-request mode="new" response-variable-name="contracts-update-response" timeout="20" ignore-error="true">
+                    <set-url>{contracts-blob-url}</set-url>
+                    <set-method>PUT</set-method>
+                    <set-header name="x-ms-version" exists-action="override">
+                        <value>2020-04-08</value>
+                    </set-header>
+                    <set-header name="x-ms-blob-type" exists-action="override">
+                        <value>BlockBlob</value>
+                    </set-header>
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-body>@((string)context.Variables[&quot;new-contracts-json&quot;])</set-body>
+                    <authentication-managed-identity resource="https://storage.azure.com/" />
+                </send-request>
+
+                <choose>
+                    <when condition="@(((IResponse)context.Variables[&quot;contracts-update-response&quot;]) != null &amp;&amp; ((IResponse)context.Variables[&quot;contracts-update-response&quot;]).StatusCode &gt;= 200 &amp;&amp; ((IResponse)context.Variables[&quot;contracts-update-response&quot;]).StatusCode &lt; 300)">
+                        <cache-remove-value key="contracts-blob-cache" />
+                        <return-response>
+                            <set-status code="200" reason="OK" />
+                            <set-header name="Content-Type" exists-action="override">
+                                <value>application/json</value>
+                            </set-header>
+                            <set-body>{"status":"ok","message":"Access contracts updated and cache cleared."}</set-body>
+                        </return-response>
+                    </when>
+                    <otherwise>
+                        <return-response>
+                            <set-status code="502" reason="Bad Gateway" />
+                            <set-header name="Content-Type" exists-action="override">
+                                <value>application/json</value>
+                            </set-header>
+                            <set-body>{"error":"Failed to update contracts blob. Verify APIM managed identity has Storage Blob Data Contributor on the contracts container."}</set-body>
+                        </return-response>
+                    </otherwise>
+                </choose>
+            </otherwise>
+        </choose>
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>

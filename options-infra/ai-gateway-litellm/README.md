@@ -1,5 +1,7 @@
 # Option: LiteLLM Gateway with AI Foundry
 
+> **Unified architecture note:** This sample is a LiteLLM-based gateway, not the APIM `policy-per-model.xml` stack. Use it for LiteLLM spend/model abstraction; use APIM gateway samples for the unified caller-identity/per-model-routing architecture.
+
 This deployment option creates a complete AI Foundry environment with LiteLLM as a Model Gateway proxy.
 
 ## Architecture Overview

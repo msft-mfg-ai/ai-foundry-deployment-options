@@ -3,15 +3,102 @@
         <base />
 
         <!-- ================================================================ -->
+        <!-- Path compatibility shims                                         -->
+        <!--                                                                  -->
+        <!-- This single policy is shared by three APIs with different inbound -->
+        <!-- shapes; the rewrite picks the right one based on OriginalUrl:    -->
+        <!--                                                                  -->
+        <!--   /inference/openai/...  (legacy AzureOpenAI SDK)                -->
+        <!--     APIM strips /inference → policy sees /openai/...             -->
+        <!--     Backend URL ends in /openai, so we strip the leading /openai -->
+        <!--     to avoid /openai/openai doubling.                            -->
+        <!--                                                                  -->
+        <!--   /inference/...         (modern AzureOpenAI shape)              -->
+        <!--     /openai/deployments/{name}/... ; no rewrite needed.          -->
+        <!--                                                                  -->
+        <!--   /openai-v1/...         (OpenAI native shape)                   -->
+        <!--     Body has {"model": "..."}; URL has no /deployments segment   -->
+        <!--     and no api-version. Foundry's "Next-generation v1 API" (GA  -->
+        <!--     2025) accepts this shape at /openai/v1/... — so we prepend  -->
+        <!--     /v1 to land on that surface (final = /openai/v1/...).        -->
+        <!-- ================================================================ -->
+        <choose>
+            <when condition="@(context.Request.OriginalUrl.Path.StartsWith(&quot;/inference/openai/&quot;, StringComparison.OrdinalIgnoreCase))">
+                <rewrite-uri template="@(context.Request.OriginalUrl.Path.Substring(&quot;/inference/openai&quot;.Length))" />
+            </when>
+            <when condition="@(context.Request.OriginalUrl.Path.StartsWith(&quot;/openai-v1/&quot;, StringComparison.OrdinalIgnoreCase))">
+                <rewrite-uri template="@(&quot;/v1&quot; + context.Request.Url.Path)" />
+            </when>
+        </choose>
+
+        <!-- ================================================================ -->
         <!-- Optional: multi-tenant inbound JWT validation                    -->
-        <!-- Replaced by per-model-gateway.bicep with a `<validate-jwt>` block -->
+        <!-- Replaced by common-apim-setup.bicep with a <validate-jwt> block  -->
         <!-- listing one issuer per accepted tenant, or a comment when no     -->
         <!-- tenants are configured (backward-compatible default).            -->
         <!-- ================================================================ -->
         {JWT_VALIDATION}
 
-        <!-- Caller identity: x-caller-name, x-caller-id, x-caller-foundry, x-caller-project -->
+        <!-- ================================================================ -->
+        <!-- Identity & Authorization (shared policy fragment)                -->
+        <!--                                                                  -->
+        <!-- Always sets observability variables:                             -->
+        <!--   caller-id, caller-name, caller-foundry, caller-project         -->
+        <!--                                                                  -->
+        <!-- When orchestrator wired access contracts, also sets:             -->
+        <!--   matched-identity, priority, priority-label, model-tpm,         -->
+        <!--   model-ptu-tpm, caller-monthly-quota, allowed-models,           -->
+        <!--   requestedModel                                                 -->
+        <!--                                                                  -->
+        <!-- Without contracts, neutral defaults flow through                 -->
+        <!--   (priority=2, model-tpm=0, caller-monthly-quota=0)              -->
+        <!-- so the <llm-token-limit> blocks below short-circuit.             -->
+        <!-- ================================================================ -->
         <include-fragment fragment-id="caller-identity" />
+
+        <!-- Audio APIs (TTS/Whisper) don't return LLM token usage; skip LLM token policies. -->
+        <set-variable name="is-audio-path" value="@(context.Request.OriginalUrl.Path.IndexOf(&quot;/audio/&quot;, StringComparison.OrdinalIgnoreCase) &gt;= 0)" />
+
+        <!-- ================================================================ -->
+        <!-- STEP 1: Enforce PER-MODEL TPM (hard limit, total PTU+PAYG)       -->
+        <!--                                                                  -->
+        <!-- counter-key = contractName:model — identities in same contract   -->
+        <!-- share the per-model TPM counter. llm-token-limit handles token   -->
+        <!-- estimation internally.                                           -->
+        <!-- https://learn.microsoft.com/en-us/azure/api-management/llm-token-limit-policy -->
+        <!--                                                                  -->
+        <!-- Wrapped in <choose> so non-quota samples (model-tpm=0) skip the  -->
+        <!-- policy entirely — the same fragment runs in "open" mode with     -->
+        <!-- no quota enforcement.                                            -->
+        <!-- ================================================================ -->
+        <choose>
+            <when condition="@(!((bool)context.Variables.GetValueOrDefault(&quot;is-audio-path&quot;, false)) &amp;&amp; ((int)context.Variables.GetValueOrDefault(&quot;model-tpm&quot;, 0)) > 0)">
+                <llm-token-limit
+                    counter-key="@((string)context.Variables[&quot;caller-name&quot;] + &quot;:&quot; + (string)context.Variables.GetValueOrDefault(&quot;requestedModel&quot;, &quot;unknown&quot;))"
+                    tokens-per-minute="@((int)context.Variables[&quot;model-tpm&quot;])"
+                    estimate-prompt-tokens="false"
+                    remaining-tokens-header-name="x-ratelimit-remaining-tokens"
+                    tokens-consumed-header-name="x-tokens-consumed" />
+            </when>
+        </choose>
+
+        <!-- ================================================================ -->
+        <!-- STEP 2: Enforce MONTHLY QUOTA (cost cap)                         -->
+        <!--                                                                  -->
+        <!-- counter-key = contractName — shared across identities + models.  -->
+        <!-- Skipped when caller-monthly-quota=0 (non-quota samples).         -->
+        <!-- ================================================================ -->
+        <choose>
+            <when condition="@(!((bool)context.Variables.GetValueOrDefault(&quot;is-audio-path&quot;, false)) &amp;&amp; ((long)context.Variables.GetValueOrDefault(&quot;caller-monthly-quota&quot;, (long)0)) > 0)">
+                <llm-token-limit
+                    counter-key="@((string)context.Variables[&quot;caller-name&quot;])"
+                    token-quota="@((long)context.Variables[&quot;caller-monthly-quota&quot;])"
+                    token-quota-period="Monthly"
+                    estimate-prompt-tokens="false"
+                    remaining-quota-tokens-header-name="x-quota-remaining-tokens"
+                    tokens-consumed-header-name="x-quota-tokens-consumed" />
+            </when>
+        </choose>
 
         <cors allow-credentials="true">
             <allowed-origins>
@@ -29,16 +116,46 @@
         </cors>
 
         <!-- ================================================================ -->
-        <!-- Routing: extract requested model + select per-model PAYG pool    -->
-        <!-- Sets context.Variables: requestedModel, model-clean, backend-pool -->
+        <!-- Routing: extract requested model + select per-model pool         -->
+        <!-- Sets: requestedModel (if not already set by identity fragment),  -->
+        <!--       model-clean, backend-pool                                  -->
+        <!-- Priority-aware: priority==1 → {model}-pool (mixed PTU+PAYG),     -->
+        <!--                 else        → {model}-pool                       -->
         <!-- ================================================================ -->
         <include-fragment fragment-id="per-model-routing" />
+
+        <!-- Anthropic backend requires anthropic-version. When the routed model
+             is Claude-family and the caller did not provide the header, set default. -->
+        <choose>
+            <when condition="@(((string)context.Variables[&quot;requestedModel&quot;]).ToLowerInvariant().StartsWith(&quot;claude-&quot;))">
+                <set-header name="anthropic-version" exists-action="skip">
+                    <value>2023-06-01</value>
+                </set-header>
+            </when>
+        </choose>
+
+        <!-- Backend retry/failover bookkeeping. backendAttempt counts attempts (1 = first send);
+             backendsTried accumulates "<upstream-host>:<statusCode>" per attempt for the
+             x-backend-attempt-trail response header. The host is read from
+             context.Request.Url.Host AFTER <forward-request>, which reflects the actual
+             pool member APIM selected (load-balanced pools rewrite Request.Url to the
+             chosen member's URL). inferenceFailoverTrail carries the same per-attempt
+             info in human-readable "InferenceAttempt|n=…|backend=…|code=…" form, exposed
+             via the x-inference-failover header on every response. -->
+        <set-variable name="backendAttempt" value="@(0)" />
+        <set-variable name="backendsTried" value="@(string.Empty)" />
+        <set-variable name="inferenceFailoverTrail" value="@(string.Empty)" />
 
         <!-- Authenticate to backend with APIM's managed identity -->
         <authentication-managed-identity resource="https://cognitiveservices.azure.com" output-token-variable-name="managed-id-access-token" ignore-error="false" />
         <set-header name="Authorization" exists-action="override">
             <value>@("Bearer " + (string)context.Variables["managed-id-access-token"])</value>
         </set-header>
+
+        <!-- Extract Foundry-specific headers for observability -->
+        <set-variable name="foundry-agent-id" value="@(context.Request.Headers.GetValueOrDefault(&quot;x-ms-foundry-agent-id&quot;, &quot;&quot;))" />
+        <set-variable name="foundry-project-name" value="@(context.Request.Headers.GetValueOrDefault(&quot;openai-project&quot;, &quot;&quot;))" />
+        <set-variable name="foundry-project-id" value="@(context.Request.Headers.GetValueOrDefault(&quot;x-ms-foundry-project-id&quot;, &quot;&quot;))" />
 
         <!-- Tracing headers for backend + outbound observability -->
         <set-header name="x-caller-id" exists-action="override">
@@ -54,43 +171,256 @@
             <value>@((string)context.Variables["backend-pool"])</value>
         </set-header>
 
-        <!-- Emit token metric (matches policy.xml dimensions for dashboard reuse) -->
-        <azure-openai-emit-token-metric namespace="openai">
-            <dimension name="Caller Name" value="@((string)context.Variables[&quot;caller-name&quot;])" />
-            <dimension name="Foundry" value="@((string)context.Variables[&quot;caller-foundry&quot;])" />
-            <dimension name="Project" value="@((string)context.Variables[&quot;caller-project&quot;])" />
-            <dimension name="API ID" value="@(context.Api.Id)" />
-            <dimension name="Model" value="@((string)context.Variables[&quot;requestedModel&quot;])" />
-        </azure-openai-emit-token-metric>
+        <!-- Emit token metric (matches policy.xml dimensions for dashboard reuse). Skip audio APIs: they don't emit LLM token usage. -->
+        <choose>
+            <when condition="@(!((bool)context.Variables.GetValueOrDefault(&quot;is-audio-path&quot;, false)))">
+                <azure-openai-emit-token-metric namespace="openai">
+                    <dimension name="Caller Name" value="@((string)context.Variables[&quot;caller-name&quot;])" />
+                    <dimension name="Foundry" value="@((string)context.Variables[&quot;caller-foundry&quot;])" />
+                    <dimension name="Project" value="@((string)context.Variables[&quot;caller-project&quot;])" />
+                    <dimension name="API ID" value="@(context.Api.Id)" />
+                    <dimension name="Model" value="@((string)context.Variables[&quot;requestedModel&quot;])" />
+                </azure-openai-emit-token-metric>
+            </when>
+        </choose>
     </inbound>
 
     <backend>
         <!-- Per-model pool has circuit breaker on each backend; one throttled (instance, model)
-             pair fails over to the next backend in the pool without disabling other models. -->
-        <forward-request buffer-request-body="true" />
+             pair fails over to the next backend in the pool without disabling other models.
+             Retry condition: transport failure, 408, transient 409 (only when Retry-After is
+             present), 429, 499, 500/502/503/504 — PTU returns 503 for capacity exhaustion so
+             it must be in the retry set. interval="0" defers backoff to the pool's circuit
+             breakers, which take the failing backend out of rotation so the next attempt
+             lands on a different healthy backend.
+
+             Per-attempt bookkeeping (assigned inside the retry, OUTSIDE <backend>'s
+             <set-variable> restriction since it's the retry body, not the backend section):
+              - backendAttempt: attempt counter (1 = first send)
+              - backendsTried: "<host>:<statusCode>,..." for x-backend-attempt-trail.
+                Captured AFTER <forward-request> because that's when APIM has resolved the
+                load-balanced pool to the chosen member's URL.
+              - inferenceFailoverTrail: same per-attempt info in human-readable form used
+                by the <trace> below; visible when Ocp-Apim-Trace is enabled. -->
+        <retry count="2"
+               interval="0"
+               first-fast-retry="true"
+               condition="@(context.Response == null || context.Response.StatusCode == 408 || (context.Response.StatusCode == 409 &amp;&amp; context.Response.Headers.ContainsKey(&quot;Retry-After&quot;)) || context.Response.StatusCode == 429 || context.Response.StatusCode == 499 || context.Response.StatusCode == 500 || context.Response.StatusCode == 502 || context.Response.StatusCode == 503 || context.Response.StatusCode == 504)">
+            <set-variable name="backendAttempt" value="@(((int)context.Variables[&quot;backendAttempt&quot;]) + 1)" />
+            <forward-request buffer-request-body="true" />
+            <set-variable name="backendsTried" value="@{
+                var prev  = (string)context.Variables[&quot;backendsTried&quot;];
+                var host  = context.Request?.Url?.Host ?? &quot;unknown&quot;;
+                var code  = context.Response == null ? &quot;none&quot; : context.Response.StatusCode.ToString();
+                var entry = host + &quot;:&quot; + code;
+                return string.IsNullOrEmpty(prev) ? entry : prev + &quot;,&quot; + entry;
+            }" />
+            <set-variable name="inferenceFailoverTrail" value="@{
+                var prev  = (string)context.Variables[&quot;inferenceFailoverTrail&quot;];
+                var entry = &quot;InferenceAttempt|n=&quot; + ((int)context.Variables[&quot;backendAttempt&quot;]).ToString()
+                          + &quot;|backend=&quot; + (context.Request?.Url?.Host ?? &quot;unknown&quot;)
+                          + &quot;|code=&quot; + (context.Response == null ? &quot;none&quot; : context.Response.StatusCode.ToString());
+                return string.IsNullOrEmpty(prev) ? entry : prev + &quot;; &quot; + entry;
+            }" />
+            <trace source="InferenceFailover" severity="information">
+                <message>@((string)context.Variables["inferenceFailoverTrail"])</message>
+            </trace>
+        </retry>
     </backend>
 
     <outbound>
         <base />
+
+        <!-- ================================================================ -->
+        <!-- Response headers for observability                               -->
+        <!-- ================================================================ -->
+        <set-header name="x-ratelimit-limit-tokens" exists-action="override">
+            <value>@(((int)context.Variables.GetValueOrDefault(&quot;model-tpm&quot;, 0)).ToString())</value>
+        </set-header>
+        <set-header name="x-quota-limit-tokens" exists-action="override">
+            <value>@(((long)context.Variables.GetValueOrDefault(&quot;caller-monthly-quota&quot;, (long)0)).ToString())</value>
+        </set-header>
+        <!-- When monthly quota is skipped (Step 2 short-circuit, e.g. open mode or
+             priority=1 PTU-only), the quota-remaining header is never set by
+             llm-token-limit. Default to the full quota so observability headers are
+             always present. -->
+        <choose>
+            <when condition="@(!context.Response.Headers.ContainsKey(&quot;x-quota-remaining-tokens&quot;))">
+                <set-header name="x-quota-remaining-tokens" exists-action="override">
+                    <value>@(((long)context.Variables.GetValueOrDefault(&quot;caller-monthly-quota&quot;, (long)0)).ToString())</value>
+                </set-header>
+            </when>
+        </choose>
+        <set-header name="x-caller-name" exists-action="override">
+            <value>@((string)context.Variables["caller-name"])</value>
+        </set-header>
+        <set-header name="x-caller-identity" exists-action="override">
+            <value>@((string)context.Variables.GetValueOrDefault("matched-identity", "unknown"))</value>
+        </set-header>
+        <set-header name="x-caller-priority" exists-action="override">
+            <value>@((string)context.Variables.GetValueOrDefault("priority-label", "standard"))</value>
+        </set-header>
+        <set-header name="x-ptu-limit" exists-action="override">
+            <value>@(((int)context.Variables.GetValueOrDefault(&quot;model-ptu-tpm&quot;, 0)).ToString())</value>
+        </set-header>
         <set-header name="x-backend-id" exists-action="override">
             <value>@(context.Backend?.Id ?? "unknown")</value>
         </set-header>
         <set-header name="x-backend-pool" exists-action="override">
             <value>@((string)context.Variables["backend-pool"])</value>
         </set-header>
+        <set-header name="x-backend-retry-count" exists-action="override">
+            <value>@(Math.Max(0, ((int)context.Variables["backendAttempt"]) - 1).ToString())</value>
+        </set-header>
+        <set-header name="x-backend-attempt-trail" exists-action="override">
+            <value>@{
+                var t = (string)context.Variables["backendsTried"];
+                return string.IsNullOrEmpty(t) ? "none" : t;
+            }</value>
+        </set-header>
+        <set-header name="x-inference-failover" exists-action="override">
+            <value>@{
+                var t = (string)context.Variables["inferenceFailoverTrail"];
+                return string.IsNullOrEmpty(t) ? "none" : t;
+            }</value>
+        </set-header>
         <set-header name="x-requested-model" exists-action="override">
             <value>@((string)context.Variables["requestedModel"])</value>
+        </set-header>
+
+        <!-- Foundry-specific headers (logged via API diagnostics → App Insights) -->
+        <set-header name="x-foundry-agent-id" exists-action="override">
+            <value>@((string)context.Variables["foundry-agent-id"])</value>
+        </set-header>
+        <set-header name="x-foundry-project-name" exists-action="override">
+            <value>@((string)context.Variables["foundry-project-name"])</value>
+        </set-header>
+        <set-header name="x-foundry-project-id" exists-action="override">
+            <value>@((string)context.Variables["foundry-project-id"])</value>
         </set-header>
     </outbound>
 
     <on-error>
         <base />
-        <choose>
-            <when condition="@(context.Response.StatusCode == 503)">
-                <return-response>
-                    <set-status code="503" reason="Service Unavailable" />
-                </return-response>
-            </when>
-        </choose>
+        <return-response>
+            <set-status code="@{
+                var source = context.LastError?.Source ?? "";
+                var reason = context.LastError?.Reason ?? "";
+                if (source == "validate-azure-ad-token" || source == "validate-jwt") { return 401; }
+                if (source == "llm-token-limit") {
+                    return reason.ToLowerInvariant().Contains("quota") ? 403 : 429;
+                }
+                if (context.Response != null) { return context.Response.StatusCode; }
+                return 500;
+            }" reason="@(context.LastError?.Reason ?? (context.Response != null ? context.Response.StatusReason : "Internal Server Error"))" />
+            <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+            </set-header>
+            <set-header name="x-error-reason" exists-action="override">
+                <value>@(context.LastError?.Reason ?? "unknown")</value>
+            </set-header>
+            <set-header name="x-error-message" exists-action="override">
+                <value>@(context.LastError?.Message ?? "unknown")</value>
+            </set-header>
+            <set-header name="x-error-section" exists-action="override">
+                <value>@(context.LastError?.Section ?? "unknown")</value>
+            </set-header>
+            <set-header name="x-error-source" exists-action="override">
+                <value>@(context.LastError?.Source ?? "unknown")</value>
+            </set-header>
+            <set-header name="x-caller-id" exists-action="override">
+                <value>@((string)context.Variables.GetValueOrDefault("caller-id", "unknown"))</value>
+            </set-header>
+            <set-header name="x-caller-name" exists-action="override">
+                <value>@((string)context.Variables.GetValueOrDefault("caller-name", "unknown"))</value>
+            </set-header>
+            <set-header name="x-caller-identity" exists-action="override">
+                <value>@((string)context.Variables.GetValueOrDefault("matched-identity", "unknown"))</value>
+            </set-header>
+            <set-header name="x-caller-priority" exists-action="override">
+                <value>@((string)context.Variables.GetValueOrDefault("priority-label", "unknown"))</value>
+            </set-header>
+            <set-header name="x-ratelimit-limit-tokens" exists-action="override">
+                <value>@(context.Variables.ContainsKey("model-tpm") ? ((int)context.Variables["model-tpm"]).ToString() : "0")</value>
+            </set-header>
+            <set-header name="x-quota-limit-tokens" exists-action="override">
+                <value>@(context.Variables.ContainsKey("caller-monthly-quota") ? ((long)context.Variables["caller-monthly-quota"]).ToString() : "0")</value>
+            </set-header>
+            <set-header name="x-ptu-limit" exists-action="override">
+                <value>@(context.Variables.ContainsKey("model-ptu-tpm") ? ((int)context.Variables["model-ptu-tpm"]).ToString() : "0")</value>
+            </set-header>
+            <set-header name="x-ratelimit-remaining-tokens" exists-action="override">
+                <value>0</value>
+            </set-header>
+            <set-header name="x-quota-remaining-tokens" exists-action="override">
+                <value>0</value>
+            </set-header>
+            <set-header name="x-backend-pool" exists-action="override">
+                <value>@((string)context.Variables.GetValueOrDefault("backend-pool", "unknown"))</value>
+            </set-header>
+            <set-header name="x-backend-retry-count" exists-action="override">
+                <value>@(Math.Max(0, context.Variables.GetValueOrDefault&lt;int&gt;("backendAttempt", 0) - 1).ToString())</value>
+            </set-header>
+            <set-header name="x-backend-attempt-trail" exists-action="override">
+                <value>@{
+                    var t = (string)context.Variables.GetValueOrDefault("backendsTried", "");
+                    return string.IsNullOrEmpty(t) ? "none" : t;
+                }</value>
+            </set-header>
+            <set-header name="x-inference-failover" exists-action="override">
+                <value>@{
+                    var t = (string)context.Variables.GetValueOrDefault("inferenceFailoverTrail", "");
+                    return string.IsNullOrEmpty(t) ? "none" : t;
+                }</value>
+            </set-header>
+            <set-body>@{
+                var source  = context.LastError?.Source ?? "";
+                var reason  = context.LastError?.Reason ?? "unknown";
+                var rawMsg  = context.LastError?.Message ?? "";
+                var team    = (string)context.Variables.GetValueOrDefault("caller-name", "unknown");
+                var model   = (string)context.Variables.GetValueOrDefault("requestedModel", "unknown");
+
+                string code;
+                string message;
+
+                if (source == "validate-azure-ad-token")
+                {
+                    code = "unauthorized";
+                    message = "Invalid or missing bearer token. Provide a valid Entra ID token with audience https://cognitiveservices.azure.com.";
+                }
+                else if (rawMsg.ToLowerInvariant().Contains("quota"))
+                {
+                    var quota = context.Variables.ContainsKey("caller-monthly-quota")
+                        ? ((long)context.Variables["caller-monthly-quota"]).ToString("N0")
+                        : "unknown";
+                    code = "monthly_quota_exceeded";
+                    message = "Monthly token quota exhausted for '" + team + "'. "
+                            + "Your contract allows " + quota + " tokens per month across all models. "
+                            + "Contact the platform team to request a quota increase.";
+                }
+                else if (source == "llm-token-limit")
+                {
+                    var tpm = context.Variables.ContainsKey("model-tpm")
+                        ? ((int)context.Variables["model-tpm"]).ToString("N0")
+                        : "unknown";
+                    code = "rate_limit_exceeded";
+                    message = "Per-model rate limit exceeded for '" + team + "' on model '" + model + "'. "
+                            + "Your contract allows " + tpm + " tokens per minute for this model. "
+                            + "Wait a moment and retry, or contact the platform team to request a higher limit.";
+                }
+                else
+                {
+                    code = reason;
+                    message = !string.IsNullOrEmpty(rawMsg) ? rawMsg : "An error occurred processing the request.";
+                }
+
+                return new Newtonsoft.Json.Linq.JObject(
+                    new Newtonsoft.Json.Linq.JProperty("error", new Newtonsoft.Json.Linq.JObject(
+                        new Newtonsoft.Json.Linq.JProperty("code", code),
+                        new Newtonsoft.Json.Linq.JProperty("message", message)
+                    ))
+                ).ToString();
+            }</set-body>
+        </return-response>
     </on-error>
 </policies>

@@ -8,7 +8,6 @@ targetScope = 'resourceGroup'
 
 import { apiType } from '../modules/apps/apps-private-link.bicep'
 import { foundryInstanceType } from '../modules/apim/advanced/types.bicep'
-import { ModelType } from '../modules/ai/connection-apim-gateway.bicep'
 
 param location string = resourceGroup().location
 param projectsCount int = 3
@@ -32,27 +31,6 @@ var tags = {
 }
 
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
-
-// Dedupe model deployments across all instances → ModelType[] for the Foundry
-// connection's portal model picker.
-var allDeployments = flatten(map(foundryInstances, inst => inst.deployments))
-var dedupedDeployments = reduce(
-  allDeployments,
-  [],
-  (acc, d) => contains(map(acc, x => x.modelName), d.modelName) ? acc : concat(acc, [d])
-)
-var staticModels ModelType[] = [
-  for d in dedupedDeployments: {
-    name: d.modelName
-    properties: {
-      model: {
-        name: d.modelName
-        version: d.?modelVersion ?? '2025-01-01-preview'
-        format: d.?modelFormat ?? 'OpenAI'
-      }
-    }
-  }
-]
 
 module foundry_identity '../modules/iam/identity.bicep' = {
   name: 'foundry-identity-deployment'
@@ -167,6 +145,8 @@ module identities '../modules/iam/identity.bicep' = [
   }
 ]
 
+var projectNames = [for i in range(1, projectsCount): 'ai-project-${resourceToken}-${i}']
+
 @batchSize(1)
 module projects '../modules/ai/ai-project-with-caphost.bicep' = [
   for i in range(1, projectsCount): {
@@ -175,6 +155,7 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
       tags: tags
       location: location
       foundryName: foundry.outputs.FOUNDRY_NAME
+      project_name: projectNames[i - 1]
       project_description: 'AI Project ${i} ${resourceToken}'
       display_name: 'AI Project ${i} ${resourceToken}'
       projectId: i
@@ -185,54 +166,32 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
     }
   }
 ]
-
-module ai_gateway '../modules/apim/per-model-gateway.bicep' = {
-  name: 'ai-gateway-deployment-${resourceToken}'
+module ai_gateway '../modules/apim/ai-gateway-internal.bicep' = {
+  name: 'ai-gateway-internal-deployment'
   params: {
     tags: tags
     location: location
-    resourceToken: resourceToken
-    aiFoundryName: foundry.outputs.FOUNDRY_NAME
-    aiFoundryProjectNames: [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
-    logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
-    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
     appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
-    gatewayAuthenticationType: 'ProjectManagedIdentity'
+    appInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    resourceToken: resourceToken
     foundryInstances: foundryInstances
-    staticModels: staticModels
-    acceptedTenantIds: acceptedTenantIds
-    // Internal VNet injection - APIM lives inside the VNet, no public network access
-    apimSku: 'Developer'
-    virtualNetworkType: 'Internal'
+    foundryProjectNames: projectNames
+    foundryName: foundry.outputs.FOUNDRY_NAME
     subnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.apimSubnet.resourceId
+    vnetResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
+    acceptedTenantIds: acceptedTenantIds
   }
 }
 
-// Grant APIM's managed identity Cognitive Services User on every backing
-// Foundry instance — each instance may live in a different RG/subscription.
-//
-// Skip chained-APIM instances (isApim=true): they authenticate inbound
-// via JWT (the downstream's `validate-jwt` checks our MI token's tenant),
-// not via RBAC.
-module apim_role_assignments '../modules/iam/role-assignment-cognitiveServices.bicep' = [
-  for (instance, i) in foundryInstances: if (!(instance.?isApim ?? false)) {
-    name: 'apim-role-${i}-${resourceToken}'
-    scope: resourceGroup(split(instance.resourceId, '/')[2], split(instance.resourceId, '/')[4])
-    params: {
-      accountName: last(split(instance.resourceId, '/'))
-      principalId: ai_gateway.outputs.apimPrincipalId
-      roleName: 'Cognitive Services User'
-    }
-  }
-]
-
-module dashboard_setup '../modules/dashboard/dashboard-setup.bicep' = {
-  name: 'dashboard-setup-deployment-${resourceToken}'
+module dashboard '../modules/dashboard/dashboard.bicep' = {
+  name: 'dashboard-deployment-${resourceToken}'
   params: {
     location: location
-    applicationInsightsName: logAnalytics.outputs.APPLICATION_INSIGHTS_NAME
-    logAnalyticsWorkspaceName: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_NAME
     dashboardDisplayName: 'APIM Token Usage Dashboard for ${resourceToken}'
+    applicationInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    applicationInsightsName: logAnalytics.outputs.APPLICATION_INSIGHTS_NAME
+    logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
   }
 }
 
