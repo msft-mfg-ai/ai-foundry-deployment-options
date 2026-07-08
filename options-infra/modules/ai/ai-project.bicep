@@ -177,6 +177,7 @@ resource accountCapabilityHost 'Microsoft.CognitiveServices/accounts/capabilityH
   ]
 }
 
+@onlyIfNotExists()
 resource project_connection_cosmosdb_account 'Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview' = if (!empty(cosmosDBName)) {
   // Name must always produce a valid (non-empty, non-leading-hyphen) value because ARM validates
   // resource names even when condition evaluates to false.
@@ -194,6 +195,7 @@ resource project_connection_cosmosdb_account 'Microsoft.CognitiveServices/accoun
   }
 }
 
+@onlyIfNotExists()
 resource project_connection_azure_storage 'Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview' = if (!empty(azureStorageName)) {
   name: empty(azureStorageName) ? 'not-used-storage' : '${azureStorageName}-for-${project_name}'
   parent: foundry_project
@@ -209,6 +211,7 @@ resource project_connection_azure_storage 'Microsoft.CognitiveServices/accounts/
   }
 }
 
+@onlyIfNotExists()
 resource project_connection_azureai_search 'Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview' = if (!empty(aiSearchName)) {
   name: empty(aiSearchName) ? 'not-used-ai-search' : '${aiSearchName}-for-${project_name}'
   parent: foundry_project
