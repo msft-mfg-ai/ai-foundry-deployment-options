@@ -157,18 +157,18 @@ resource api 'Microsoft.ApiManagement/service/apis@2024-06-01-preview' = {
   }
 }
 
-resource inferenceTag 'Microsoft.ApiManagement/service/tags@2024-06-01-preview' = {
-  name: 'inference'
+resource aiGatewayTag 'Microsoft.ApiManagement/service/tags@2024-06-01-preview' = {
+  name: 'ai-gateway'
   parent: apimService
   properties: {
-    displayName: 'inference'
+    displayName: 'AI Gateway'
   }
 }
 
-resource apiTag 'Microsoft.ApiManagement/service/apis/tags@2024-06-01-preview' = {
-  name: 'inference'
+resource aiGatewayApiTag 'Microsoft.ApiManagement/service/apis/tags@2024-06-01-preview' = {
+  name: 'ai-gateway'
   parent: api
-  dependsOn: [inferenceTag]
+  dependsOn: [aiGatewayTag]
 }
 // https://learn.microsoft.com/azure/templates/microsoft.apimanagement/service/apis/policies
 resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-06-01-preview' = {

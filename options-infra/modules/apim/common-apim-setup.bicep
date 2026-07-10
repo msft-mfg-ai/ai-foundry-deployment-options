@@ -186,7 +186,7 @@ module inferenceApi 'v2/inference-api.bicep' = {
 // Same per-model routing as the passthrough (shares the routing fragment), but
 // uses the AzureOpenAI OpenAPI spec so the APIM portal renders the test
 // console and SDK generators see per-operation definitions.
-// `dependsOn: [inferenceApi]` avoids the service-level `inference` tag race
+// `dependsOn: [inferenceApi]` avoids the service-level `ai-gateway` tag race
 // condition between concurrent API deployments.
 module inferenceApiSpec 'v2/inference-api-azure.bicep' = {
   name: 'inference-api-spec-deployment'
@@ -212,7 +212,7 @@ module inferenceApiSpec 'v2/inference-api-azure.bicep' = {
 // backend pools, so the onHandshake policy routes per-deployment to a concrete
 // wss backend (advanced/multi-foundry-backends is bypassed here). Reuses the
 // same inbound JWT validation as the HTTP APIs. Depends on inferenceApi to
-// avoid the service-level `inference` tag race condition.
+// avoid the service-level `ai-gateway` tag race condition.
 module realtimeApi 'v2/realtime-ws-api.bicep' = if (hasRealtime) {
   name: 'realtime-ws-api-deployment'
   dependsOn: [inferenceApi]
