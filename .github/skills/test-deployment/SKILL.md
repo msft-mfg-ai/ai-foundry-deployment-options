@@ -46,8 +46,22 @@ isn't one of them, tell the user and stop (or ask which option to test).
    `options-infra/<option>/.azure/config.json` for
    `defaultEnvironment`. Override only if the user explicitly names a
    different env.
+5. **Pick a runner.** Check whether the target APIM has
+   `publicNetworkAccess=Disabled`:
+   ```bash
+   apim=$(grep '^APIM_NAME=' options-infra/<option>/.azure/<env>/.env | cut -d'"' -f2)
+   rg=$(grep '^AZURE_RESOURCE_GROUP=' options-infra/<option>/.azure/<env>/.env | cut -d'"' -f2)
+   az apim show -g "$rg" -n "$apim" --query publicNetworkAccess -o tsv
+   ```
+   - **`Enabled`** → run locally (see "Running locally" below).
+   - **`Disabled`** → the local run will fail with HTTP 403 from APIM's
+     front door. Switch to the **hosted-agent** path (see below); it runs
+     the same tests from inside the Foundry fabric and can reach APIM's
+     private endpoint.
 
 ## Running the tests
+
+### Option A — locally (public APIM only)
 
 Do all of the following from `options-infra/<option>/`:
 
@@ -69,6 +83,38 @@ uv run pytest -v
 **Do not** commit `tests/.env` — it's git-ignored, but double-check with
 `git status` before finishing. If it isn't ignored yet, add it to
 `tests/.gitignore` instead of leaving it tracked.
+
+### Option B — via the hosted agent (required for PE-locked APIM)
+
+When Step 5 detected `publicNetworkAccess=Disabled`, invoke the deployed
+`hosted-agent` (see `.github/skills/hosted-agent/SKILL.md` for full
+contract):
+
+```bash
+# Endpoint of the hosted-agent's Foundry project (deploy it once via
+# `cd hosted-agent && AZD_DISABLE_AGENT_DETECT=1 azd up` if it isn't up yet).
+ENDPOINT=$(cd hosted-agent && AZD_DISABLE_AGENT_DETECT=1 azd env get-value AZURE_AI_PROJECT_ENDPOINT)
+TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
+
+# Pull the APIM URL + tenant from the deployment being tested.
+apim_url=$(grep '^APIM_GATEWAY_URL=' "options-infra/<option>/.azure/<env>/.env" | cut -d'"' -f2)
+tenant=$(az account show --query tenantId -o tsv)
+
+curl -sS -X POST "$ENDPOINT/agents/gateway-test-agent/endpoint/protocols/invocations" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"markers\": \"not quota\",
+    \"env\": {
+      \"APIM_GATEWAY_URL\": \"$apim_url\",
+      \"TENANT_ID\":         \"$tenant\"
+    }
+  }" | jq .summary
+```
+
+The response is a structured pytest report — see the hosted-agent skill for
+schema. The runner is the exact same test files as Option A; the difference
+is only *where* pytest runs (inside Foundry vs your laptop).
 
 ## azd invocation rules (repo convention)
 
@@ -137,7 +183,5 @@ On completion, summarise:
   the gateway. Expected on non-realtime deployments.
 - **All realtime tests fail with `HTTP 403 "APIM can be reached only from
   inside your virtual network"`** → the deployment is private-endpoint only
-  (typical for `ai-gateway-pe`). The tests can't be executed from a
-  developer machine outside the VNet — this is a network reality, not a
-  bug. Report the failure and stop; do not "fix" the tests. To actually
-  run them, execute from a VM in the peered VNet or via a Bastion/jumpbox.
+  (typical for `ai-gateway-pe`). Switch to Option B (the hosted-agent) —
+  that runner sits inside the Foundry fabric and reaches APIM via its PE.

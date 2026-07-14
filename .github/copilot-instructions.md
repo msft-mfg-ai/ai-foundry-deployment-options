@@ -13,6 +13,7 @@ Several subprojects have their own copilot/agent guides with scope-specific gotc
 | `options-infra/foundry-byo-vnet-teams/` | `.github/copilot-instructions.md` — Teams bots, ABS auth, per-agent app regs, proxy contract |
 | `options-infra/ai-gateway-quota/` | `AGENTS.md` — APIM access contracts, PTU/PAYG spillover, policy XML placeholder system |
 | `subscription-manager/` | `.github/copilot-instructions.md` — FastAPI app commands, architecture, tests |
+| `hosted-agent/` | `README.md` — Foundry Hosted Agent that runs the gateway pytest suite via the Invocations protocol (call it when APIM is PE-locked and public callers get HTTP 403) |
 
 The companion C# proxy for `foundry-byo-vnet-teams` is a separate repo cloned locally at `/home/pkarpala/projects/medline/foundry-teams-bot-service-proxy` (remote: `github.com/karpikpl/foundry-teams-bot-service-proxy`).
 

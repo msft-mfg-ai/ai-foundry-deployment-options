@@ -1,0 +1,84 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+requiredVersions:
+    extensions:
+        azure.ai.agents: '>=1.0.0-beta.4'
+name: hosted-agent
+services:
+    ai-project:
+        project: ""
+        host: azure.ai.project
+        language: ""
+        deployments:
+            - model:
+                format: OpenAI
+                name: gpt-5.4-mini
+                version: "2026-03-17"
+              name: gpt-5.4-mini
+              sku:
+                capacity: 10
+                name: GlobalStandard
+    gateway-test-agent:
+        project: src/gateway-test-agent
+        host: azure.ai.agent
+        language: python
+        docker:
+            path: Dockerfile
+        uses:
+            - ai-project
+        codeConfiguration:
+            entryPoint: main.py
+            runtime: python_3_13
+        container:
+            resources:
+                cpu: "1"
+                memory: 2Gi
+        description: |
+            Gateway diagnostics agent. Uses the GitHub Copilot SDK (BYOK to the
+            Foundry model) to reason about APIM/Foundry connectivity issues from
+            inside the Foundry project's network fabric. Ships with Copilot's
+            bundled bash + filesystem tools (curl, nslookup, dig, cat, ls, edit),
+            plus a custom `run_tests` tool that executes the pytest gateway
+            suite and returns junit-parsed JSON. Exposed via the Responses
+            protocol at POST /responses.
+        displayName: Gateway Test Agent (Copilot SDK, Responses)
+        environmentVariables:
+            - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+              value: gpt-5.4-mini
+            - name: APIM_CONNECTION_NAME
+              value: ${APIM_CONNECTION_NAME=}
+            - name: APIM_GATEWAY_URL
+              value: ${APIM_GATEWAY_URL}
+            - name: TENANT_ID
+              value: ${TENANT_ID}
+            - name: TEST_MODEL
+              value: ${TEST_MODEL}
+            - name: TEST_FAILOVER_MODEL
+              value: ${TEST_FAILOVER_MODEL}
+            - name: TEST_CONTRACT
+              value: ${TEST_CONTRACT}
+            - name: APIM_SUBSCRIPTION_KEY
+              value: ${APIM_SUBSCRIPTION_KEY}
+            - name: APIM_SKU
+              value: ${APIM_SKU}
+            - name: COPILOT_CLI_PATH
+              value: /opt/copilot-runtime/copilot
+            - name: COPILOT_CLI_EXTRACT_DIR
+              value: /opt/copilot-runtime
+            - name: COPILOT_SKIP_CLI_DOWNLOAD
+              value: "1"
+        kind: hosted
+        metadata:
+            tags:
+                - Gateway Diagnostics
+                - Responses Protocol
+                - GitHub Copilot SDK
+                - Bring Your Own
+                - Function Calling
+                - Python
+        name: gateway-test-agent
+        protocols:
+            - protocol: responses
+              version: 2.0.0
+infra:
+    provider: microsoft.foundry

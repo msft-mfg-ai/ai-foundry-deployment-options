@@ -1,0 +1,25 @@
+# ── Foundry hosted-agent runtime (Responses protocol) ───────────────────────
+azure-ai-agentserver-responses==1.0.0b8
+azure-ai-projects>=2.0.1
+azure-identity>=1.25.3
+
+# ── GitHub Copilot SDK (BYOK to the Foundry model) ──────────────────────────
+# Bundles the Copilot CLI runtime which provides built-in bash + filesystem
+# tools (curl, nslookup, dig, cat, ls, edit, ...).
+github-copilot-sdk
+
+# ── Pytest gateway suite (invoked by the `run_tests` custom tool) ───────────
+# Loosened pins so pip can co-resolve with the Foundry runtime SDKs above
+# (azure-ai-projects 2.x pulls openai>=2.8).
+pytest>=8.4
+pytest-asyncio>=0.24
+pytest-json-report>=1.5
+httpx>=0.28
+requests>=2.32
+openai>=2.8
+websockets>=13.1
+msal>=1.31
+python-dotenv>=1.0
+
+# ── Foundry project client fixtures used by the gateway suite ───────────────
+azure-ai-agents>=1.1
