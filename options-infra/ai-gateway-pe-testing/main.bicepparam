@@ -6,6 +6,9 @@ param foundryInstances = json(readEnvironmentVariable('FOUNDRY_INSTANCES_JSON', 
 var apimPublicEnabledValue = readEnvironmentVariable('APIM_PUBLIC_ENABLED', '')
 param apimPublicEnabled = toLower(apimPublicEnabledValue) == 'true' ? true : false
 
+var enableBingValue = readEnvironmentVariable('ENABLE_BING_GROUNDING', '')
+param enableBingGrounding = toLower(enableBingValue) == 'false' ? false : true
+
 var projectsCountValue = readEnvironmentVariable('PROJECTS_COUNT', '')
 param projectsCount = empty(projectsCountValue) ? 1 : int(projectsCountValue)
 

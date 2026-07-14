@@ -14,6 +14,9 @@ param projectsCount int = 1
 param apiServices apiType[] = []
 param apimPublicEnabled bool = false
 
+@description('Whether to create a Bing Grounding account and connection. Default true; set to false in subscriptions where the Bing resource provider is suspended or restricted.')
+param enableBingGrounding bool = true
+
 @description('Existing Foundry / AI Services instances to front with the gateway. Discovered by the `preprovision-list-foundry-models` hook (FOUNDRY_INSTANCES_JSON). At least one instance is required.')
 param foundryInstances foundryInstanceType[]
 
@@ -194,7 +197,7 @@ module dashboard '../modules/dashboard/dashboard.bicep' = {
 }
 
 // Bing Grounding tool — required by tool-web-search feature.
-module bing_connection '../modules/bing/connection-bing-grounding.bicep' = {
+module bing_connection '../modules/bing/connection-bing-grounding.bicep' = if (enableBingGrounding) {
   name: 'bing-connection-${resourceToken}'
   params: {
     aiFoundryName: foundry.outputs.FOUNDRY_NAME
@@ -240,7 +243,9 @@ output AI_GATEWAY_CONNECTION_STATIC string = 'apim-${resourceToken}-openai-s-for
 output AI_GATEWAY_CONNECTION_DYNAMIC string = 'apim-${resourceToken}-openai-d-for-${first(projectNames)}'
 output RESOURCE_GROUP string = resourceGroup().name
 output FOUNDRY_NAME string = foundry.outputs.FOUNDRY_NAME
-output BING_CONNECTION_ID string = '${foundry.outputs.FOUNDRY_RESOURCE_ID}/projects/${first(projectNames)}/connections/binggrounding'
+output BING_CONNECTION_ID string = enableBingGrounding
+  ? '${foundry.outputs.FOUNDRY_RESOURCE_ID}/projects/${first(projectNames)}/connections/binggrounding'
+  : ''
 output AZURE_AI_SEARCH_CONNECTION_ID string = '${foundry.outputs.FOUNDRY_RESOURCE_ID}/projects/${first(projectNames)}/connections/${ai_dependencies.outputs.AI_DEPENDECIES.aiSearch.name}-for-${first(projectNames)}'
 output AI_SEARCH_SERVICE_NAME string = ai_dependencies.outputs.AI_DEPENDECIES.aiSearch.name
 output AI_SEARCH_ENDPOINT string = 'https://${ai_dependencies.outputs.AI_DEPENDECIES.aiSearch.name}.search.windows.net'
