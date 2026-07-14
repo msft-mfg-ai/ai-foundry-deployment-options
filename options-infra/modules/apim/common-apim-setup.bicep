@@ -1,6 +1,7 @@
 import { foundryInstanceType } from 'advanced/types.bicep'
 import { ModelType } from '../ai/connection-apim-gateway.bicep'
 import { realtimeRouteType } from 'v2/realtime-ws-api.bicep'
+import { realtimeWebrtcRouteType } from 'v2/realtime-webrtc-api.bicep'
 
 param apimName string
 param apimLoggerId string
@@ -103,6 +104,22 @@ var realtimeRoutes realtimeRouteType[] = flatten(map(
   )
 ))
 var hasRealtime = !empty(realtimeRoutes)
+
+// -- Realtime (WebRTC) HTTP routes -------------------------------------------
+// Sibling of `realtimeRoutes` above but for the HTTP SDP-exchange + ephemeral
+// endpoint at `/openai/v1/realtime/{calls,client_secrets}`. Same set of
+// deployments; only the URL scheme + suffix differ. The base URL is truncated
+// at `/openai/v1/realtime` so APIM appends the operation suffix.
+var realtimeWebrtcRoutes realtimeWebrtcRouteType[] = flatten(map(
+  foundryInstances,
+  inst => map(
+    filter(inst.deployments, d => toLower(d.?modelFormat ?? '') == 'realtime' || (startsWith(toLower(d.modelName), 'gpt-') && contains(toLower(d.modelName), 'realtime'))),
+    d => {
+      deploymentName: d.modelName
+      endpoint: '${inst.endpoint}${endsWith(inst.endpoint, '/') ? '' : '/'}openai/v1/realtime'
+    }
+  )
+))
 
 // ============================================================================
 // -- Policy fragments (shared by inbound policies of every inference API)
@@ -221,6 +238,33 @@ module realtimeApi 'v2/realtime-ws-api.bicep' = if (hasRealtime) {
     apimLoggerId: apimLoggerId
     inferenceAPIPath: 'inference'
     realtimeRoutes: realtimeRoutes
+    jwtValidationXml: jwtValidationXml
+    requireSubscriptionKey: gatewayAuthenticationType != 'ProjectManagedIdentity'
+    appInsightsInstrumentationKey: appInsightsInstrumentationKey
+    appInsightsId: appInsightsResourceId
+  }
+}
+
+// ============================================================================
+// -- Realtime (WebRTC) HTTP API — only when realtime deployments exist
+// ============================================================================
+// Dedicated HTTP API at `openai/v1/realtime` for the GA Realtime WebRTC
+// contract (POST /calls SDP exchange, POST /client_secrets ephemeral token
+// mint). Kept separate from the general `openai/v1` API because that API's
+// per-model pool backend has managed-identity credentials attached, and APIM
+// auto-injects the MI Authorization header AFTER the policy runs — which
+// clobbers the caller's ephemeral token and makes Foundry reject `/calls`.
+// This API uses `set-backend-service base-url=` instead, so the caller's
+// Authorization flows through unmodified. Longest-prefix API selection
+// routes `/openai/v1/realtime/*` here before the general `openai/v1` API.
+module realtimeWebrtcApi 'v2/realtime-webrtc-api.bicep' = if (hasRealtime && contains(['Premium', 'StandardV2', 'Premiumv2'], apimSku)) {
+  name: 'realtime-webrtc-api-deployment'
+  dependsOn: [realtimeApi]
+  params: {
+    apiManagementName: apimName
+    apimLoggerId: apimLoggerId
+    inferenceAPIPath: 'openai/v1'
+    realtimeRoutes: realtimeWebrtcRoutes
     jwtValidationXml: jwtValidationXml
     requireSubscriptionKey: gatewayAuthenticationType != 'ProjectManagedIdentity'
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
