@@ -23,8 +23,65 @@ hooks:
       continueOnError: false
 
   postprovision:
-    shell: sh
-    run: |
-      echo "Provisioning complete!"
-      echo "📍 Foundry Name: ${FOUNDRY_NAME}"
-      echo "🤖 Project Connections: ${FOUNDRY_PROJECTS_CONNECTION_STRINGS}"
+    posix:
+      shell: sh
+      run: |
+        set -eu
+        echo "── Opening AI Search firewall to seed byom-test index ──"
+        az search service update \
+          --name "${AI_SEARCH_SERVICE_NAME}" \
+          --resource-group "${AZURE_RESOURCE_GROUP}" \
+          --public-access enabled \
+          --output none
+        # Wait for API to become reachable.
+        for i in $(seq 1 30); do
+          code=$(curl -s -o /dev/null -w '%{http_code}' "${AI_SEARCH_ENDPOINT}/indexes?api-version=2024-07-01" || true)
+          if [ "$code" = "200" ] || [ "$code" = "401" ] || [ "$code" = "403" ]; then break; fi
+          echo "  waiting for search API… ($i/30)"
+          sleep 5
+        done
+        cd scripts
+        uv sync
+        uv run python create_index.py --endpoint "${AI_SEARCH_ENDPOINT}" --index "${AZURE_AI_SEARCH_INDEX_NAME}"
+        cd -
+        echo "── Closing AI Search firewall ──"
+        az search service update \
+          --name "${AI_SEARCH_SERVICE_NAME}" \
+          --resource-group "${AZURE_RESOURCE_GROUP}" \
+          --public-access disabled \
+          --output none --no-wait
+        echo "── Done. Paste these into the byom GH Environment: ──"
+        echo "PROJECT_ENDPOINT=${PROJECT_ENDPOINT}"
+        echo "AI_GATEWAY_CONNECTION_STATIC=${AI_GATEWAY_CONNECTION_STATIC}"
+        echo "AI_GATEWAY_CONNECTION_DYNAMIC=${AI_GATEWAY_CONNECTION_DYNAMIC}"
+        echo "BING_CONNECTION_ID=${BING_CONNECTION_ID}"
+        echo "AZURE_AI_SEARCH_CONNECTION_ID=${AZURE_AI_SEARCH_CONNECTION_ID}"
+        echo "AZURE_AI_SEARCH_INDEX_NAME=${AZURE_AI_SEARCH_INDEX_NAME}"
+        echo "FOUNDRY_NAME=${FOUNDRY_NAME}"
+        echo "RESOURCE_GROUP=${RESOURCE_GROUP}"
+      interactive: false
+      continueOnError: false
+    windows:
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        Write-Host "── Opening AI Search firewall to seed byom-test index ──"
+        az search service update --name $env:AI_SEARCH_SERVICE_NAME --resource-group $env:AZURE_RESOURCE_GROUP --public-access enabled --output none
+        for ($i = 1; $i -le 30; $i++) {
+          try {
+            $r = Invoke-WebRequest -Uri "$($env:AI_SEARCH_ENDPOINT)/indexes?api-version=2024-07-01" -Method Get -UseBasicParsing -ErrorAction Stop
+            if ($r.StatusCode -in 200, 401, 403) { break }
+          } catch {
+            if ($_.Exception.Response.StatusCode.value__ -in 200, 401, 403) { break }
+            Write-Host "  waiting for search API… ($i/30)"
+            Start-Sleep -Seconds 5
+          }
+        }
+        Push-Location scripts
+        uv sync
+        uv run python create_index.py --endpoint $env:AI_SEARCH_ENDPOINT --index $env:AZURE_AI_SEARCH_INDEX_NAME
+        Pop-Location
+        Write-Host "── Closing AI Search firewall ──"
+        az search service update --name $env:AI_SEARCH_SERVICE_NAME --resource-group $env:AZURE_RESOURCE_GROUP --public-access disabled --output none --no-wait
+      interactive: false
+      continueOnError: false

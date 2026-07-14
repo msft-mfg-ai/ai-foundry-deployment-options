@@ -242,4 +242,7 @@ output RESOURCE_GROUP string = resourceGroup().name
 output FOUNDRY_NAME string = foundry.outputs.FOUNDRY_NAME
 output BING_CONNECTION_ID string = '${foundry.outputs.FOUNDRY_RESOURCE_ID}/projects/${first(projectNames)}/connections/binggrounding'
 output AZURE_AI_SEARCH_CONNECTION_ID string = '${foundry.outputs.FOUNDRY_RESOURCE_ID}/projects/${first(projectNames)}/connections/${ai_dependencies.outputs.AI_DEPENDECIES.aiSearch.name}-for-${first(projectNames)}'
+output AI_SEARCH_SERVICE_NAME string = ai_dependencies.outputs.AI_DEPENDECIES.aiSearch.name
+output AI_SEARCH_ENDPOINT string = 'https://${ai_dependencies.outputs.AI_DEPENDECIES.aiSearch.name}.search.windows.net'
+output AZURE_AI_SEARCH_INDEX_NAME string = 'byom-test'
 output config_validation_result bool = valid_config

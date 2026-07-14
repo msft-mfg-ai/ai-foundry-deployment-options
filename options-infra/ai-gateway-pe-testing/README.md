@@ -21,7 +21,7 @@ No MCP/OpenAPI landing-zone APIs are deployed unless `apiServices` is explicitly
 Beyond the private-networked Foundry + APIM gateway:
 
 - **Bing Grounding** — `Microsoft.Bing/accounts` + `binggrounding` connection on the project (feeds `BING_CONNECTION_ID`, needed by `tool-web-search`).
-- **AI Search** — provisioned by `ai-dependencies-with-dns.bicep` and auto-connected to the project (`AZURE_AI_SEARCH_CONNECTION_ID`).
+- **AI Search** — provisioned by `ai-dependencies-with-dns.bicep` and auto-connected to the project (`AZURE_AI_SEARCH_CONNECTION_ID`). A `byom-test` index with 3 seed documents is created by the `postprovision` hook (`scripts/create_index.py`) — the hook briefly opens the search firewall, runs the seed, then closes it.
 
 SharePoint, Fabric, and Logic App connections are **not** deployable here — they need pre-existing external resources; set `SHAREPOINT_CONNECTION_ID`, `FABRIC_CONNECTION_ID`, `LOGIC_APP_RESOURCE_ID` in the BYOM `byom` GitHub Environment directly. MCP endpoints likewise stay as plain URLs (`MCP_SERVER_URL*`) — the `tool-mcp/*` tests hit them directly.
 
@@ -59,6 +59,9 @@ The exact strings are emitted as Bicep outputs (see below), so downstream caller
 | `AI_GATEWAY_CONNECTION_DYNAMIC` | Dynamic APIM connection name for BYOM tests |
 | `BING_CONNECTION_ID` | ARM ID of the `binggrounding` project connection |
 | `AZURE_AI_SEARCH_CONNECTION_ID` | ARM ID of the AI Search project connection |
+| `AZURE_AI_SEARCH_INDEX_NAME` | Name of the seeded index (`byom-test`) |
+| `AI_SEARCH_SERVICE_NAME` | Consumed by the postprovision hook (firewall open/close) |
+| `AI_SEARCH_ENDPOINT` | Consumed by the postprovision hook (index seed) |
 | `RESOURCE_GROUP` | Resource group name, for teardown |
 | `FOUNDRY_NAME` | Foundry account name, for purge |
 | `project_connection_strings` | Existing project endpoint list |
