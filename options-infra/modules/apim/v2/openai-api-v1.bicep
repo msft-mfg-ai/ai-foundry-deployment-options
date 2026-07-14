@@ -72,20 +72,6 @@ resource api 'Microsoft.ApiManagement/service/apis@2024-06-01-preview' = {
   }
 }
 
-resource inferenceTag 'Microsoft.ApiManagement/service/tags@2024-06-01-preview' = {
-  name: 'inference'
-  parent: apimService
-  properties: {
-    displayName: 'inference'
-  }
-}
-
-resource apiTag 'Microsoft.ApiManagement/service/apis/tags@2024-06-01-preview' = {
-  name: 'inference'
-  parent: api
-  dependsOn: [inferenceTag]
-}
-
 resource aiGatewayTag 'Microsoft.ApiManagement/service/tags@2024-06-01-preview' = {
   name: 'ai-gateway'
   parent: apimService
