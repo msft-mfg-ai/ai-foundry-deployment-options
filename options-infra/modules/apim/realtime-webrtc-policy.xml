@@ -1,0 +1,112 @@
+<policies>
+    <!--
+        Realtime WebRTC API policy
+        ==========================
+        Applied to the dedicated HTTP API at `openai-v1/realtime` (created by
+        v2/realtime-webrtc-api.bicep). Handles the two endpoints of the GA
+        Azure OpenAI Realtime WebRTC contract:
+
+          POST /client_secrets    → mint an ephemeral token
+                                    (Foundry expects an AAD/MI Bearer here)
+          POST /calls             → SDP exchange
+                                    (Foundry expects an ephemeral Bearer here;
+                                     an AAD/MI Bearer causes a 401 "Realtime
+                                     session ephemeral token is invalid")
+
+        Why this API exists separately from the general `openai-api-v1`
+        catch-all:
+          - The general per-model policy uses `set-backend-service backend-id`
+            with an APIM Backend resource that has managed-identity credentials
+            attached. APIM auto-injects that MI Authorization AFTER policy
+            runs, overwriting a caller-supplied ephemeral token. Foundry then
+            rejects the request as "ephemeral token invalid".
+          - `set-backend-service base-url="…"` (used here) does NOT attach
+            any credentials, so the caller's Authorization header flows
+            through unmodified.
+
+        Token replacement (done in v2/realtime-webrtc-api.bicep before load):
+          {JWT_VALIDATION}  Optional <validate-jwt> block for the
+                            `/client_secrets` operation (empty = disabled).
+                            Never applied to `/calls`.
+          {ROUTING_MAP}     XML-encoded JSON object mapping deployment/model
+                            name → foundry https base URL, e.g.
+                              {"gpt-realtime-2":"https://acct.cognitiveservices.azure.com/openai"}.
+    -->
+    <inbound>
+        <base />
+
+        <!-- Which operation is this? /calls vs /client_secrets. -->
+        <set-variable name="is-calls" value="@(context.Request.OriginalUrl.Path.EndsWith(&quot;/realtime/calls&quot;, StringComparison.OrdinalIgnoreCase))" />
+        <set-variable name="is-client-secrets" value="@(context.Request.OriginalUrl.Path.EndsWith(&quot;/realtime/client_secrets&quot;, StringComparison.OrdinalIgnoreCase))" />
+
+        <!-- Inbound AAD JWT validation — only for /client_secrets.
+             /calls is authenticated by an ephemeral token (opaque, non-JWT). -->
+        <choose>
+            <when condition="@((bool)context.Variables[&quot;is-client-secrets&quot;])">
+                {JWT_VALIDATION}
+            </when>
+        </choose>
+
+        <!-- Routing: deployment/model name → https base URL of the backing
+             Foundry account. Deployment comes from the `model` query string
+             (GA Realtime) with `deployment` legacy fallback. Unknown/empty
+             deployments fall back to the first entry (there is normally only
+             one realtime foundry). -->
+        <set-variable name="realtimeRoutingMap" value="{ROUTING_MAP}" />
+        <set-variable name="requestedDeployment" value="@{
+            var dep = context.Request.Url.Query.GetValueOrDefault(&quot;model&quot;, &quot;&quot;);
+            if (string.IsNullOrEmpty(dep)) {
+                dep = context.Request.Url.Query.GetValueOrDefault(&quot;deployment&quot;, &quot;&quot;);
+            }
+            return dep ?? &quot;&quot;;
+        }" />
+        <set-variable name="realtimeBackendUrl" value="@{
+            var map = Newtonsoft.Json.JsonConvert.DeserializeObject&lt;System.Collections.Generic.Dictionary&lt;string, string&gt;&gt;((string)context.Variables[&quot;realtimeRoutingMap&quot;]);
+            var dep = (string)context.Variables[&quot;requestedDeployment&quot;];
+            if (!string.IsNullOrEmpty(dep) &amp;&amp; map.ContainsKey(dep)) {
+                return map[dep];
+            }
+            foreach (var kv in map) {
+                return kv.Value;
+            }
+            return &quot;&quot;;
+        }" />
+
+        <!-- IMPORTANT: base-url (not backend-id) so no APIM Backend-resource
+             credentials are attached. The caller's Authorization header
+             (ephemeral for /calls, MI for /client_secrets) flows through
+             untouched.
+
+             The API path is `openai-v1/realtime`, and the backing base is
+             `.../openai/v1/realtime`, so APIM appends the operation suffix
+             (`/calls` or `/client_secrets`) preserving the query string. -->
+        <set-backend-service base-url="@((string)context.Variables[&quot;realtimeBackendUrl&quot;])" />
+
+        <!-- On /client_secrets: acquire an APIM managed-identity token for
+             Cognitive Services and use it as the backend Authorization. The
+             caller's AAD Bearer was only used to gate access via the JWT
+             validation above; Foundry itself accepts APIM's MI. -->
+        <choose>
+            <when condition="@((bool)context.Variables[&quot;is-client-secrets&quot;])">
+                <authentication-managed-identity resource="https://cognitiveservices.azure.com" output-token-variable-name="msi-access-token" ignore-error="false" />
+                <set-header name="Authorization" exists-action="override">
+                    <value>@("Bearer " + (string)context.Variables["msi-access-token"])</value>
+                </set-header>
+            </when>
+        </choose>
+
+        <!-- Observability headers for downstream logs. -->
+        <set-header name="x-requested-model" exists-action="override">
+            <value>@((string)context.Variables["requestedDeployment"])</value>
+        </set-header>
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>
