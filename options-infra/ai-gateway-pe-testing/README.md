@@ -2,7 +2,7 @@
 
 Ephemeral CI infrastructure for the `msft-mfg-ai/foundry-byom-feature-support` BYOM feature-support matrix.
 
-This variant deploys the same private-networked Foundry + APIM Standard v2 private-endpoint topology as [`ai-gateway-pe-custom`](../ai-gateway-pe-custom/), but removes the landing-zone MCP/OpenAPI API hardcodes and uses deterministic naming from `AZURE_ENV_NAME` so BYOM CI environment variables stay stable across `azd up` cycles.
+This variant deploys the same private-networked Foundry + APIM Standard v2 private-endpoint topology as [`ai-gateway-pe-custom`](../ai-gateway-pe-custom/), but removes the landing-zone MCP/OpenAPI API hardcodes. Resource naming uses `uniqueString(resourceGroup().id, location)` — so names change between resource groups, but are **stable for a given RG + location**: if you know the RG name and region, you know exactly what resources you'll get.
 
 ## What deploys
 
@@ -18,14 +18,15 @@ No MCP/OpenAPI landing-zone APIs are deployed unless `apiServices` is explicitly
 
 ## Required environment
 
-- `AZURE_ENV_NAME` - fixed deterministic token used in names. Defaults to `byomtest`.
+- `AZURE_ENV_NAME` - azd environment name; drives the resource group name.
+- `AZURE_LOCATION` - deployment region.
 - `FOUNDRY_INSTANCES_JSON` - populated by the `preprovision-list-foundry-models` hook from existing OpenAI/Foundry model deployments.
 
 The backing instance list must include at least one non-APIM OpenAI/Foundry instance. For the BYOM matrix, include a deployment named `gpt-4o-mini` at minimum. Optional useful deployments include `gpt-4o`, `dall-e-2`, `gpt-image-1`, and `o3-mini`; do not add sora, realtime, or embeddings just for this matrix.
 
 ## Connection names
 
-With the default `projectsCount = 1`, project names are generated as:
+`resourceToken` is `toLower(uniqueString(resourceGroup().id, location))` — stable for a given RG + location. With `projectsCount = 1`, project names are:
 
 ```text
 ai-project-${resourceToken}-1
@@ -38,12 +39,7 @@ AI_GATEWAY_CONNECTION_STATIC  = apim-${resourceToken}-openai-s-for-ai-project-${
 AI_GATEWAY_CONNECTION_DYNAMIC = apim-${resourceToken}-openai-d-for-ai-project-${resourceToken}-1
 ```
 
-For the default/fixed token `AZURE_ENV_NAME=byomtest`, set the BYOM GitHub Environment variables to:
-
-```text
-AI_GATEWAY_CONNECTION_STATIC=apim-byomtest-openai-s-for-ai-project-byomtest-1
-AI_GATEWAY_CONNECTION_DYNAMIC=apim-byomtest-openai-d-for-ai-project-byomtest-1
-```
+The exact strings are emitted as Bicep outputs (see below), so downstream callers should read them via `azd env get-value AI_GATEWAY_CONNECTION_STATIC` rather than hardcoding.
 
 ## CI-consumed outputs
 

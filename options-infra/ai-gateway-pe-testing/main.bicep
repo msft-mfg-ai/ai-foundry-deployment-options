@@ -10,7 +10,6 @@ import { apiType } from '../modules/apps/apps-private-link.bicep'
 import { foundryInstanceType } from '../modules/apim/advanced/types.bicep'
 
 param location string = resourceGroup().location
-param resourceToken string = 'byomtest'
 param projectsCount int = 1
 param apiServices apiType[] = []
 param apimPublicEnabled bool = false
@@ -26,6 +25,7 @@ var tags = {
   'hidden-title': 'Foundry - APIM v2 Standard with PE Testing'
   SecurityControl: 'Ignore'
 }
+var resourceToken = toLower(uniqueString(resourceGroup().id, location))
 
 var valid_config = empty(foundryInstances)
   ? fail('No Foundry instances configured. Set EXISTING_FOUNDRY_RESOURCE_IDS (or OPENAI_RESOURCE_ID) and run the `preprovision-list-foundry-models` hook so FOUNDRY_INSTANCES_JSON is populated.')
