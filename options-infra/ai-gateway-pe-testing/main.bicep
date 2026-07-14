@@ -29,7 +29,7 @@ param acceptedTenantIds string[] = []
 var tags = {
   'created-by': 'option-ai-gateway-pe-testing'
   'hidden-title': 'Foundry - APIM v2 Standard with PE Testing'
-  SecurityControl: 'Ignore'
+  SecurityControl: 'Insecure'
 }
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
 

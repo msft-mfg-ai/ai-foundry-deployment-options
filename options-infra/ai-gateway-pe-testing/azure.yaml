@@ -27,12 +27,21 @@ hooks:
       shell: sh
       run: |
         set -eu
-        echo "── Opening AI Search firewall to seed byom-test index ──"
+        MY_IP=$(curl -sf https://api.ipify.org)
+        MY_OID=$(az ad signed-in-user show --query id -o tsv)
+        SEARCH_ID=$(az search service show --name "${AI_SEARCH_SERVICE_NAME}" --resource-group "${AZURE_RESOURCE_GROUP}" --query id -o tsv)
+
+        echo "── Opening AI Search firewall for ${MY_IP} + granting Data Contributor to ${MY_OID} ──"
         az search service update \
           --name "${AI_SEARCH_SERVICE_NAME}" \
           --resource-group "${AZURE_RESOURCE_GROUP}" \
           --public-access enabled \
+          --ip-rules "${MY_IP}" \
           --output none
+        az role assignment create --role "Search Service Contributor" --assignee-object-id "${MY_OID}" --assignee-principal-type User --scope "${SEARCH_ID}" --output none 2>/dev/null || true
+        az role assignment create --role "Search Index Data Contributor" --assignee-object-id "${MY_OID}" --assignee-principal-type User --scope "${SEARCH_ID}" --output none 2>/dev/null || true
+        echo "  waiting 30s for RBAC to propagate…"
+        sleep 30
         # Wait for API to become reachable.
         for i in $(seq 1 30); do
           code=$(curl -s -o /dev/null -w '%{http_code}' "${AI_SEARCH_ENDPOINT}/indexes?api-version=2024-07-01" || true)
@@ -49,6 +58,7 @@ hooks:
           --name "${AI_SEARCH_SERVICE_NAME}" \
           --resource-group "${AZURE_RESOURCE_GROUP}" \
           --public-access disabled \
+          --ip-rules "" \
           --output none --no-wait
         echo "── Done. Paste these into the byom GH Environment: ──"
         echo "PROJECT_ENDPOINT=${PROJECT_ENDPOINT}"
@@ -65,8 +75,16 @@ hooks:
       shell: pwsh
       run: |
         $ErrorActionPreference = "Stop"
-        Write-Host "── Opening AI Search firewall to seed byom-test index ──"
-        az search service update --name $env:AI_SEARCH_SERVICE_NAME --resource-group $env:AZURE_RESOURCE_GROUP --public-access enabled --output none
+        $MY_IP = (Invoke-RestMethod https://api.ipify.org).Trim()
+        $MY_OID = az ad signed-in-user show --query id -o tsv
+        $SEARCH_ID = az search service show --name $env:AI_SEARCH_SERVICE_NAME --resource-group $env:AZURE_RESOURCE_GROUP --query id -o tsv
+
+        Write-Host "── Opening AI Search firewall for $MY_IP + granting Data Contributor to $MY_OID ──"
+        az search service update --name $env:AI_SEARCH_SERVICE_NAME --resource-group $env:AZURE_RESOURCE_GROUP --public-access enabled --ip-rules $MY_IP --output none
+        az role assignment create --role "Search Service Contributor" --assignee-object-id $MY_OID --assignee-principal-type User --scope $SEARCH_ID --output none 2>$null
+        az role assignment create --role "Search Index Data Contributor" --assignee-object-id $MY_OID --assignee-principal-type User --scope $SEARCH_ID --output none 2>$null
+        Write-Host "  waiting 30s for RBAC to propagate…"
+        Start-Sleep -Seconds 30
         for ($i = 1; $i -le 30; $i++) {
           try {
             $r = Invoke-WebRequest -Uri "$($env:AI_SEARCH_ENDPOINT)/indexes?api-version=2024-07-01" -Method Get -UseBasicParsing -ErrorAction Stop
@@ -82,6 +100,6 @@ hooks:
         uv run python create_index.py --endpoint $env:AI_SEARCH_ENDPOINT --index $env:AZURE_AI_SEARCH_INDEX_NAME
         Pop-Location
         Write-Host "── Closing AI Search firewall ──"
-        az search service update --name $env:AI_SEARCH_SERVICE_NAME --resource-group $env:AZURE_RESOURCE_GROUP --public-access disabled --output none --no-wait
+        az search service update --name $env:AI_SEARCH_SERVICE_NAME --resource-group $env:AZURE_RESOURCE_GROUP --public-access disabled --ip-rules "" --output none --no-wait
       interactive: false
       continueOnError: false
