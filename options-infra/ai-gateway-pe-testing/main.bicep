@@ -193,6 +193,15 @@ module dashboard '../modules/dashboard/dashboard.bicep' = {
   }
 }
 
+// Bing Grounding tool — required by tool-web-search feature.
+module bing_connection '../modules/bing/connection-bing-grounding.bicep' = {
+  name: 'bing-connection-${resourceToken}'
+  params: {
+    aiFoundryName: foundry.outputs.FOUNDRY_NAME
+    tags: tags
+  }
+}
+
 // module models_policy '../modules/policy/models-policy.bicep' = {
 //   scope: subscription()
 //   name: 'policy-definition-deployment-${resourceToken}'
@@ -231,4 +240,6 @@ output AI_GATEWAY_CONNECTION_STATIC string = 'apim-${resourceToken}-openai-s-for
 output AI_GATEWAY_CONNECTION_DYNAMIC string = 'apim-${resourceToken}-openai-d-for-${first(projectNames)}'
 output RESOURCE_GROUP string = resourceGroup().name
 output FOUNDRY_NAME string = foundry.outputs.FOUNDRY_NAME
+output BING_CONNECTION_ID string = '${foundry.outputs.FOUNDRY_RESOURCE_ID}/projects/${first(projectNames)}/connections/binggrounding'
+output AZURE_AI_SEARCH_CONNECTION_ID string = '${foundry.outputs.FOUNDRY_RESOURCE_ID}/projects/${first(projectNames)}/connections/${ai_dependencies.outputs.AI_DEPENDECIES.aiSearch.name}-for-${first(projectNames)}'
 output config_validation_result bool = valid_config

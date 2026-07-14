@@ -16,6 +16,15 @@ This variant deploys the same private-networked Foundry + APIM Standard v2 priva
 
 No MCP/OpenAPI landing-zone APIs are deployed unless `apiServices` is explicitly supplied.
 
+## Provisioned tool prerequisites
+
+Beyond the private-networked Foundry + APIM gateway:
+
+- **Bing Grounding** — `Microsoft.Bing/accounts` + `binggrounding` connection on the project (feeds `BING_CONNECTION_ID`, needed by `tool-web-search`).
+- **AI Search** — provisioned by `ai-dependencies-with-dns.bicep` and auto-connected to the project (`AZURE_AI_SEARCH_CONNECTION_ID`).
+
+SharePoint, Fabric, and Logic App connections are **not** deployable here — they need pre-existing external resources; set `SHAREPOINT_CONNECTION_ID`, `FABRIC_CONNECTION_ID`, `LOGIC_APP_RESOURCE_ID` in the BYOM `byom` GitHub Environment directly. MCP endpoints likewise stay as plain URLs (`MCP_SERVER_URL*`) — the `tool-mcp/*` tests hit them directly.
+
 ## Required environment
 
 - `AZURE_ENV_NAME` - azd environment name; drives the resource group name.
@@ -48,6 +57,8 @@ The exact strings are emitted as Bicep outputs (see below), so downstream caller
 | `PROJECT_ENDPOINT` | `https://<foundry>.services.ai.azure.com/api/projects/<project>` |
 | `AI_GATEWAY_CONNECTION_STATIC` | Static APIM connection name for BYOM tests |
 | `AI_GATEWAY_CONNECTION_DYNAMIC` | Dynamic APIM connection name for BYOM tests |
+| `BING_CONNECTION_ID` | ARM ID of the `binggrounding` project connection |
+| `AZURE_AI_SEARCH_CONNECTION_ID` | ARM ID of the AI Search project connection |
 | `RESOURCE_GROUP` | Resource group name, for teardown |
 | `FOUNDRY_NAME` | Foundry account name, for purge |
 | `project_connection_strings` | Existing project endpoint list |
