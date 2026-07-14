@@ -215,7 +215,7 @@ module bing_connection '../modules/bing/connection-bing-grounding.bicep' = if (b
 
 // When bringing an existing Bing resource, create only the project connection.
 resource foundryForBing 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' existing = if (bingMode == 'existing') {
-  name: foundry.outputs.FOUNDRY_NAME
+  name: 'ai-foundry-${resourceToken}'
 }
 
 var existingBingSub = bingMode == 'existing' ? split(existingBingResourceId, '/')[2] : ''
@@ -244,6 +244,9 @@ resource existing_bing_project_connection 'Microsoft.CognitiveServices/accounts/
       ResourceId: existingBing.id
     }
   }
+  dependsOn: [
+    foundry
+  ]
 }
 
 // module models_policy '../modules/policy/models-policy.bicep' = {
