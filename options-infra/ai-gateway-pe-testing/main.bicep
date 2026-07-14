@@ -14,8 +14,11 @@ param projectsCount int = 1
 param apiServices apiType[] = []
 param apimPublicEnabled bool = false
 
-@description('Whether to create a Bing Grounding account and connection. Default true; set to false in subscriptions where the Bing resource provider is suspended or restricted.')
+@description('Whether to create a Bing Grounding account and connection. Default true; set to false in subscriptions where the Bing resource provider is suspended or restricted. Ignored when `existingBingResourceId` is set.')
 param enableBingGrounding bool = true
+
+@description('Optional. Full resource ID of an existing Microsoft.Bing/accounts resource to connect to instead of creating a new one. When set, no new Bing account is created but a project connection is still made.')
+param existingBingResourceId string = ''
 
 @description('Existing Foundry / AI Services instances to front with the gateway. Discovered by the `preprovision-list-foundry-models` hook (FOUNDRY_INSTANCES_JSON). At least one instance is required.')
 param foundryInstances foundryInstanceType[]
@@ -196,12 +199,50 @@ module dashboard '../modules/dashboard/dashboard.bicep' = {
   }
 }
 
-// Bing Grounding tool — required by tool-web-search feature.
-module bing_connection '../modules/bing/connection-bing-grounding.bicep' = if (enableBingGrounding) {
+// ── Bing Grounding tool ──────────────────────────────────────────────
+// Either create a new Bing account, or reference an existing one, or skip.
+var bingMode = !empty(existingBingResourceId)
+  ? 'existing'
+  : (enableBingGrounding ? 'create' : 'none')
+
+module bing_connection '../modules/bing/connection-bing-grounding.bicep' = if (bingMode == 'create') {
   name: 'bing-connection-${resourceToken}'
   params: {
     aiFoundryName: foundry.outputs.FOUNDRY_NAME
     tags: tags
+  }
+}
+
+// When bringing an existing Bing resource, create only the project connection.
+resource foundryForBing 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' existing = if (bingMode == 'existing') {
+  name: foundry.outputs.FOUNDRY_NAME
+}
+
+var existingBingSub = bingMode == 'existing' ? split(existingBingResourceId, '/')[2] : ''
+var existingBingRg = bingMode == 'existing' ? split(existingBingResourceId, '/')[4] : ''
+var existingBingName = bingMode == 'existing' ? last(split(existingBingResourceId, '/')) : ''
+
+resource existingBing 'Microsoft.Bing/accounts@2025-05-01-preview' existing = if (bingMode == 'existing') {
+  name: existingBingName
+  scope: resourceGroup(existingBingSub, existingBingRg)
+}
+
+resource existing_bing_project_connection 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-preview' = if (bingMode == 'existing') {
+  name: 'binggrounding'
+  parent: foundryForBing
+  properties: {
+    category: 'GroundingWithBingSearch'
+    target: 'https://api.bing.microsoft.com/'
+    authType: 'ApiKey'
+    isSharedToAll: true
+    credentials: {
+      key: '${listKeys(existingBing.id, '2020-06-10').key1}'
+    }
+    metadata: {
+      Type: 'bing_grounding'
+      ApiType: 'Azure'
+      ResourceId: existingBing.id
+    }
   }
 }
 
@@ -243,9 +284,9 @@ output AI_GATEWAY_CONNECTION_STATIC string = 'apim-${resourceToken}-openai-s-for
 output AI_GATEWAY_CONNECTION_DYNAMIC string = 'apim-${resourceToken}-openai-d-for-${first(projectNames)}'
 output RESOURCE_GROUP string = resourceGroup().name
 output FOUNDRY_NAME string = foundry.outputs.FOUNDRY_NAME
-output BING_CONNECTION_ID string = enableBingGrounding
-  ? '${foundry.outputs.FOUNDRY_RESOURCE_ID}/projects/${first(projectNames)}/connections/binggrounding'
-  : ''
+output BING_CONNECTION_ID string = bingMode == 'none'
+  ? ''
+  : '${foundry.outputs.FOUNDRY_RESOURCE_ID}/projects/${first(projectNames)}/connections/binggrounding'
 output AZURE_AI_SEARCH_CONNECTION_ID string = '${foundry.outputs.FOUNDRY_RESOURCE_ID}/projects/${first(projectNames)}/connections/${ai_dependencies.outputs.AI_DEPENDECIES.aiSearch.name}-for-${first(projectNames)}'
 output AI_SEARCH_SERVICE_NAME string = ai_dependencies.outputs.AI_DEPENDECIES.aiSearch.name
 output AI_SEARCH_ENDPOINT string = 'https://${ai_dependencies.outputs.AI_DEPENDECIES.aiSearch.name}.search.windows.net'

@@ -9,6 +9,8 @@ param apimPublicEnabled = toLower(apimPublicEnabledValue) == 'true' ? true : fal
 var enableBingValue = readEnvironmentVariable('ENABLE_BING_GROUNDING', '')
 param enableBingGrounding = toLower(enableBingValue) == 'false' ? false : true
 
+param existingBingResourceId = readEnvironmentVariable('EXISTING_BING_RESOURCE_ID', '')
+
 var projectsCountValue = readEnvironmentVariable('PROJECTS_COUNT', '')
 param projectsCount = empty(projectsCountValue) ? 1 : int(projectsCountValue)
 
