@@ -22,8 +22,11 @@
         reads from `context.Request`.
     -->
 
-    <!-- Extract requested model from URL path or request body.
-         Path shape (AzureOpenAI): /…/openai/deployments/{model}/... -->
+    <!-- Extract requested model from URL path, request body, or query string.
+         Path shape (AzureOpenAI): /…/openai/deployments/{model}/...
+         Body shape (OpenAI v1):   {"model": "..."} (JSON)
+         Query shape (Realtime WebRTC SDP exchange, where the body is raw SDP
+         and the URL has no `deployments/` segment): ?model=... -->
     <set-variable name="requestedModel" value="@{
         var segments = context.Request.Url.Path.Split('/');
         for (int i = 0; i &lt; segments.Length - 1; i++) {
@@ -38,6 +41,14 @@
                 return model.ToString();
             }
         } catch { }
+        var qModel = context.Request.Url.Query.GetValueOrDefault(&quot;model&quot;, &quot;&quot;);
+        if (!string.IsNullOrEmpty(qModel)) {
+            return qModel;
+        }
+        var qDeployment = context.Request.Url.Query.GetValueOrDefault(&quot;deployment&quot;, &quot;&quot;);
+        if (!string.IsNullOrEmpty(qDeployment)) {
+            return qDeployment;
+        }
         return &quot;unknown&quot;;
     }" />
 
