@@ -59,6 +59,15 @@ hooks:
           --resource-group "${AZURE_RESOURCE_GROUP}" \
           --public-access disabled \
           --output none --no-wait || true
+
+        echo "── Building + pushing hosted-agent image to ${AZURE_CONTAINER_REGISTRY_NAME} ──"
+        az acr build \
+          --registry "${AZURE_CONTAINER_REGISTRY_NAME}" \
+          --image byom-hosted-agent:latest \
+          --file services/hosted-agent/Dockerfile \
+          services/hosted-agent \
+          --output none
+
         echo "── Done. Paste these into the byom GH Environment: ──"
         echo "PROJECT_ENDPOINT=${PROJECT_ENDPOINT}"
         echo "AI_GATEWAY_CONNECTION_STATIC=${AI_GATEWAY_CONNECTION_STATIC}"
@@ -68,6 +77,9 @@ hooks:
         echo "AZURE_AI_SEARCH_INDEX_NAME=${AZURE_AI_SEARCH_INDEX_NAME}"
         echo "FOUNDRY_NAME=${FOUNDRY_NAME}"
         echo "RESOURCE_GROUP=${RESOURCE_GROUP}"
+        echo "AZURE_CONTAINER_REGISTRY_NAME=${AZURE_CONTAINER_REGISTRY_NAME}"
+        echo "AZURE_CONTAINER_REGISTRY_ENDPOINT=${AZURE_CONTAINER_REGISTRY_ENDPOINT}"
+        echo "HOSTED_AGENT_IMAGE=${HOSTED_AGENT_IMAGE}"
       interactive: false
       continueOnError: false
     windows:
@@ -100,5 +112,13 @@ hooks:
         Pop-Location
         Write-Host "── Closing AI Search firewall ──"
         az search service update --name $env:AI_SEARCH_SERVICE_NAME --resource-group $env:AZURE_RESOURCE_GROUP --public-access disabled --output none --no-wait
+
+        Write-Host "── Building + pushing hosted-agent image to $env:AZURE_CONTAINER_REGISTRY_NAME ──"
+        az acr build `
+          --registry $env:AZURE_CONTAINER_REGISTRY_NAME `
+          --image byom-hosted-agent:latest `
+          --file services/hosted-agent/Dockerfile `
+          services/hosted-agent `
+          --output none
       interactive: false
       continueOnError: false

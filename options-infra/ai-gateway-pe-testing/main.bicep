@@ -199,6 +199,42 @@ module dashboard '../modules/dashboard/dashboard.bicep' = {
   }
 }
 
+// ── Azure Container Registry ─────────────────────────────────────────
+// Provides an image store for Foundry Hosted Agents deployed via
+// `create_version_from_image` (as opposed to `remote_build`, which does not
+// require an ACR). AcrPull is granted to every project's managed identity so
+// Foundry can pull images at agent-invocation time.
+module acrDnsZone 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
+  name: 'acr-privateDnsZoneDeployment'
+  params: {
+    tags: tags
+    name: 'privatelink.azurecr.io'
+    location: 'global'
+    virtualNetworkLinks: [
+      {
+        virtualNetworkResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
+      }
+    ]
+  }
+}
+
+module containerRegistry '../modules/aml/container-registry.bicep' = {
+  name: 'container-registry'
+  params: {
+    tags: tags
+    location: location
+    name: 'acr${resourceToken}'
+    logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
+    privateEndpointSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+    privateEndpointName: 'pe-acr-${resourceToken}'
+    privateDnsZoneResourceId: acrDnsZone.outputs.resourceId
+    principalIdsForPullPermission: [
+      for i in range(0, projectsCount): identities[i].outputs.MANAGED_IDENTITY_PRINCIPAL_ID
+    ]
+    publicAccessEnabled: true // needed for `az acr build` from developer machine or GH-hosted runner
+  }
+}
+
 // ── Bing Grounding tool ──────────────────────────────────────────────
 // Either create a new Bing account, or reference an existing one, or skip.
 var bingMode = !empty(existingBingResourceId)
@@ -298,4 +334,7 @@ output AZURE_AI_SEARCH_CONNECTION_ID string = '${foundry.outputs.FOUNDRY_RESOURC
 output AI_SEARCH_SERVICE_NAME string = ai_dependencies.outputs.AI_DEPENDECIES.aiSearch.name
 output AI_SEARCH_ENDPOINT string = 'https://${ai_dependencies.outputs.AI_DEPENDECIES.aiSearch.name}.search.windows.net'
 output AZURE_AI_SEARCH_INDEX_NAME string = 'byom-test'
+output AZURE_CONTAINER_REGISTRY_NAME string = containerRegistry.outputs.AZURE_CONTAINER_REGISTRY_NAME
+output AZURE_CONTAINER_REGISTRY_ENDPOINT string = containerRegistry.outputs.AZURE_CONTAINER_REGISTRY_LOGIN_SERVER
+output HOSTED_AGENT_IMAGE string = '${containerRegistry.outputs.AZURE_CONTAINER_REGISTRY_LOGIN_SERVER}/byom-hosted-agent:latest'
 output config_validation_result bool = valid_config
