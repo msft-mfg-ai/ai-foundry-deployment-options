@@ -58,8 +58,7 @@ hooks:
           --name "${AI_SEARCH_SERVICE_NAME}" \
           --resource-group "${AZURE_RESOURCE_GROUP}" \
           --public-access disabled \
-          --ip-rules "" \
-          --output none --no-wait
+          --output none --no-wait || true
         echo "── Done. Paste these into the byom GH Environment: ──"
         echo "PROJECT_ENDPOINT=${PROJECT_ENDPOINT}"
         echo "AI_GATEWAY_CONNECTION_STATIC=${AI_GATEWAY_CONNECTION_STATIC}"
@@ -100,6 +99,6 @@ hooks:
         uv run python create_index.py --endpoint $env:AI_SEARCH_ENDPOINT --index $env:AZURE_AI_SEARCH_INDEX_NAME
         Pop-Location
         Write-Host "── Closing AI Search firewall ──"
-        az search service update --name $env:AI_SEARCH_SERVICE_NAME --resource-group $env:AZURE_RESOURCE_GROUP --public-access disabled --ip-rules "" --output none --no-wait
+        az search service update --name $env:AI_SEARCH_SERVICE_NAME --resource-group $env:AZURE_RESOURCE_GROUP --public-access disabled --output none --no-wait
       interactive: false
       continueOnError: false
