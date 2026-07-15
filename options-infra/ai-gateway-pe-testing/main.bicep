@@ -283,8 +283,12 @@ output project_connection_strings string[] = [
 ]
 output project_names string[] = [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
 output PROJECT_ENDPOINT string = 'https://${foundry.outputs.FOUNDRY_NAME}.services.ai.azure.com/api/projects/${first(projectNames)}'
+output FOUNDRY_ACCOUNT_ENDPOINT string = 'https://${foundry.outputs.FOUNDRY_NAME}.services.ai.azure.com'
+output FOUNDRY_REGION string = location
 output AI_GATEWAY_CONNECTION_STATIC string = 'apim-${resourceToken}-openai-s-for-${first(projectNames)}'
 output AI_GATEWAY_CONNECTION_DYNAMIC string = 'apim-${resourceToken}-openai-d-for-${first(projectNames)}'
+output AI_GATEWAY_CONNECTION_ANTHROPIC string = 'apim-${resourceToken}-anthropic-s-for-${first(projectNames)}'
+output AI_GATEWAY_CONNECTION_ANTHROPIC_DYNAMIC string = 'apim-${resourceToken}-anthropic-d-for-${first(projectNames)}'
 output RESOURCE_GROUP string = resourceGroup().name
 output FOUNDRY_NAME string = foundry.outputs.FOUNDRY_NAME
 output BING_CONNECTION_ID string = bingMode == 'none'
