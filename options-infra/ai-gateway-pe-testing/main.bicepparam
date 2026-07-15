@@ -11,6 +11,8 @@ param enableBingGrounding = toLower(enableBingValue) == 'false' ? false : true
 
 param existingBingResourceId = readEnvironmentVariable('EXISTING_BING_RESOURCE_ID', '')
 
+param myIpAddress = readEnvironmentVariable('MY_IP', '')
+
 var projectsCountValue = readEnvironmentVariable('PROJECTS_COUNT', '')
 param projectsCount = empty(projectsCountValue) ? 1 : int(projectsCountValue)
 

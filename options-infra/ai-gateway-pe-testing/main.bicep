@@ -26,6 +26,9 @@ param foundryInstances foundryInstanceType[]
 @description('Tenant IDs whose Entra ID tokens the gateway should accept on inbound calls. Empty (default) = no inbound JWT validation — callers reach the gateway anonymously and APIM\'s managed identity authenticates to Foundry. When set, the inbound policy requires a valid bearer token with `aud=https://cognitiveservices.azure.com` issued by one of these tenants.')
 param acceptedTenantIds string[] = []
 
+@description('Public IPv4 (or CIDR) allowed to reach data-plane services that need firewall carve-outs: ACR (image build/push) and AI Search (index CRUD). Populated by the preprovision hook via `azd env set MY_IP $(curl -sf https://api.ipify.org)`. Empty = ACR is fully private (only reachable via PE) and AI Search stays firewalled after postprovision.')
+param myIpAddress string = ''
+
 var tags = {
   'created-by': 'option-ai-gateway-pe-testing'
   'hidden-title': 'Foundry - APIM v2 Standard with PE Testing'
@@ -231,7 +234,12 @@ module containerRegistry '../modules/aml/container-registry.bicep' = {
     principalIdsForPullPermission: [
       for i in range(0, projectsCount): identities[i].outputs.MANAGED_IDENTITY_PRINCIPAL_ID
     ]
-    publicAccessEnabled: true // needed for `az acr build` from developer machine or GH-hosted runner
+    // Locked-down public surface: only MY_IP (developer machine or GH runner)
+    // can reach the registry over the internet — everything else has to come
+    // in through the private endpoint. Falls back to fully-private when MY_IP
+    // is unset (`az acr build` would then need self-hosted runner in the VNet).
+    publicAccessEnabled: false
+    allowedIpAddresses: empty(myIpAddress) ? [] : [myIpAddress]
   }
 }
 

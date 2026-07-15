@@ -13,12 +13,27 @@ hooks:
       run: |
         & '../scripts/preprovision-list-foundry-models.ps1'
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        if (-not $env:MY_IP) {
+          $ip = (Invoke-RestMethod https://api.ipify.org).Trim()
+          Write-Host "Auto-detected MY_IP=$ip (set MY_IP explicitly to override)"
+          azd env set MY_IP $ip
+        } else {
+          Write-Host "Using MY_IP=$env:MY_IP from azd env"
+        }
       interactive: false
       continueOnError: false
     posix:
       shell: sh
       run: |
+        set -eu
         sh ../scripts/preprovision-list-foundry-models.sh
+        if [ -z "${MY_IP:-}" ]; then
+          ip=$(curl -sf https://api.ipify.org)
+          echo "Auto-detected MY_IP=${ip} (set MY_IP explicitly to override)"
+          azd env set MY_IP "${ip}"
+        else
+          echo "Using MY_IP=${MY_IP} from azd env"
+        fi
       interactive: false
       continueOnError: false
 
@@ -27,11 +42,10 @@ hooks:
       shell: sh
       run: |
         set -eu
-        MY_IP=$(curl -sf https://api.ipify.org)
         MY_OID=$(az ad signed-in-user show --query id -o tsv)
         SEARCH_ID=$(az search service show --name "${AI_SEARCH_SERVICE_NAME}" --resource-group "${AZURE_RESOURCE_GROUP}" --query id -o tsv)
 
-        echo "── Opening AI Search firewall for ${MY_IP} + granting Data Contributor to ${MY_OID} ──"
+        echo "── Setting AI Search firewall to allow only MY_IP=${MY_IP} + granting Data Contributor to ${MY_OID} ──"
         az search service update \
           --name "${AI_SEARCH_SERVICE_NAME}" \
           --resource-group "${AZURE_RESOURCE_GROUP}" \
@@ -53,14 +67,11 @@ hooks:
         uv sync
         uv run python create_index.py --endpoint "${AI_SEARCH_ENDPOINT}" --index "${AZURE_AI_SEARCH_INDEX_NAME}"
         cd -
-        echo "── Closing AI Search firewall ──"
-        az search service update \
-          --name "${AI_SEARCH_SERVICE_NAME}" \
-          --resource-group "${AZURE_RESOURCE_GROUP}" \
-          --public-access disabled \
-          --output none --no-wait || true
+        # NOTE: AI Search firewall is intentionally LEFT OPEN to MY_IP so that
+        # subsequent index CRUD (portal, azd re-runs, tests) works without a
+        # firewall dance. All other IPs are still denied.
 
-        echo "── Building + pushing hosted-agent image to ${AZURE_CONTAINER_REGISTRY_NAME} ──"
+        echo "── Building + pushing hosted-agent image to ${AZURE_CONTAINER_REGISTRY_NAME} (via MY_IP=${MY_IP}) ──"
         az acr build \
           --registry "${AZURE_CONTAINER_REGISTRY_NAME}" \
           --image byom-hosted-agent:latest \
@@ -86,12 +97,11 @@ hooks:
       shell: pwsh
       run: |
         $ErrorActionPreference = "Stop"
-        $MY_IP = (Invoke-RestMethod https://api.ipify.org).Trim()
         $MY_OID = az ad signed-in-user show --query id -o tsv
         $SEARCH_ID = az search service show --name $env:AI_SEARCH_SERVICE_NAME --resource-group $env:AZURE_RESOURCE_GROUP --query id -o tsv
 
-        Write-Host "── Opening AI Search firewall for $MY_IP + granting Data Contributor to $MY_OID ──"
-        az search service update --name $env:AI_SEARCH_SERVICE_NAME --resource-group $env:AZURE_RESOURCE_GROUP --public-access enabled --ip-rules $MY_IP --output none
+        Write-Host "── Setting AI Search firewall to allow only MY_IP=$env:MY_IP + granting Data Contributor to $MY_OID ──"
+        az search service update --name $env:AI_SEARCH_SERVICE_NAME --resource-group $env:AZURE_RESOURCE_GROUP --public-access enabled --ip-rules $env:MY_IP --output none
         az role assignment create --role "Search Service Contributor" --assignee-object-id $MY_OID --assignee-principal-type User --scope $SEARCH_ID --output none 2>$null
         az role assignment create --role "Search Index Data Contributor" --assignee-object-id $MY_OID --assignee-principal-type User --scope $SEARCH_ID --output none 2>$null
         Write-Host "  waiting 30s for RBAC to propagate…"
@@ -110,10 +120,9 @@ hooks:
         uv sync
         uv run python create_index.py --endpoint $env:AI_SEARCH_ENDPOINT --index $env:AZURE_AI_SEARCH_INDEX_NAME
         Pop-Location
-        Write-Host "── Closing AI Search firewall ──"
-        az search service update --name $env:AI_SEARCH_SERVICE_NAME --resource-group $env:AZURE_RESOURCE_GROUP --public-access disabled --output none --no-wait
+        # AI Search firewall is intentionally LEFT OPEN to MY_IP (not closed).
 
-        Write-Host "── Building + pushing hosted-agent image to $env:AZURE_CONTAINER_REGISTRY_NAME ──"
+        Write-Host "── Building + pushing hosted-agent image to $env:AZURE_CONTAINER_REGISTRY_NAME (via MY_IP=$env:MY_IP) ──"
         az acr build `
           --registry $env:AZURE_CONTAINER_REGISTRY_NAME `
           --image byom-hosted-agent:latest `
