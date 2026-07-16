@@ -1,4 +1,4 @@
-"""BYOM canary hosted agent (Invocations protocol).
+"""BYOM canary hosted agent (Invocations protocol, agentserver 2.0.0).
 
 Runs a small BYOM probe matrix from *inside* the Foundry-hosted container:
 
@@ -14,21 +14,23 @@ BYOM convention:
   "{connection}/{model}" (e.g. "apim-...-openai-s-.../gpt-4o-mini"), which tells
   Foundry to forward the call to the APIM connection instead of a local
   deployment. That composed string is provided by the platform via BYOM_MODEL.
+
+Env vars:
+  - FOUNDRY_PROJECT_ENDPOINT  platform-injected on every hosted agent runtime.
+  - BYOM_MODEL                declared in azure.yaml (services.byom-canary.environmentVariables).
+  - BYOM_MODEL_ANTHROPIC      optional, same source.
 """
 import json
 import os
 import time
 
+from azure.ai.agentserver.invocations import InvocationAgentServerHost
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
-from azure.ai.agentserver.invocations import InvocationAgentServerHost
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-# Platform-injected. Present on every Foundry hosted agent runtime.
-_PROJECT_ENDPOINT = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
-
-# Declared in agent.yaml, populated by the extension from azd env at deploy time.
+_PROJECT_ENDPOINT = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
 _BYOM_MODEL = os.environ["BYOM_MODEL"]                                    # "<conn>/<model>"
 _BYOM_MODEL_ANTHROPIC = os.environ.get("BYOM_MODEL_ANTHROPIC") or None    # optional
 
@@ -36,7 +38,7 @@ _project = AIProjectClient(endpoint=_PROJECT_ENDPOINT, credential=DefaultAzureCr
 _aoai = _project.get_openai_client()
 
 
-def _probe(name: str, model: str, prompt: str = "Reply with the single word: ok."):
+def _probe(name: str, model: str, prompt: str):
     """Run one BYOM Responses probe and return a JSON-serialisable result."""
     started = time.monotonic()
     try:
@@ -62,10 +64,11 @@ app = InvocationAgentServerHost()
 
 
 @app.invoke_handler
-async def handle(request: Request) -> JSONResponse:
+async def handle_invoke(request: Request) -> JSONResponse:
     body = await request.body()
     payload = json.loads(body) if body else {}
-    prompt = payload.get("prompt", "Reply with the single word: ok.")
+    # New Invocations schema uses "message"; keep "prompt" as a legacy fallback.
+    prompt = payload.get("message") or payload.get("prompt") or "Reply with the single word: ok."
 
     tests = [_probe("responses-openai-static", _BYOM_MODEL, prompt)]
     if _BYOM_MODEL_ANTHROPIC:
