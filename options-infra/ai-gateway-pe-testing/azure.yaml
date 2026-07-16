@@ -2,49 +2,37 @@
 
 requiredVersions:
     extensions:
-        # New schema (>=1.0.0-beta.4): agent config is inline in this file,
-        # no separate agent.yaml. See samples/python/hosted-agents/agent-framework
-        # in foundry-samples.
         azure.ai.agents: '>=1.0.0-beta.4'
 name: foundry-byom-testing
 services:
-    # NOTE: no `ai-project` service — our bicep already provisions the
-    # Foundry account, project, model deployments, and APIM gateway. The
-    # extension only handles this agent's build+push+register step.
     byom-canary:
-        host: azure.ai.agent
         project: services/hosted-agent
+        host: azure.ai.agent
         language: python
+        codeConfiguration:
+            entryPoint: main.py
+            runtime: python_3_13
+        container:
+            resources:
+                cpu: "0.5"
+                memory: 1Gi
+        description: |
+            BYOM canary hosted agent. Runs a small Responses probe matrix against the APIM AI Gateway ("{connection}/{model}" convention) from inside a Foundry-hosted container.
+        environmentVariables:
+            - name: BYOM_MODEL
+              value: ${AI_GATEWAY_CONNECTION_STATIC}/${CHAT_MODEL}
+            - name: BYOM_MODEL_ANTHROPIC
+              value: ${AI_GATEWAY_CONNECTION_ANTHROPIC}/${ANTHROPIC_MODEL}
         kind: hosted
-        name: byom-canary
-        description: >
-            BYOM canary hosted agent. Runs a small Responses probe matrix
-            against the APIM AI Gateway ("{connection}/{model}" convention)
-            from inside a Foundry-hosted container.
         metadata:
             tags:
                 - byom
                 - ai-gateway
                 - canary
-        codeConfiguration:
-            runtime: python_3_13
-            entryPoint: main.py
+        name: byom-canary
         protocols:
             - protocol: invocations
               version: 2.0.0
-        environmentVariables:
-            # BYOM convention: pass gateway+model as a single "{connection}/{model}"
-            # string. These references resolve against .azure/<env>/.env values,
-            # which our bicep populates via outputs of the same name.
-            - name: BYOM_MODEL
-              value: ${AI_GATEWAY_CONNECTION_STATIC}/${CHAT_MODEL}
-            - name: BYOM_MODEL_ANTHROPIC
-              value: ${AI_GATEWAY_CONNECTION_ANTHROPIC}/${ANTHROPIC_MODEL}
-            # FOUNDRY_PROJECT_ENDPOINT is auto-injected by the platform at runtime.
-        container:
-            resources:
-                cpu: "0.5"
-                memory: 1Gi
 infra:
     provider: bicep
     path: .
@@ -141,6 +129,10 @@ hooks:
                 } else {
                   Write-Host "Using MY_IP=$env:MY_IP from azd env"
                 }
+                # Seed model-name env vars used by services.byom-canary.environmentVariables
+                # in azure.yaml. Only set if unset so operators can override.
+                if (-not $env:CHAT_MODEL)      { azd env set CHAT_MODEL      "gpt-4o-mini" }
+                if (-not $env:ANTHROPIC_MODEL) { azd env set ANTHROPIC_MODEL "claude-haiku-4-5" }
         posix:
             shell: sh
             run: |
@@ -153,3 +145,7 @@ hooks:
                 else
                   echo "Using MY_IP=${MY_IP} from azd env"
                 fi
+                # Seed model-name env vars used by services.byom-canary.environmentVariables
+                # in azure.yaml. Only set if unset so operators can override.
+                [ -n "${CHAT_MODEL:-}" ]      || azd env set CHAT_MODEL      "gpt-4o-mini"
+                [ -n "${ANTHROPIC_MODEL:-}" ] || azd env set ANTHROPIC_MODEL "claude-haiku-4-5"
