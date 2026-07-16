@@ -1,10 +1,22 @@
 # deploying using AZD because https://github.com/Azure/azure-cli/pull/31990
 name: foundry-byom-testing
 
+requiredVersions:
+  extensions:
+    # azd ai agent extension: builds+pushes the canary hosted-agent image and
+    # registers it as a Foundry Hosted Agent version during `azd deploy`.
+    azure.ai.agents: latest
+
 infra:
   provider: bicep
   path: .
   module: main
+
+services:
+  ByomCanaryAgent:
+    project: services/hosted-agent
+    host: azure.ai.agent
+    language: docker
 
 hooks:
   preprovision:
@@ -71,14 +83,6 @@ hooks:
         # subsequent index CRUD (portal, azd re-runs, tests) works without a
         # firewall dance. All other IPs are still denied.
 
-        echo "── Building + pushing hosted-agent image to ${AZURE_CONTAINER_REGISTRY_NAME} (via MY_IP=${MY_IP}) ──"
-        az acr build \
-          --registry "${AZURE_CONTAINER_REGISTRY_NAME}" \
-          --image byom-hosted-agent:latest \
-          --file services/hosted-agent/Dockerfile \
-          services/hosted-agent \
-          --output none
-
         echo "── Done. Paste these into the byom GH Environment: ──"
         echo "PROJECT_ENDPOINT=${PROJECT_ENDPOINT}"
         echo "AI_GATEWAY_CONNECTION_STATIC=${AI_GATEWAY_CONNECTION_STATIC}"
@@ -90,7 +94,9 @@ hooks:
         echo "RESOURCE_GROUP=${RESOURCE_GROUP}"
         echo "AZURE_CONTAINER_REGISTRY_NAME=${AZURE_CONTAINER_REGISTRY_NAME}"
         echo "AZURE_CONTAINER_REGISTRY_ENDPOINT=${AZURE_CONTAINER_REGISTRY_ENDPOINT}"
-        echo "HOSTED_AGENT_IMAGE=${HOSTED_AGENT_IMAGE}"
+        echo ""
+        echo "── Note: the ByomCanaryAgent hosted agent is built + registered by 'azd deploy'."
+        echo "   Its Foundry agent name is exported as HOSTED_AGENT_NAME_CANARY once deploy completes."
       interactive: false
       continueOnError: false
     windows:
@@ -121,13 +127,7 @@ hooks:
         uv run python create_index.py --endpoint $env:AI_SEARCH_ENDPOINT --index $env:AZURE_AI_SEARCH_INDEX_NAME
         Pop-Location
         # AI Search firewall is intentionally LEFT OPEN to MY_IP (not closed).
-
-        Write-Host "── Building + pushing hosted-agent image to $env:AZURE_CONTAINER_REGISTRY_NAME (via MY_IP=$env:MY_IP) ──"
-        az acr build `
-          --registry $env:AZURE_CONTAINER_REGISTRY_NAME `
-          --image byom-hosted-agent:latest `
-          --file services/hosted-agent/Dockerfile `
-          services/hosted-agent `
-          --output none
+        # Note: the ByomCanaryAgent hosted agent is built + registered by 'azd deploy'
+        # via the azure.ai.agents extension (see services: block above).
       interactive: false
       continueOnError: false

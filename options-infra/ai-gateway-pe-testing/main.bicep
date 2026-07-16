@@ -344,5 +344,4 @@ output AI_SEARCH_ENDPOINT string = 'https://${ai_dependencies.outputs.AI_DEPENDE
 output AZURE_AI_SEARCH_INDEX_NAME string = 'byom-test'
 output AZURE_CONTAINER_REGISTRY_NAME string = containerRegistry.outputs.AZURE_CONTAINER_REGISTRY_NAME
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = containerRegistry.outputs.AZURE_CONTAINER_REGISTRY_LOGIN_SERVER
-output HOSTED_AGENT_IMAGE string = '${containerRegistry.outputs.AZURE_CONTAINER_REGISTRY_LOGIN_SERVER}/byom-hosted-agent:latest'
 output config_validation_result bool = valid_config
