@@ -327,6 +327,8 @@ output project_connection_strings string[] = [
 ]
 output project_names string[] = [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
 output PROJECT_ENDPOINT string = 'https://${foundry.outputs.FOUNDRY_NAME}.services.ai.azure.com/api/projects/${first(projectNames)}'
+// Duplicate under the name expected by the azd `azure.ai.agents` extension.
+output FOUNDRY_PROJECT_ENDPOINT string = 'https://${foundry.outputs.FOUNDRY_NAME}.services.ai.azure.com/api/projects/${first(projectNames)}'
 output FOUNDRY_ACCOUNT_ENDPOINT string = 'https://${foundry.outputs.FOUNDRY_NAME}.services.ai.azure.com'
 output FOUNDRY_REGION string = location
 output AI_GATEWAY_CONNECTION_STATIC string = 'apim-${resourceToken}-openai-s-for-${first(projectNames)}'
