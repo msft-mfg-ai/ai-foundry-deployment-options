@@ -344,4 +344,7 @@ output AI_SEARCH_ENDPOINT string = 'https://${ai_dependencies.outputs.AI_DEPENDE
 output AZURE_AI_SEARCH_INDEX_NAME string = 'byom-test'
 output AZURE_CONTAINER_REGISTRY_NAME string = containerRegistry.outputs.AZURE_CONTAINER_REGISTRY_NAME
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = containerRegistry.outputs.AZURE_CONTAINER_REGISTRY_LOGIN_SERVER
+// ARM resource ID of the first Foundry project — required by the azd
+// `azure.ai.agents` extension (env var: AZURE_AI_PROJECT_ID).
+output AZURE_AI_PROJECT_ID string = '${foundry.outputs.FOUNDRY_RESOURCE_ID}/projects/${first(projectNames)}'
 output config_validation_result bool = valid_config
