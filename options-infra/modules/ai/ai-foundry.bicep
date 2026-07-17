@@ -45,8 +45,18 @@ type aiModelTDeploymentType = {
       name: string
       @description('The version of the model, e.g. "2024-11-20" or "0125"')
       version: string
-      format: 'OpenAI' | 'Cohere'
+      format: 'OpenAI' | 'Cohere' | 'Anthropic'
     }
+    @description('Required for Anthropic models: customer attestation forwarded to Anthropic on every request. See https://learn.microsoft.com/azure/developer/ai/how-to/deploy-claude-foundry')
+    modelProviderData: {
+      organizationName: string
+      countryCode: string
+      industry: string
+    }?
+    @description('Version upgrade behavior, e.g. "OnceNewDefaultVersionAvailable" (Anthropic default) or "NoAutoUpgrade".')
+    versionUpgradeOption: string?
+    @description('Responsible AI content-safety policy name (defaults to Microsoft.DefaultV2 on Foundry).')
+    raiPolicyName: string?
   }
   sku: {
     name: 'Standard' | 'GlobalStandard'
@@ -118,7 +128,7 @@ resource account 'Microsoft.CognitiveServices/accounts@2025-12-01' = if (!useExi
 }
 
 @batchSize(1)
-resource deployment 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = [
+resource deployment 'Microsoft.CognitiveServices/accounts/deployments@2025-10-01-preview' = [
   for deployment in deployments: if (!useExistingService) {
     parent: account
     name: deployment.name

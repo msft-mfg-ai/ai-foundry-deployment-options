@@ -31,8 +31,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 _PROJECT_ENDPOINT = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-_BYOM_MODEL = os.environ["BYOM_MODEL"]                                    # "<conn>/<model>"
-_BYOM_MODEL_ANTHROPIC = os.environ.get("BYOM_MODEL_ANTHROPIC") or None    # optional
+_BYOM_MODEL = os.environ["BYOM_MODEL"]                                    # "<static-conn>/<model>"
+_BYOM_MODEL_DYNAMIC = os.environ.get("BYOM_MODEL_DYNAMIC") or None        # "<dynamic-conn>/<model>", optional
+_BYOM_MODEL_ANTHROPIC = os.environ.get("BYOM_MODEL_ANTHROPIC") or None    # "<anthropic-conn>/<model>", optional
 
 _project = AIProjectClient(endpoint=_PROJECT_ENDPOINT, credential=DefaultAzureCredential())
 _aoai = _project.get_openai_client()
@@ -71,6 +72,8 @@ async def handle_invoke(request: Request) -> JSONResponse:
     prompt = payload.get("message") or payload.get("prompt") or "Reply with the single word: ok."
 
     tests = [_probe("responses-openai-static", _BYOM_MODEL, prompt)]
+    if _BYOM_MODEL_DYNAMIC:
+        tests.append(_probe("responses-openai-dynamic", _BYOM_MODEL_DYNAMIC, prompt))
     if _BYOM_MODEL_ANTHROPIC:
         tests.append(_probe("responses-anthropic-static", _BYOM_MODEL_ANTHROPIC, prompt))
 

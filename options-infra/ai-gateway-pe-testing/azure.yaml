@@ -21,6 +21,8 @@ services:
         environmentVariables:
             - name: BYOM_MODEL
               value: ${AI_GATEWAY_CONNECTION_STATIC}/${CHAT_MODEL}
+            - name: BYOM_MODEL_DYNAMIC
+              value: ${AI_GATEWAY_CONNECTION_DYNAMIC}/${CHAT_MODEL}
             - name: BYOM_MODEL_ANTHROPIC
               value: ${AI_GATEWAY_CONNECTION_ANTHROPIC}/${ANTHROPIC_MODEL}
         kind: hosted
