@@ -1,0 +1,115 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+requiredVersions:
+    extensions:
+        azure.ai.agents: '>=1.0.0-beta.4'
+name: foundry-perf-testing
+services:
+    mcp-server:
+        project: services/mcp-server
+        host: containerapp
+        language: python
+        docker:
+            path: Dockerfile
+    support-agent-custom:
+        project: services/support-agent-custom
+        host: containerapp
+        language: dotnet
+        docker:
+            path: Dockerfile
+            context: ..
+    support-agent-hosted:
+        project: services/support-agent-hosted
+        host: azure.ai.agent
+        docker:
+            path: Dockerfile
+            context: ..
+        container:
+            resources:
+                cpu: "1.0"
+                memory: 2Gi
+        description: |
+            Customer-support agent (C# / Microsoft.Agents.AI) running inside Foundry.
+            Uses AIProjectClient + AsAIAgent for the model, and connects to the
+            ACA-hosted FastMCP server for tools. Shares SupportAgentBuilder with
+            support-agent-custom so the only diff between hosted and custom is
+            the entrypoint (Foundry AgentHost vs ASP.NET Core POST /invoke).
+        displayName: Support Agent (Hosted)
+        environmentVariables:
+            - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+              value: ${CHAT_MODEL}
+            - name: MCP_SERVER_URL
+              value: ${MCP_SERVER_URL}
+        kind: hosted
+        metadata:
+            tags:
+                - perf-testing
+                - support-agent
+                - hosted
+                - AI Agent Hosting
+                - Agent Framework
+                - MCP
+        name: support-agent-hosted
+        protocols:
+            - protocol: responses
+              version: 2.0.0
+infra:
+    provider: bicep
+    path: .
+    module: main
+hooks:
+    postprovision:
+        windows:
+            shell: pwsh
+            run: |
+                Write-Host "── Perf-testing infra ready ──"
+                Write-Host "PROJECT_ENDPOINT=$env:PROJECT_ENDPOINT"
+                Write-Host "CHAT_MODEL=$env:CHAT_MODEL"
+                Write-Host "MCP_SERVER_URL=$env:MCP_SERVER_URL"
+                Write-Host "SERVICE_SUPPORT_AGENT_CUSTOM_ENDPOINT=$env:SERVICE_SUPPORT_AGENT_CUSTOM_ENDPOINT"
+                Write-Host ""
+                Write-Host "Next: run 'azd deploy' to push the three service containers."
+                Write-Host "The prompt agent is created automatically by the postdeploy hook."
+                Write-Host "Then run the perf harness: perf/run.sh"
+        posix:
+            shell: sh
+            run: |
+                set -eu
+                echo "── Perf-testing infra ready ──"
+                echo "PROJECT_ENDPOINT=${PROJECT_ENDPOINT}"
+                echo "CHAT_MODEL=${CHAT_MODEL}"
+                echo "MCP_SERVER_URL=${MCP_SERVER_URL}"
+                echo "SERVICE_SUPPORT_AGENT_CUSTOM_ENDPOINT=${SERVICE_SUPPORT_AGENT_CUSTOM_ENDPOINT}"
+                echo ""
+                echo "Next: run 'azd deploy' to push the three service containers."
+                echo "The prompt agent is created automatically by the postdeploy hook."
+                echo "Then run the perf harness: perf/run.sh"
+    postdeploy:
+        # Prompt-agent (declarative, no code) is created against the Foundry
+        # data-plane REST API after every deploy so its instructions + MCP tool
+        # binding stay in sync with the hosted/custom C# code. Idempotent —
+        # the script DELETEs the prompt agent first before POSTing.
+        windows:
+            shell: pwsh
+            run: |
+                Write-Host "── Seeding prompt agent ──"
+                bash ./scripts/seed-prompt-agent.sh
+        posix:
+            shell: sh
+            run: |
+                set -eu
+                echo "── Seeding prompt agent ──"
+                sh ./scripts/seed-prompt-agent.sh
+    preprovision:
+        windows:
+            shell: pwsh
+            run: |
+                $ErrorActionPreference = "Stop"
+                if (-not $env:CHAT_MODEL) { azd env set CHAT_MODEL "gpt-5-mini" }
+        posix:
+            shell: sh
+            run: |
+                set -eu
+                if [ -z "${CHAT_MODEL:-}" ]; then
+                  azd env set CHAT_MODEL "gpt-5-mini"
+                fi
