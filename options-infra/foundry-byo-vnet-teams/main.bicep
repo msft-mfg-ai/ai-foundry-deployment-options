@@ -414,7 +414,7 @@ module teamsProxy '../modules/aca/container-app.bicep' = if (deployBots) {
       ]
     }
     ingressTargetPort: 8080
-    existingImage: 'ghcr.io/karpikpl/foundry-teams-bot-service-proxy:0.12.2'
+    existingImage: 'ghcr.io/karpikpl/foundry-teams-bot-service-proxy:0.12.3'
     userAssignedManagedIdentityClientId: teamsProxyIdentity.outputs.MANAGED_IDENTITY_CLIENT_ID
     userAssignedManagedIdentityResourceId: teamsProxyIdentity.outputs.MANAGED_IDENTITY_RESOURCE_ID
     ingressExternal: true
