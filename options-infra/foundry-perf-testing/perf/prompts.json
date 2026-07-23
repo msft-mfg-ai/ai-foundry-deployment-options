@@ -1,0 +1,12 @@
+[
+  "Hi, I'd like to open a case: my dashboard isn't loading any data since this morning.",
+  "Please open a case for me — outbound emails from the app are getting rejected as spam.",
+  "New issue: 2FA codes are arriving 10+ minutes late for our whole team.",
+  "Open a case: PDF export is producing blank pages for our monthly report.",
+  "Can you file a case? Our SSO integration keeps logging users out every 15 minutes.",
+  "Case CS-DEADBEEF — could you check the status and let me know where we are?",
+  "Please close case CS-CAFEBABE. The workaround the engineer suggested resolved it.",
+  "Open a new case for a billing question: we were charged twice for June's invoice.",
+  "Hi, I need to open a case — the API is returning 502s roughly 20% of the time.",
+  "Please fetch case CS-12345678 and summarise the last note."
+]

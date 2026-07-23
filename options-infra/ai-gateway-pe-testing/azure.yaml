@@ -1,0 +1,153 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+requiredVersions:
+    extensions:
+        azure.ai.agents: '>=1.0.0-beta.4'
+name: foundry-byom-testing
+services:
+    byom-canary:
+        project: services/hosted-agent
+        host: azure.ai.agent
+        language: python
+        codeConfiguration:
+            entryPoint: main.py
+            runtime: python_3_13
+        container:
+            resources:
+                cpu: "0.5"
+                memory: 1Gi
+        description: |
+            BYOM canary hosted agent. Runs a small Responses probe matrix against the APIM AI Gateway ("{connection}/{model}" convention) from inside a Foundry-hosted container.
+        environmentVariables:
+            - name: BYOM_MODEL
+              value: ${AI_GATEWAY_CONNECTION_STATIC}/${CHAT_MODEL}
+            - name: BYOM_MODEL_DYNAMIC
+              value: ${AI_GATEWAY_CONNECTION_DYNAMIC}/${CHAT_MODEL}
+            - name: BYOM_MODEL_ANTHROPIC
+              value: ${AI_GATEWAY_CONNECTION_ANTHROPIC}/${ANTHROPIC_MODEL}
+        kind: hosted
+        metadata:
+            tags:
+                - byom
+                - ai-gateway
+                - canary
+        name: byom-canary
+        protocols:
+            - protocol: invocations
+              version: 2.0.0
+infra:
+    provider: bicep
+    path: .
+    module: main
+hooks:
+    postprovision:
+        windows:
+            shell: pwsh
+            run: |
+                $ErrorActionPreference = "Stop"
+                $MY_OID = az ad signed-in-user show --query id -o tsv
+                $SEARCH_ID = az search service show --name $env:AI_SEARCH_SERVICE_NAME --resource-group $env:AZURE_RESOURCE_GROUP --query id -o tsv
+
+                Write-Host "── Setting AI Search firewall to allow only MY_IP=$env:MY_IP + granting Data Contributor to $MY_OID ──"
+                az search service update --name $env:AI_SEARCH_SERVICE_NAME --resource-group $env:AZURE_RESOURCE_GROUP --public-access enabled --ip-rules $env:MY_IP --output none
+                az role assignment create --role "Search Service Contributor" --assignee-object-id $MY_OID --assignee-principal-type User --scope $SEARCH_ID --output none 2>$null
+                az role assignment create --role "Search Index Data Contributor" --assignee-object-id $MY_OID --assignee-principal-type User --scope $SEARCH_ID --output none 2>$null
+                Write-Host "  waiting 30s for RBAC to propagate…"
+                Start-Sleep -Seconds 30
+                for ($i = 1; $i -le 30; $i++) {
+                  try {
+                    $r = Invoke-WebRequest -Uri "$($env:AI_SEARCH_ENDPOINT)/indexes?api-version=2024-07-01" -Method Get -UseBasicParsing -ErrorAction Stop
+                    if ($r.StatusCode -in 200, 401, 403) { break }
+                  } catch {
+                    if ($_.Exception.Response.StatusCode.value__ -in 200, 401, 403) { break }
+                    Write-Host "  waiting for search API… ($i/30)"
+                    Start-Sleep -Seconds 5
+                  }
+                }
+                Push-Location scripts
+                uv sync
+                uv run python create_index.py --endpoint $env:AI_SEARCH_ENDPOINT --index $env:AZURE_AI_SEARCH_INDEX_NAME
+                Pop-Location
+                # AI Search firewall is intentionally LEFT OPEN to MY_IP (not closed).
+                # Note: the ByomCanaryAgent hosted agent is built + registered by 'azd deploy'
+                # via the azure.ai.agents extension (see services: block above).
+        posix:
+            shell: sh
+            run: |
+                set -eu
+                MY_OID=$(az ad signed-in-user show --query id -o tsv)
+                SEARCH_ID=$(az search service show --name "${AI_SEARCH_SERVICE_NAME}" --resource-group "${AZURE_RESOURCE_GROUP}" --query id -o tsv)
+
+                echo "── Setting AI Search firewall to allow only MY_IP=${MY_IP} + granting Data Contributor to ${MY_OID} ──"
+                az search service update \
+                  --name "${AI_SEARCH_SERVICE_NAME}" \
+                  --resource-group "${AZURE_RESOURCE_GROUP}" \
+                  --public-access enabled \
+                  --ip-rules "${MY_IP}" \
+                  --output none
+                az role assignment create --role "Search Service Contributor" --assignee-object-id "${MY_OID}" --assignee-principal-type User --scope "${SEARCH_ID}" --output none 2>/dev/null || true
+                az role assignment create --role "Search Index Data Contributor" --assignee-object-id "${MY_OID}" --assignee-principal-type User --scope "${SEARCH_ID}" --output none 2>/dev/null || true
+                echo "  waiting 30s for RBAC to propagate…"
+                sleep 30
+                # Wait for API to become reachable.
+                for i in $(seq 1 30); do
+                  code=$(curl -s -o /dev/null -w '%{http_code}' "${AI_SEARCH_ENDPOINT}/indexes?api-version=2024-07-01" || true)
+                  if [ "$code" = "200" ] || [ "$code" = "401" ] || [ "$code" = "403" ]; then break; fi
+                  echo "  waiting for search API… ($i/30)"
+                  sleep 5
+                done
+                cd scripts
+                uv sync
+                uv run python create_index.py --endpoint "${AI_SEARCH_ENDPOINT}" --index "${AZURE_AI_SEARCH_INDEX_NAME}"
+                cd -
+                # NOTE: AI Search firewall is intentionally LEFT OPEN to MY_IP so that
+                # subsequent index CRUD (portal, azd re-runs, tests) works without a
+                # firewall dance. All other IPs are still denied.
+
+                echo "── Done. Paste these into the byom GH Environment: ──"
+                echo "PROJECT_ENDPOINT=${PROJECT_ENDPOINT}"
+                echo "AI_GATEWAY_CONNECTION_STATIC=${AI_GATEWAY_CONNECTION_STATIC}"
+                echo "AI_GATEWAY_CONNECTION_DYNAMIC=${AI_GATEWAY_CONNECTION_DYNAMIC}"
+                echo "BING_CONNECTION_ID=${BING_CONNECTION_ID}"
+                echo "AZURE_AI_SEARCH_CONNECTION_ID=${AZURE_AI_SEARCH_CONNECTION_ID}"
+                echo "AZURE_AI_SEARCH_INDEX_NAME=${AZURE_AI_SEARCH_INDEX_NAME}"
+                echo "FOUNDRY_NAME=${FOUNDRY_NAME}"
+                echo "RESOURCE_GROUP=${RESOURCE_GROUP}"
+                echo "AZURE_CONTAINER_REGISTRY_NAME=${AZURE_CONTAINER_REGISTRY_NAME}"
+                echo "AZURE_CONTAINER_REGISTRY_ENDPOINT=${AZURE_CONTAINER_REGISTRY_ENDPOINT}"
+                echo ""
+                echo "── Note: the ByomCanaryAgent hosted agent is built + registered by 'azd deploy'."
+                echo "   Its Foundry agent name is exported as HOSTED_AGENT_NAME_CANARY once deploy completes."
+    preprovision:
+        windows:
+            shell: pwsh
+            run: |
+                & '../scripts/preprovision-list-foundry-models.ps1'
+                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                if (-not $env:MY_IP) {
+                  $ip = (Invoke-RestMethod https://api.ipify.org).Trim()
+                  Write-Host "Auto-detected MY_IP=$ip (set MY_IP explicitly to override)"
+                  azd env set MY_IP $ip
+                } else {
+                  Write-Host "Using MY_IP=$env:MY_IP from azd env"
+                }
+                # Seed model-name env vars used by services.byom-canary.environmentVariables
+                # in azure.yaml. Only set if unset so operators can override.
+                if (-not $env:CHAT_MODEL)      { azd env set CHAT_MODEL      "gpt-4o-mini" }
+                if (-not $env:ANTHROPIC_MODEL) { azd env set ANTHROPIC_MODEL "claude-haiku-4-5" }
+        posix:
+            shell: sh
+            run: |
+                set -eu
+                sh ../scripts/preprovision-list-foundry-models.sh
+                if [ -z "${MY_IP:-}" ]; then
+                  ip=$(curl -sf https://api.ipify.org)
+                  echo "Auto-detected MY_IP=${ip} (set MY_IP explicitly to override)"
+                  azd env set MY_IP "${ip}"
+                else
+                  echo "Using MY_IP=${MY_IP} from azd env"
+                fi
+                # Seed model-name env vars used by services.byom-canary.environmentVariables
+                # in azure.yaml. Only set if unset so operators can override.
+                [ -n "${CHAT_MODEL:-}" ]      || azd env set CHAT_MODEL      "gpt-4o-mini"
+                [ -n "${ANTHROPIC_MODEL:-}" ] || azd env set ANTHROPIC_MODEL "claude-haiku-4-5"
