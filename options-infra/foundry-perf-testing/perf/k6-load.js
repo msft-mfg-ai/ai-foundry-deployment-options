@@ -1,43 +1,64 @@
-// k6 load-test harness for the three-way agent perf comparison.
+// k6 load-test harness for the perf agent comparison.
 //
-// Run:
-//   VARIANT=custom  k6 run k6-load.js
-//   VARIANT=hosted  k6 run k6-load.js
-//   VARIANT=prompt  k6 run k6-load.js
+// Variants (VARIANT env):
+//   custom-mock         | custom-real          — ASP.NET Core /invoke, `mode` field picks agent
+//   hosted-mock         | hosted-real          — Foundry hosted agents (project-connection path)
+//   hosted-bypass-mock  | hosted-bypass-real   — Foundry hosted agents (BYPASS: APIM direct via Instance MI)
+//   prompt-mock         | prompt-real          — Foundry prompt agents  (2 seeded)
 //
-// Env vars (all read from `azd env get-values` — see run.sh):
-//   VARIANT                  custom | hosted | prompt
-//   CUSTOM_AGENT_URL         https://support-agent-custom.<env-domain>
-//   PROJECT_ENDPOINT         https://<foundry>.services.ai.azure.com/api/projects/<project>
-//   HOSTED_AGENT_NAME        support-agent-hosted        (from azure.yaml)
-//   PROMPT_AGENT_NAME        support-agent-prompt        (from seed-prompt-agent.sh)
-//   AAD_TOKEN                Bearer token for the hosted+prompt variants (aud=https://ai.azure.com)
+// -mock lanes: no MCP tools, APIM /inference-mock canned reply → measures
+//   framework + Foundry-proxy overhead in isolation from model latency.
+// -real lanes: MCP case-management tools attached, APIM /inference → real
+//   gpt-5-mini → full customer-support workload.
 //
-// Emits JSON summary to `results/<variant>-<timestamp>.json` (via handleSummary).
+// Env vars (populated by run.sh from `azd env get-values`):
+//   VARIANT                    one of the above
+//   CUSTOM_AGENT_URL           https://support-agent-custom.<env-domain>
+//   PROJECT_ENDPOINT           https://<foundry>.services.ai.azure.com/api/projects/<project>
+//   HOSTED_AGENT_MOCK          default: support-agent-hosted-mock
+//   HOSTED_AGENT_REAL          default: support-agent-hosted-real
+//   HOSTED_BYPASS_MOCK         default: support-agent-hosted-bypass-mock
+//   HOSTED_BYPASS_REAL         default: support-agent-hosted-bypass-real
+//   PROMPT_AGENT_MOCK          default: support-agent-prompt-mock
+//   PROMPT_AGENT_REAL          default: support-agent-prompt-real
+//   AAD_TOKEN                  bearer for hosted+prompt variants (aud=https://ai.azure.com)
 
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { SharedArray } from 'k6/data';
 import { Counter, Trend } from 'k6/metrics';
 
-const VARIANT = __ENV.VARIANT || 'custom';
+const VARIANT = __ENV.VARIANT || 'custom-mock';
 const PROMPTS = JSON.parse(open('./prompts.json'));
 
+// Variant format: <family>-<lane>  OR  hosted-bypass-<lane>.
+// Family: custom | hosted | hosted-bypass | prompt.  Lane: mock | real.
+let FAMILY, LANE;
+{
+  const validFamilies = ['custom', 'hosted', 'hosted-bypass', 'prompt'];
+  const idx = VARIANT.lastIndexOf('-');
+  if (idx < 0) throw new Error(`VARIANT missing '-<lane>' suffix: ${VARIANT}`);
+  FAMILY = VARIANT.slice(0, idx);
+  LANE = VARIANT.slice(idx + 1);
+  if (!validFamilies.includes(FAMILY) || !['mock', 'real'].includes(LANE)) {
+    throw new Error(`VARIANT must be one of ${validFamilies.map(f => `${f}-mock/${f}-real`).join(', ')}. Got: ${VARIANT}`);
+  }
+}
+
 // Hosted agents run in per-session sandbox VMs, capped at 50 concurrent per
-// region/sub. For this baseline we pin ALL VUs to a SINGLE session, so we
-// measure pure model+APIM+overhead latency without any sandbox spin-up in the
-// hot path. Multi-session behaviour is a separate scenario we'll add later.
-//   learn.microsoft.com/en-us/azure/foundry/agents/how-to/manage-hosted-sessions
+// region/sub. We pin ALL VUs of this run to a SINGLE session, per variant.
 let HOSTED_SESSION_ID = null;
-if (VARIANT === 'hosted') {
-  const arr = new SharedArray('hosted_sessions', () => {
+if (FAMILY === 'hosted' || FAMILY === 'hosted-bypass') {
+  const key = `${FAMILY.replace('-', '_')}_${LANE}`;
+  const sessFile = `./sessions-${FAMILY}-${LANE}.json`;
+  const arr = new SharedArray(`hosted_sessions_${key}`, () => {
     try {
-      const a = JSON.parse(open('./sessions.json'));
+      const a = JSON.parse(open(sessFile));
       if (!Array.isArray(a) || a.length === 0) throw new Error('empty');
       return a;
     } catch (e) {
       throw new Error(
-        `VARIANT=hosted requires perf/sessions.json — run perf/provision-sessions.sh first (${e.message})`,
+        `VARIANT=${VARIANT} requires ${sessFile} — run perf/provision-sessions.sh first (${e.message})`,
       );
     }
   });
@@ -46,14 +67,36 @@ if (VARIANT === 'hosted') {
 
 const CUSTOM_AGENT_URL   = __ENV.CUSTOM_AGENT_URL;
 const PROJECT_ENDPOINT   = __ENV.PROJECT_ENDPOINT;
-const HOSTED_AGENT_NAME  = __ENV.HOSTED_AGENT_NAME || 'support-agent-hosted';
-const PROMPT_AGENT_NAME  = __ENV.PROMPT_AGENT_NAME || 'support-agent-prompt';
+const HOSTED_AGENT_MOCK  = __ENV.HOSTED_AGENT_MOCK  || 'support-agent-hosted-mock';
+const HOSTED_AGENT_REAL  = __ENV.HOSTED_AGENT_REAL  || 'support-agent-hosted-real';
+const HOSTED_BYPASS_MOCK = __ENV.HOSTED_BYPASS_MOCK || 'support-agent-hosted-bypass-mock';
+const HOSTED_BYPASS_REAL = __ENV.HOSTED_BYPASS_REAL || 'support-agent-hosted-bypass-real';
+const PROMPT_AGENT_MOCK  = __ENV.PROMPT_AGENT_MOCK  || 'support-agent-prompt-mock';
+const PROMPT_AGENT_REAL  = __ENV.PROMPT_AGENT_REAL  || 'support-agent-prompt-real';
 const AAD_TOKEN          = __ENV.AAD_TOKEN || '';
 
-// Per-variant trends so the summary can be split cleanly.
-const agentLatency = new Trend(`agent_latency_${VARIANT}`, true);
-const toolCallCount = new Counter(`tool_calls_${VARIANT}`);
-const agentErrors = new Counter(`agent_errors_${VARIANT}`);
+// Metric key: k6 doesn't allow '-' in metric names for threshold selectors.
+const METRIC_KEY = `${FAMILY.replace(/-/g, '_')}_${LANE}`;
+const agentLatency = new Trend(`agent_latency_${METRIC_KEY}`, true);
+const toolCallCount = new Counter(`tool_calls_${METRIC_KEY}`);
+const agentErrors = new Counter(`agent_errors_${METRIC_KEY}`);
+
+const PROFILE = (__ENV.K6_PROFILE || 'full').toLowerCase();
+const STAGES = PROFILE === 'short'
+  ? [
+      { duration: '20s', target: 5 },
+      { duration: '40s', target: 20 },
+      { duration: '40s', target: 50 },
+      { duration: '20s', target: 0 },
+    ]
+  : [
+      { duration: '30s', target: 1 },
+      { duration: '2m',  target: 5 },
+      { duration: '2m',  target: 20 },
+      { duration: '2m',  target: 50 },
+      { duration: '2m',  target: 100 },
+      { duration: '1m',  target: 0 },
+    ];
 
 export const options = {
   discardResponseBodies: false,
@@ -61,23 +104,16 @@ export const options = {
     ramp: {
       executor: 'ramping-vus',
       startVUs: 1,
-      stages: [
-        { duration: '30s', target: 1 },    // warm-up
-        { duration: '2m',  target: 5 },
-        { duration: '2m',  target: 20 },
-        { duration: '2m',  target: 50 },
-        { duration: '2m',  target: 100 },
-        { duration: '1m',  target: 0 },
-      ],
+      stages: STAGES,
       gracefulRampDown: '30s',
     },
   },
   thresholds: {
-    [`agent_latency_${VARIANT}`]: [
+    [`agent_latency_${METRIC_KEY}`]: [
       'p(50) < 10000',
       'p(95) < 30000',
     ],
-    [`agent_errors_${VARIANT}`]: ['count < 100'],
+    [`agent_errors_${METRIC_KEY}`]: ['count < 100'],
   },
 };
 
@@ -86,27 +122,29 @@ function pickPrompt() {
 }
 
 function endpointForVariant() {
-  switch (VARIANT) {
+  let agentName;
+  if (FAMILY === 'hosted') {
+    agentName = LANE === 'mock' ? HOSTED_AGENT_MOCK : HOSTED_AGENT_REAL;
+  } else if (FAMILY === 'hosted-bypass') {
+    agentName = LANE === 'mock' ? HOSTED_BYPASS_MOCK : HOSTED_BYPASS_REAL;
+  } else if (FAMILY === 'prompt') {
+    agentName = LANE === 'mock' ? PROMPT_AGENT_MOCK : PROMPT_AGENT_REAL;
+  }
+
+  switch (FAMILY) {
     case 'custom':
-      if (!CUSTOM_AGENT_URL) throw new Error('CUSTOM_AGENT_URL is required for VARIANT=custom');
+      if (!CUSTOM_AGENT_URL) throw new Error(`CUSTOM_AGENT_URL is required for VARIANT=${VARIANT}`);
       return { url: `${CUSTOM_AGENT_URL}/invoke`, needsAad: false };
     case 'hosted':
-      if (!PROJECT_ENDPOINT || !AAD_TOKEN) throw new Error('PROJECT_ENDPOINT + AAD_TOKEN required for VARIANT=hosted');
-      return {
-        // Responses protocol endpoint per manage-hosted-sessions doc.
-        url: `${PROJECT_ENDPOINT}/agents/${HOSTED_AGENT_NAME}/endpoint/protocols/openai/responses?api-version=v1`,
-        needsAad: true,
-      };
+    case 'hosted-bypass':
     case 'prompt':
-      if (!PROJECT_ENDPOINT || !AAD_TOKEN) throw new Error('PROJECT_ENDPOINT + AAD_TOKEN required for VARIANT=prompt');
+      if (!PROJECT_ENDPOINT || !AAD_TOKEN) throw new Error(`PROJECT_ENDPOINT + AAD_TOKEN required for VARIANT=${VARIANT}`);
       return {
-        // Same Responses protocol as hosted, for apples-to-apples comparison
-        // on wire shape. Prompt agents don't use sandbox sessions.
-        url: `${PROJECT_ENDPOINT}/agents/${PROMPT_AGENT_NAME}/endpoint/protocols/openai/responses?api-version=v1`,
+        url: `${PROJECT_ENDPOINT}/agents/${agentName}/endpoint/protocols/openai/responses?api-version=v1`,
         needsAad: true,
       };
     default:
-      throw new Error(`Unknown VARIANT=${VARIANT} (expected custom|hosted|prompt)`);
+      throw new Error(`Unknown VARIANT family=${FAMILY}`);
   }
 }
 
@@ -115,19 +153,15 @@ const { url, needsAad } = endpointForVariant();
 export default function () {
   const prompt = pickPrompt();
 
-  const body = VARIANT === 'custom'
-    ? JSON.stringify({ input: prompt })
-    : VARIANT === 'hosted'
-      // All VUs share ONE sandbox session for this baseline scenario. We
-      // intentionally omit previous_response_id so each call is stateless
-      // from the model's perspective — only the sandbox VM is reused.
+  const body = FAMILY === 'custom'
+    ? JSON.stringify({ input: prompt, mode: LANE })
+    : (FAMILY === 'hosted' || FAMILY === 'hosted-bypass')
       ? JSON.stringify({ input: prompt, stream: false, agent_session_id: HOSTED_SESSION_ID })
-      // Prompt agents use the same Responses shape, minus the sandbox session.
       : JSON.stringify({ input: prompt, stream: false });
 
   const headers = { 'Content-Type': 'application/json' };
   if (needsAad) headers['Authorization'] = `Bearer ${AAD_TOKEN}`;
-  if (VARIANT === 'hosted') headers['Foundry-Features'] = 'HostedAgents=V1Preview';
+  if (FAMILY === 'hosted' || FAMILY === 'hosted-bypass') headers['Foundry-Features'] = 'HostedAgents=V1Preview';
 
   const start = Date.now();
   const resp = http.post(url, body, { headers, timeout: '120s' });
@@ -138,18 +172,16 @@ export default function () {
   const ok = check(resp, {
     'status 2xx': (r) => r.status >= 200 && r.status < 300,
   });
-  // Parse tool-call count across the three response shapes.
+
   let toolCalls = 0;
   let replyText = '';
   try {
     const j = resp.json();
     if (j && j.tool_calls) toolCalls = j.tool_calls.length;
     else if (j && j.output) {
-      // Responses API — count both function-call and mcp_call items.
       toolCalls = (j.output || []).filter(
         (o) => o && (o.type === 'function_call' || o.type === 'mcp_call'),
       ).length;
-      // Extract final assistant message text if present.
       for (const o of j.output || []) {
         if (o && o.type === 'message') {
           for (const c of o.content || []) {
@@ -165,8 +197,6 @@ export default function () {
   } catch (_e) { /* non-JSON body — ignore */ }
   if (toolCalls) toolCallCount.add(toolCalls);
 
-  // Emit one JSONL line per iteration, prefixed with a marker so run.sh
-  // can grep it out of k6's mixed stdout into a clean .jsonl file.
   console.log('__ITER__' + JSON.stringify({
     v: VARIANT,
     vu: __VU,
@@ -196,12 +226,11 @@ export function handleSummary(data) {
   };
 }
 
-// Minimal ASCII summary so we don't pull in the k6 summary lib.
 function textSummary(data) {
   const m = data.metrics;
-  const lat = m[`agent_latency_${VARIANT}`] && m[`agent_latency_${VARIANT}`].values;
-  const err = m[`agent_errors_${VARIANT}`] && m[`agent_errors_${VARIANT}`].values;
-  const tools = m[`tool_calls_${VARIANT}`] && m[`tool_calls_${VARIANT}`].values;
+  const lat = m[`agent_latency_${METRIC_KEY}`] && m[`agent_latency_${METRIC_KEY}`].values;
+  const err = m[`agent_errors_${METRIC_KEY}`] && m[`agent_errors_${METRIC_KEY}`].values;
+  const tools = m[`tool_calls_${METRIC_KEY}`] && m[`tool_calls_${METRIC_KEY}`].values;
   const lines = [
     `\n=== VARIANT=${VARIANT} ===`,
     lat ? `  latency p50=${lat['p(50)']?.toFixed(0)}ms  p95=${lat['p(95)']?.toFixed(0)}ms  p99=${lat['p(99)']?.toFixed(0)}ms  max=${lat.max?.toFixed(0)}ms  count=${lat.count}` : '  latency: no data',

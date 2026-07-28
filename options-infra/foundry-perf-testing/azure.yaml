@@ -18,7 +18,7 @@ services:
         docker:
             path: Dockerfile
             context: ..
-    support-agent-hosted:
+    support-agent-hosted-bypass-mock:
         project: services/support-agent-hosted
         host: azure.ai.agent
         docker:
@@ -29,15 +29,62 @@ services:
                 cpu: "1.0"
                 memory: 2Gi
         description: |
-            Customer-support agent (C# / Microsoft.Agents.AI) running inside Foundry.
-            Uses AIProjectClient + AsAIAgent for the model, and connects to the
-            ACA-hosted FastMCP server for tools. Shares SupportAgentBuilder with
-            support-agent-custom so the only diff between hosted and custom is
-            the entrypoint (Foundry AgentHost vs ASP.NET Core POST /invoke).
-        displayName: Support Agent (Hosted)
+            Hosted-agent BYPASS variant, mock lane. Same container as the
+            standard hosted agents, but USE_APIM_DIRECT=true routes the model
+            call via AzureOpenAIClient → APIM /inference-mock, bypassing the
+            Foundry project-connection / data-proxy hop. Uses the agent's
+            Instance MI for AAD auth to APIM (Cognitive Services OpenAI User
+            granted at Foundry account scope via grant-hosted-bypass-role.sh).
+            Purpose: isolate Foundry data-proxy overhead from AgentHost cost.
+        displayName: Support Agent (Hosted bypass, mock lane)
         environmentVariables:
             - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
               value: ${CHAT_MODEL}
+            - name: APIM_BASE_URL
+              value: ${APIM_BASE_URL}/inference-mock
+            - name: USE_APIM_DIRECT
+              value: "true"
+            - name: WITH_TOOLS
+              value: "false"
+        kind: hosted
+        metadata:
+            tags:
+                - perf-testing
+                - support-agent
+                - hosted
+                - bypass
+                - mock
+                - AI Agent Hosting
+                - Agent Framework
+        name: support-agent-hosted-bypass-mock
+        protocols:
+            - protocol: responses
+              version: 2.0.0
+    support-agent-hosted-bypass-real:
+        project: services/support-agent-hosted
+        host: azure.ai.agent
+        docker:
+            path: Dockerfile
+            context: ..
+        container:
+            resources:
+                cpu: "1.0"
+                memory: 2Gi
+        description: |
+            Hosted-agent BYPASS variant, real lane. USE_APIM_DIRECT=true
+            routes through AzureOpenAIClient → APIM /inference against real
+            gpt-5-mini, with MCP tools attached. Uses the agent's Instance
+            MI for AAD auth.
+        displayName: Support Agent (Hosted bypass, real lane)
+        environmentVariables:
+            - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+              value: ${CHAT_MODEL}
+            - name: APIM_BASE_URL
+              value: ${APIM_BASE_URL}/inference
+            - name: USE_APIM_DIRECT
+              value: "true"
+            - name: WITH_TOOLS
+              value: "true"
             - name: MCP_SERVER_URL
               value: ${MCP_SERVER_URL}
         kind: hosted
@@ -46,10 +93,84 @@ services:
                 - perf-testing
                 - support-agent
                 - hosted
+                - bypass
+                - real
                 - AI Agent Hosting
                 - Agent Framework
                 - MCP
-        name: support-agent-hosted
+        name: support-agent-hosted-bypass-real
+        protocols:
+            - protocol: responses
+              version: 2.0.0
+    support-agent-hosted-mock:
+        project: services/support-agent-hosted
+        host: azure.ai.agent
+        docker:
+            path: Dockerfile
+            context: ..
+        container:
+            resources:
+                cpu: "1.0"
+                memory: 2Gi
+        description: |
+            Customer-support agent (C# / Microsoft.Agents.AI) — MOCK perf lane.
+            No MCP tools attached (WITH_TOOLS=false). Routes to APIM
+            /inference-mock which returns a canned Chat Completions response.
+            Purpose: measure Foundry + agent-framework overhead in isolation
+            from model latency and tool-call round-trips.
+        displayName: Support Agent (Hosted, mock lane)
+        environmentVariables:
+            - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+              value: ${CHAT_MODEL_VIA_APIM_MOCK}
+            - name: WITH_TOOLS
+              value: "false"
+        kind: hosted
+        metadata:
+            tags:
+                - perf-testing
+                - support-agent
+                - hosted
+                - mock
+                - AI Agent Hosting
+                - Agent Framework
+        name: support-agent-hosted-mock
+        protocols:
+            - protocol: responses
+              version: 2.0.0
+    support-agent-hosted-real:
+        project: services/support-agent-hosted
+        host: azure.ai.agent
+        docker:
+            path: Dockerfile
+            context: ..
+        container:
+            resources:
+                cpu: "1.0"
+                memory: 2Gi
+        description: |
+            Customer-support agent (C# / Microsoft.Agents.AI) — REAL perf lane.
+            MCP case-management tools attached (WITH_TOOLS=true). Routes to
+            APIM /inference against real gpt-5-mini. Purpose: end-to-end
+            hosted-agent latency on the actual customer-support workload.
+        displayName: Support Agent (Hosted, real lane)
+        environmentVariables:
+            - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+              value: ${CHAT_MODEL_VIA_APIM}
+            - name: WITH_TOOLS
+              value: "true"
+            - name: MCP_SERVER_URL
+              value: ${MCP_SERVER_URL}
+        kind: hosted
+        metadata:
+            tags:
+                - perf-testing
+                - support-agent
+                - hosted
+                - real
+                - AI Agent Hosting
+                - Agent Framework
+                - MCP
+        name: support-agent-hosted-real
         protocols:
             - protocol: responses
               version: 2.0.0
@@ -58,6 +179,22 @@ infra:
     path: .
     module: main
 hooks:
+    postdeploy:
+        windows:
+            shell: pwsh
+            run: |
+                Write-Host "── Seeding prompt agent ──"
+                bash ./scripts/seed-prompt-agent.sh
+                Write-Host "── Granting Instance MI roles to hosted-bypass agents ──"
+                bash ./scripts/grant-hosted-bypass-role.sh
+        posix:
+            shell: sh
+            run: |
+                set -eu
+                echo "── Seeding prompt agent ──"
+                sh ./scripts/seed-prompt-agent.sh
+                echo "── Granting Instance MI roles to hosted-bypass agents ──"
+                sh ./scripts/grant-hosted-bypass-role.sh
     postprovision:
         windows:
             shell: pwsh
@@ -84,22 +221,6 @@ hooks:
                 echo "Next: run 'azd deploy' to push the three service containers."
                 echo "The prompt agent is created automatically by the postdeploy hook."
                 echo "Then run the perf harness: perf/run.sh"
-    postdeploy:
-        # Prompt-agent (declarative, no code) is created against the Foundry
-        # data-plane REST API after every deploy so its instructions + MCP tool
-        # binding stay in sync with the hosted/custom C# code. Idempotent —
-        # the script DELETEs the prompt agent first before POSTing.
-        windows:
-            shell: pwsh
-            run: |
-                Write-Host "── Seeding prompt agent ──"
-                bash ./scripts/seed-prompt-agent.sh
-        posix:
-            shell: sh
-            run: |
-                set -eu
-                echo "── Seeding prompt agent ──"
-                sh ./scripts/seed-prompt-agent.sh
     preprovision:
         windows:
             shell: pwsh

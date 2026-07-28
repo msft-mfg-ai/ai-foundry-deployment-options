@@ -126,8 +126,12 @@ async def root(_: Request) -> JSONResponse:
 
 if __name__ == "__main__":
     # Streamable HTTP transport, mounted at /mcp/ (FastMCP default).
+    # stateless_http=True: no per-client session tracking → no Mcp-Session-Id,
+    # no 404-session-expired errors when ACA scales/rotates replicas or when a
+    # cached client outlives its session. Every request is independent.
     mcp.run(
         transport="http",
         host="0.0.0.0",
         port=int(os.environ.get("PORT", "8000")),
+        stateless_http=True,
     )

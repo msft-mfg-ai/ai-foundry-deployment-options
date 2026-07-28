@@ -3,9 +3,17 @@
 // so we can measure model-call latency without Foundry's Responses/agents-
 // service overhead in the way.
 //
+// Two pre-built agents share the process:
+//   - "mock" → APIM_BASE_URL_MOCK, no MCP tools (canned APIM reply — measures
+//     framework overhead only).
+//   - "real" → APIM_BASE_URL_REAL, MCP tools attached (full customer-support
+//     path against real gpt-5-mini).
+//
 // Request shape (matches the hosted-agent Responses probe for fair comparison):
-//   POST /invoke   { "input": "<user message>" }
+//   POST /invoke   { "input": "<user message>", "mode": "mock" | "real" }
 //   -> 200         { "output_text": "...", "latency_ms": 1234 }
+//
+// If `mode` is omitted, defaults to "real" for backcompat with existing probes.
 
 using System;
 using System.Diagnostics;
@@ -16,14 +24,11 @@ using SupportAgent.Shared;
 
 var builder = WebApplication.CreateSlimBuilder(args);
 
-// OTel → App Insights (connection string injected by ACA env, see main.bicep).
 if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING")))
 {
     builder.Services.AddOpenTelemetry().UseAzureMonitor();
 }
 
-// Register the SlimBuilder JSON source generator context so /invoke can
-// (de)serialize InvokeRequest/InvokeResponse without reflection.
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.TypeInfoResolverChain.Insert(0, InvokeJsonContext.Default);
@@ -31,21 +36,41 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 var app = builder.Build();
 
-// Build the shared agent once, on startup. The IMcpClient + tools list are
-// held for the process lifetime — no per-request MCP handshake, no per-request
-// credential.
+// Read environment. The mock/real pair lets the SAME container serve both
+// perf lanes — a request param picks which pre-built agent handles the call.
 var accountEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_ACCOUNT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_ACCOUNT_ENDPOINT is not set.");
-var deployment = Environment.GetEnvironmentVariable("CHAT_MODEL_DEPLOYMENT")
-    ?? Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME")
-    ?? throw new InvalidOperationException("CHAT_MODEL_DEPLOYMENT (or AZURE_AI_MODEL_DEPLOYMENT_NAME) is not set.");
 var mcpServerUrl = Environment.GetEnvironmentVariable("MCP_SERVER_URL")
     ?? throw new InvalidOperationException("MCP_SERVER_URL is not set.");
 
-AIAgent agent = await SupportAgentBuilder.BuildCustomAsync(new SupportAgentConfig
+var apimBaseMock = Environment.GetEnvironmentVariable("APIM_BASE_URL_MOCK")
+    ?? Environment.GetEnvironmentVariable("APIM_BASE_URL")
+    ?? throw new InvalidOperationException("APIM_BASE_URL_MOCK is not set.");
+var apimBaseReal = Environment.GetEnvironmentVariable("APIM_BASE_URL_REAL")
+    ?? throw new InvalidOperationException("APIM_BASE_URL_REAL is not set.");
+var chatModelMock = Environment.GetEnvironmentVariable("CHAT_MODEL_MOCK")
+    ?? Environment.GetEnvironmentVariable("CHAT_MODEL_DEPLOYMENT")
+    ?? throw new InvalidOperationException("CHAT_MODEL_MOCK is not set.");
+var chatModelReal = Environment.GetEnvironmentVariable("CHAT_MODEL_REAL")
+    ?? Environment.GetEnvironmentVariable("CHAT_MODEL_DEPLOYMENT")
+    ?? throw new InvalidOperationException("CHAT_MODEL_REAL is not set.");
+
+// Build both agents at startup. Mock skips MCP entirely (no client, no tools).
+// Real does the one-time MCP handshake so the request path is clean.
+AIAgent agentMock = await SupportAgentBuilder.BuildCustomAsync(new SupportAgentConfig
 {
     FoundryAccountEndpoint = accountEndpoint,
-    ChatModelDeployment = deployment,
+    ApimBaseUrl = apimBaseMock,
+    ChatModelDeployment = chatModelMock,
+    WithTools = false,
+});
+
+AIAgent agentReal = await SupportAgentBuilder.BuildCustomAsync(new SupportAgentConfig
+{
+    FoundryAccountEndpoint = accountEndpoint,
+    ApimBaseUrl = apimBaseReal,
+    ChatModelDeployment = chatModelReal,
+    WithTools = true,
     McpServerUrl = mcpServerUrl,
 });
 
@@ -55,6 +80,14 @@ app.MapPost("/invoke", async (InvokeRequest req, CancellationToken ct) =>
 {
     var input = req?.Input ?? req?.Prompt ?? req?.Message
         ?? "Reply with the single word: ok.";
+    var mode = (req?.Mode ?? "real").ToLowerInvariant();
+    var agent = mode switch
+    {
+        "mock" => agentMock,
+        "real" => agentReal,
+        _ => throw new ArgumentException($"Unknown mode '{mode}' (expected 'mock' or 'real').")
+    };
+
     var sw = Stopwatch.StartNew();
     try
     {
@@ -85,7 +118,8 @@ app.Run();
 public sealed record InvokeRequest(
     [property: JsonPropertyName("input")] string? Input,
     [property: JsonPropertyName("prompt")] string? Prompt,
-    [property: JsonPropertyName("message")] string? Message);
+    [property: JsonPropertyName("message")] string? Message,
+    [property: JsonPropertyName("mode")] string? Mode);
 
 public sealed record InvokeResponse(
     [property: JsonPropertyName("output_text")] string OutputText,

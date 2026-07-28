@@ -25,11 +25,16 @@ namespace SupportAgent.Shared;
 public sealed class SupportAgentConfig
 {
     public required string ChatModelDeployment { get; init; }
-    public required string McpServerUrl { get; init; }
+    /// <summary>When false, no MCP tools are attached — used for the "-mock" perf lane where we measure framework overhead against a canned APIM response.</summary>
+    public bool WithTools { get; init; } = true;
+    /// <summary>Only required when <see cref="WithTools"/> is true.</summary>
+    public string? McpServerUrl { get; init; }
     /// <summary>Foundry PROJECT endpoint (used by the Hosted variant, which routes through Foundry Responses).</summary>
     public string? FoundryProjectEndpoint { get; init; }
     /// <summary>Foundry ACCOUNT endpoint (used by the Custom variant, which bypasses Foundry Responses).</summary>
     public string? FoundryAccountEndpoint { get; init; }
+    /// <summary>Custom-variant only: full APIM base URL (e.g. https://apim.../inference or /inference-mock). If null, falls back to <see cref="FoundryAccountEndpoint"/>.</summary>
+    public string? ApimBaseUrl { get; init; }
 }
 
 public static class SupportAgentBuilder
@@ -64,7 +69,9 @@ public static class SupportAgentBuilder
         if (string.IsNullOrWhiteSpace(cfg.FoundryProjectEndpoint))
             throw new InvalidOperationException("FoundryProjectEndpoint is required for the hosted variant.");
 
-        var tools = await LoadMcpToolsAsync(cfg.McpServerUrl, ct).ConfigureAwait(false);
+        var tools = cfg.WithTools
+            ? await LoadMcpToolsAsync(cfg.McpServerUrl!, ct).ConfigureAwait(false)
+            : Array.Empty<AITool>();
 
         var project = new AIProjectClient(new Uri(cfg.FoundryProjectEndpoint), SharedCredential);
         return project.AsAIAgent(
@@ -83,16 +90,27 @@ public static class SupportAgentBuilder
     /// </summary>
     public static async Task<AIAgent> BuildCustomAsync(SupportAgentConfig cfg, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(cfg.FoundryAccountEndpoint))
-            throw new InvalidOperationException("FoundryAccountEndpoint is required for the custom variant.");
+        var tools = cfg.WithTools
+            ? await LoadMcpToolsAsync(cfg.McpServerUrl!, ct).ConfigureAwait(false)
+            : Array.Empty<AITool>();
 
-        var tools = await LoadMcpToolsAsync(cfg.McpServerUrl, ct).ConfigureAwait(false);
+        // Prefer explicit ApimBaseUrl (perf-run-4+ BYOM path). Fall back to
+        // APIM_BASE_URL env for backcompat, then to Foundry ACCOUNT endpoint's
+        // `/openai/v1/` (perf-run-3 direct baseline).
+        var apimBase = cfg.ApimBaseUrl ?? Environment.GetEnvironmentVariable("APIM_BASE_URL");
+        AzureOpenAIClient openAi;
+        if (!string.IsNullOrWhiteSpace(apimBase))
+        {
+            openAi = new AzureOpenAIClient(new Uri(apimBase), SharedCredential);
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(cfg.FoundryAccountEndpoint))
+                throw new InvalidOperationException("FoundryAccountEndpoint is required when ApimBaseUrl/APIM_BASE_URL is not set.");
+            openAi = new AzureOpenAIClient(new Uri(cfg.FoundryAccountEndpoint), SharedCredential);
+        }
 
-        var openAi = new AzureOpenAIClient(new Uri(cfg.FoundryAccountEndpoint), SharedCredential);
         ChatClient chat = openAi.GetChatClient(cfg.ChatModelDeployment);
-        // Bounce via IChatClient — the direct `ChatClient.AsAIAgent` extension
-        // was added in a later Microsoft.Extensions.AI. This is functionally
-        // identical: a single wrapping layer, no per-request allocation.
         return chat.AsIChatClient().AsAIAgent(
             instructions: SystemPrompt,
             name: "support-agent",

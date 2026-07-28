@@ -17,6 +17,9 @@
 
 targetScope = 'resourceGroup'
 
+import { foundryInstanceType } from '../modules/apim/advanced/types.bicep'
+import { subscriptionType } from '../modules/apim/v2/apim.bicep'
+
 param location string = resourceGroup().location
 
 @description('Chat model to deploy for the perf comparison. All three agent variants use this same deployment.')
@@ -120,6 +123,114 @@ module caphost '../modules/ai/add-project-capability-host.bicep' = {
   }
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// APIM AI Gateway (BYOM) — front our own Foundry account so all three agent
+// variants can be routed through APIM for a like-for-like perf comparison.
+// Pattern mirrors options-infra/ai-gateway-basic (public Basicv2 APIM +
+// common-apim-setup + connections-apim-gateway). Since our Foundry is
+// co-deployed, foundryInstances is built inline from the foundry outputs
+// (skipping the preprovision-list-foundry-models hook).
+// ═════════════════════════════════════════════════════════════════════════════
+
+var projectNamesForApim = [project.outputs.FOUNDRY_PROJECT_NAME]
+
+var foundryInstances foundryInstanceType[] = [
+  {
+    name: 'perf-foundry'
+    resourceId: foundry.outputs.FOUNDRY_RESOURCE_ID
+    endpoint: foundry.outputs.FOUNDRY_ENDPOINT
+    location: location
+    isPtu: false
+    deployments: [
+      {
+        modelName: chatModelName
+        modelVersion: chatModelVersion
+        modelFormat: 'OpenAI'
+      }
+    ]
+  }
+]
+
+var apimSubscriptions subscriptionType[] = [
+  {
+    name: 'sub-${project.outputs.FOUNDRY_PROJECT_NAME}-${resourceToken}'
+    displayName: 'Subscription for ${project.outputs.FOUNDRY_PROJECT_NAME}'
+  }
+]
+
+module ai_gateway '../modules/apim/v2/apim.bicep' = {
+  name: 'apim-deployment'
+  params: {
+    apiManagementName: 'apim-ai-${resourceToken}'
+    location: location
+    tags: tags
+    apimSku: 'Basicv2'
+    lawId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
+    appInsightsId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
+    apimSubscriptionsConfig: []
+  }
+}
+
+module common_ai_gateway_setup '../modules/apim/common-apim-setup.bicep' = {
+  name: 'common-ai-gateway-setup'
+  params: {
+    apimName: ai_gateway.outputs.name
+    apimLoggerId: ai_gateway.outputs.loggerId
+    appInsightsInstrumentationKey: logAnalytics.outputs.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY
+    appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+    gatewayAuthenticationType: 'ProjectManagedIdentity'
+    foundryInstances: foundryInstances
+  }
+}
+
+module foundry_connections '../modules/ai/connections-apim-gateway.bicep' = {
+  name: 'apim-connections-for-foundry'
+  params: {
+    aiFoundryName: foundry.outputs.FOUNDRY_NAME
+    aiFoundryProjectNames: projectNamesForApim
+    resourceToken: resourceToken
+    gatewayAuthenticationType: 'ProjectManagedIdentity'
+    staticModels: common_ai_gateway_setup.outputs.staticModels
+    apimResourceId: ai_gateway.outputs.id
+    apimSubscriptionNames: map(apimSubscriptions, s => s.name)
+    inferenceApiName: common_ai_gateway_setup.outputs.inferenceApiName
+  }
+}
+
+// Second Foundry connection pointing at the MOCK inference API — perf runs
+// use this to strip model latency and isolate agent-framework overhead. The
+// mock returns a canned chat completion via APIM `<return-response>` (no
+// backend hop). Reference this connection from an agent by using the model
+// string `<connection>/<model>`.
+module foundry_connection_mock '../modules/ai/connection-apim-gateway.bicep' = {
+  name: 'apim-connection-openai-mock-${resourceToken}'
+  params: {
+    aiFoundryName: foundry.outputs.FOUNDRY_NAME
+    aiFoundryProjectName: project.outputs.FOUNDRY_PROJECT_NAME
+    connectionName: 'apim-${resourceToken}-openai-mock'
+    apimResourceId: ai_gateway.outputs.id
+    apiName: 'inference-mock'
+    apimSubscriptionName: first(map(apimSubscriptions, s => s.name))
+    isSharedToAll: false
+    staticModels: common_ai_gateway_setup.outputs.staticModels
+    inferenceAPIVersion: '2025-03-01-preview'
+    authType: 'ProjectManagedIdentity'
+  }
+}
+
+// APIM MI needs Cognitive Services User on the Foundry account so it can
+// authenticate to the backing model deployments on behalf of callers.
+module apim_role_assignment '../modules/iam/role-assignment-cognitiveServices.bicep' = {
+  name: 'apim-role-${resourceToken}'
+  params: {
+    accountName: foundry.outputs.FOUNDRY_NAME
+    principalId: ai_gateway.outputs.principalId
+    roleName: 'Cognitive Services User'
+  }
+}
+
+
 // ── ACR (Premium, public-enabled for simplicity of azd deploy from the CLI). ───
 module containerRegistry '../modules/aml/container-registry.bicep' = {
   name: 'container-registry'
@@ -219,7 +330,9 @@ module mcp_server_app '../modules/aca/container-app.bicep' = {
     cpu: '0.5'
     memory: '1Gi'
     scaleMinReplicas: 1
-    scaleMaxReplicas: 3
+    // Stateless MCP (stateless_http=True in FastMCP) — no per-client session
+    // state, so ACA is free to scale horizontally under load.
+    scaleMaxReplicas: 5
     workloadProfileName: acaEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
     containerAppsEnvironmentResourceId: acaEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_ID
     containerRegistryLoginServer: containerRegistry.outputs.AZURE_CONTAINER_REGISTRY_LOGIN_SERVER
@@ -258,6 +371,34 @@ module support_agent_custom_app '../modules/aca/container-app.bicep' = {
         {
           name: 'CHAT_MODEL_DEPLOYMENT'
           value: chatModelName
+        }
+        {
+          // Perf-lane pair: SAME container serves both mock (canned reply,
+          // framework overhead only) and real (real gpt-5-mini via APIM
+          // passthrough + MCP tools). Selected per-request via `mode` field.
+          name: 'CHAT_MODEL_MOCK'
+          value: chatModelName
+        }
+        {
+          name: 'CHAT_MODEL_REAL'
+          value: chatModelName
+        }
+        {
+          name: 'APIM_BASE_URL_MOCK'
+          value: '${ai_gateway.outputs.gatewayUrl}/inference-mock'
+        }
+        {
+          name: 'APIM_BASE_URL_REAL'
+          value: '${ai_gateway.outputs.gatewayUrl}/inference'
+        }
+        {
+          // APIM AI Gateway base URL — the custom agent constructs its own
+          // AzureOpenAIClient against this URL, bypassing the Foundry proxy.
+          // The /inference path is where common-apim-setup mounts the
+          // passthrough inference-api. Auth: DefaultAzureCredential → AAD
+          // Bearer token with aud=cognitiveservices.azure.com.
+          name: 'APIM_BASE_URL'
+          value: '${ai_gateway.outputs.gatewayUrl}/inference-mock'
         }
         {
           name: 'MCP_SERVER_URL'
@@ -306,6 +447,20 @@ output AZURE_AI_PROJECT_ID string = '${foundry.outputs.FOUNDRY_RESOURCE_ID}/proj
 output AZURE_AI_PROJECT_NAME string = project.outputs.FOUNDRY_PROJECT_NAME
 output CHAT_MODEL string = chatModelName
 output RESOURCE_GROUP string = resourceGroup().name
+
+// APIM AI Gateway — outputs consumed by seed-prompt-agent.sh, k6 harness, and
+// the custom-agent env vars.
+output APIM_BASE_URL string = ai_gateway.outputs.gatewayUrl
+output APIM_RESOURCE_ID string = ai_gateway.outputs.id
+output APIM_NAME string = ai_gateway.outputs.name
+// Two Foundry connections deployed side-by-side (default → real, mock → mock).
+// Pick which one to use by setting the model reference to `<connection>/<model>`.
+output AI_GATEWAY_CONNECTION_STATIC string = 'apim-${resourceToken}-openai-s-for-${project.outputs.FOUNDRY_PROJECT_NAME}'
+output AI_GATEWAY_CONNECTION_DYNAMIC string = 'apim-${resourceToken}-openai-d-for-${project.outputs.FOUNDRY_PROJECT_NAME}'
+output AI_GATEWAY_CONNECTION_MOCK string = 'apim-${resourceToken}-openai-mock'
+// Model references for prompt/hosted agents (Foundry expects `<connection>/<deployment>`).
+output CHAT_MODEL_VIA_APIM string = '${'apim-${resourceToken}-openai-s-for-${project.outputs.FOUNDRY_PROJECT_NAME}'}/${chatModelName}'
+output CHAT_MODEL_VIA_APIM_MOCK string = '${'apim-${resourceToken}-openai-mock'}/${chatModelName}'
 
 output AZURE_CONTAINER_REGISTRY_NAME string = containerRegistry.outputs.AZURE_CONTAINER_REGISTRY_NAME
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = containerRegistry.outputs.AZURE_CONTAINER_REGISTRY_LOGIN_SERVER
