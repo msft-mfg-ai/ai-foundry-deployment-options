@@ -1,0 +1,18 @@
+[project]
+name = "ai-gateway-basic-rbac-ui-tests"
+version = "0.1.0"
+description = "Playwright UI tests for Foundry portal, run as an interactively-logged-in user (Joe)"
+requires-python = ">=3.11"
+dependencies = [
+    "pytest>=8.3.0",
+    "pytest-playwright>=0.5.2",
+    "playwright>=1.47.0",
+    "python-dotenv>=1.0.1",
+]
+
+[tool.pytest.ini_options]
+addopts = "-v --tracing=retain-on-failure --screenshot=only-on-failure --video=retain-on-failure"
+markers = [
+    "positive: Joe SHOULD be able to do this",
+    "negative: Joe MUST NOT be able to do this",
+]

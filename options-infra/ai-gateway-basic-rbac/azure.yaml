@@ -1,0 +1,48 @@
+name: ai-gateway-basic-rbac
+
+infra:
+  provider: bicep
+  path: .
+  module: main
+
+hooks:
+  # Preprovision phase 1: discover models on the existing Foundry instance(s) →
+  # FOUNDRY_INSTANCES_JSON, then create/refresh the 5 persona SPs → RBAC_SP_JSON.
+  preprovision:
+    windows:
+      shell: pwsh
+      run: |
+        & '../scripts/preprovision-list-foundry-models.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & '../scripts/preprovision-rbac-sps.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      interactive: false
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        sh ../scripts/preprovision-list-foundry-models.sh
+        sh ../scripts/preprovision-rbac-sps.sh
+      interactive: false
+      continueOnError: false
+
+  # Postprovision: export deployment outputs + persona SP creds → tests/.env
+  postprovision:
+    windows:
+      shell: pwsh
+      run: |
+        & '../scripts/postprovision-write-tests-env.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        Write-Host "Provisioning complete!"
+        Write-Host "🧪 Next: cd tests && uv sync && uv run pytest -v"
+      interactive: false
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        sh ../scripts/postprovision-write-tests-env.sh
+        sh ../scripts/postprovision-seed-search-index.sh
+        echo "Provisioning complete!"
+        echo "🧪 Next: cd tests && uv sync && uv run pytest -v"
+      interactive: false
+      continueOnError: false

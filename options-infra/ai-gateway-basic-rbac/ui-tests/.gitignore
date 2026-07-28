@@ -1,0 +1,11 @@
+# Storage state / secrets / traces
+.auth/
+storage_state.json
+.env
+.env.local
+test-results/
+playwright-report/
+.pytest_cache/
+__pycache__/
+.venv/
+uv.lock

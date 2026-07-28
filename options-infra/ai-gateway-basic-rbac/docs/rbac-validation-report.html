@@ -1,0 +1,322 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>Foundry RBAC Validation Report &mdash; ai-gateway-basic-rbac</title>
+<style>
+ body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; max-width:1200px; margin:2rem auto; padding:0 1.5rem; color:#202124; line-height:1.5; }
+ h1 { border-bottom:3px solid #1a73e8; padding-bottom:.5rem; }
+ h2 { margin-top:2.5rem; border-bottom:1px solid #dadce0; padding-bottom:.3rem; }
+ h3 { margin-top:1.8rem; color:#1a73e8; }
+ table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:14px; }
+ th, td { border:1px solid #dadce0; padding:6px 10px; text-align:left; vertical-align:top; }
+ th { background:#f8f9fa; }
+ code { background:#f1f3f4; padding:1px 5px; border-radius:3px; font-size:13px; }
+ .badge { padding:2px 8px; border-radius:10px; font-size:12px; font-weight:600; }
+ .kpi { display:inline-block; margin-right:2rem; padding:1rem 1.5rem; background:#f8f9fa; border-radius:6px; border-left:4px solid #1a73e8; }
+ .kpi .n { font-size:2rem; font-weight:600; display:block; }
+ .kpi .l { color:#5f6368; font-size:.9rem; }
+ .callout { background:#e8f0fe; border-left:4px solid #1a73e8; padding:12px 16px; margin:1rem 0; border-radius:0 6px 6px 0; }
+ .warn    { background:#fef7e0; border-left:4px solid #f9ab00; padding:12px 16px; margin:1rem 0; border-radius:0 6px 6px 0; }
+ .ok      { background:#e6f4ea; border-left:4px solid #34a853; padding:12px 16px; margin:1rem 0; border-radius:0 6px 6px 0; }
+ ul li { margin:.25rem 0; }
+</style></head><body>
+<h1>Foundry RBAC Validation Report</h1>
+<p><b>Deployment:</b> <code>options-infra/ai-gateway-basic-rbac</code> &nbsp;|&nbsp; <b>Generated:</b> 2026-07-21 19:44 UTC</p>
+
+<div>
+ <div class="kpi"><span class="n" style="color:#137333">32</span><span class="l">Automated PASS</span></div>
+ <div class="kpi"><span class="n" style="color:#c5221f">0</span><span class="l">FAIL</span></div>
+ <div class="kpi"><span class="n" style="color:#8a6d00">5</span><span class="l">Manual / UI-only</span></div>
+ <div class="kpi" style="border-left-color:#c5221f"><span class="n" style="color:#c5221f">3</span><span class="l"><a href="#known-gaps">Unmet requirements</a></span></div>
+ <div class="kpi"><span class="n">37</span><span class="l">Total evidence rows</span></div>
+</div>
+
+<h2>1. What was tested</h2>
+<p>This harness proves the customer's Foundry access-control matrix on a live deployment. It:</p>
+<ol>
+ <li>Deploys a Foundry account + project + APIM inference gateway in a VNET-ready pattern (Bicep).</li>
+ <li>Creates <b>6 service principals</b>, one per persona, each with <b>exactly one</b> Foundry role at the right scope.</li>
+ <li>Runs <b>37 test cases</b> across 6 suites &mdash; every case writes an evidence row (JSON + CSV) with expected vs. actual HTTP status.</li>
+ <li>Layers an <b>Azure Policy</b> (<code>deny-cognitive-services-model-deployments</code>, empty allow-list) at subscription scope for defense-in-depth against model deployment even if RBAC were mis-configured.</li>
+</ol>
+
+<h2>2. Personas &amp; roles under test</h2>
+<table><thead><tr><th>Persona (SP name suffix)</th><th>Foundry role</th><th>Scope</th><th>Represents</th></tr></thead><tbody>
+<tr><td><code>builder</code></td><td>Foundry User</td><td>project</td><td>Owner of everything a builder needs: agents, tools, knowledge, guardrails, evals, workflows.</td></tr>
+<tr><td><code>runtime</code></td><td>Foundry Agent Consumer</td><td>project</td><td>Client apps that only need to invoke an existing agent (chat/interact endpoint).</td></tr>
+<tr><td><code>responses</code></td><td>Foundry Project Runtime User</td><td>project</td><td>Client apps that call the low-level OpenAI Responses API directly.</td></tr>
+<tr><td><code>platform</code></td><td>Foundry Account Owner</td><td>account</td><td>IT/platform operators of a specific Foundry account &mdash; cannot spin up new accounts.</td></tr>
+<tr><td><code>project-admin</code></td><td>Foundry Project Manager</td><td>project</td><td>Project admin: can assign only <code>Foundry User</code> inside their project.</td></tr>
+<tr><td><code>none</code></td><td>(no role)</td><td>n/a</td><td>Baseline SP with no RBAC &mdash; used to prove denial-by-default.</td></tr>
+</tbody></table>
+<h2>3. Customer requirements coverage</h2>
+<div class="warn"><b>&#10060; 2 approved capabilities are NOT fully met (portal UI):</b> Foundry User cannot configure guardrails and cannot attach tools from the portal &mdash; even though the tool-attach API path works. See rows highlighted below and <a href="#known-gaps">&sect; Known gaps</a>.</div>
+<h3>3.1 Capabilities users MUST be able to do</h3><table><thead><tr><th>Capability</th><th>Status</th><th>Evidence / notes</th></tr></thead><tbody>
+<tr><td>Build agent</td><td><span class="badge" style="background:#e6f4ea;color:#137333">&#10004; OK</span></td><td>B-02 (create Agents-v2 version) &nbsp;+ R-03b (invoke via Responses API)</td></tr>
+<tr><td>Create tool / skill</td><td><span class="badge" style="background:#fef7e0;color:#8a6d00">&#9888; API OK / UI blocked</span></td><td><b>API path works</b> &mdash; B-03 automatically creates an agent with an MCP tool attached (public Microsoft Learn MCP) as Foundry User. <b>UI path is blocked</b> &mdash; the &ldquo;+ Add tool&rdquo; affordance in the Foundry portal is hidden/disabled for a Foundry User. Builders can ship tool-enabled agents via IaC/CI but cannot self-serve them from the portal. See <a href='#known-gaps'>&sect; Known gaps</a>.</td></tr>
+<tr><td>Create knowledge</td><td><span class="badge" style="background:#fef7e0;color:#8a6d00">UI-only</span></td><td>B-04 &mdash; UI-only in Foundry today</td></tr>
+<tr style="background:#fef7f6"><td>Create guardrails</td><td><span class="badge" style="background:#fce8e6;color:#c5221f">&#10060; GAP</span></td><td><b>Foundry User cannot create guardrails in the Foundry portal today.</b> Requires <code>Foundry Project Manager</code> or higher &mdash; the Guardrails section is either hidden or read-only for a Foundry User. <b>This breaks customer requirement &ldquo;Users must be able to configure guardrails&rdquo;.</b> See <a href='#known-gaps'>&sect; Known gaps</a>.</td></tr>
+<tr><td>Run evaluations</td><td><span class="badge" style="background:#e6f4ea;color:#137333">&#10004; OK</span></td><td>B-06 (POST /evaluations/runs) &mdash; automated</td></tr>
+<tr><td>Build workflow</td><td><span class="badge" style="background:#fef7e0;color:#8a6d00">UI-only</span></td><td>B-07 &mdash; UI-only; workflows REST API not GA</td></tr>
+</tbody></table>
+<h3>3.2 Actions users MUST NOT be able to do</h3><table><thead><tr><th>Forbidden action</th><th>Test evidence</th></tr></thead><tbody>
+<tr><td>Create new Foundry account</td><td>N-01</td></tr>
+<tr><td>Create new project</td><td>N-02</td></tr>
+<tr><td>Deploy new models (must use APIM-exposed only)</td><td>N-03 (RBAC denial) + Azure Policy <code>deny-cognitive-services-model-deployments</code> in Bicep enforces defense-in-depth</td></tr>
+<tr><td>Create own Logic App to expose MCP server</td><td>N-04</td></tr>
+<tr><td>Create own storage account (data ex-filtration)</td><td>N-05</td></tr>
+<tr><td>Grant themselves or others new RBAC</td><td>N-06</td></tr>
+<tr><td>Publish agent to Microsoft Teams (playground only)</td><td>N-07 &mdash; UI-only</td></tr>
+<tr><td>Use account keys (only OAuth to APIM)</td><td>N-08 (disableLocalAuth=true on Foundry)</td></tr>
+<tr><td>Create indexes on underlying AI Search</td><td><b>N-09</b> (builder denied on Search dataplane &mdash; no Foundry role grants Search dataActions) &nbsp;+&nbsp; <b>N-10</b> (builder denied on <code>listAdminKeys</code> ARM call &mdash; and <code>disableLocalAuth=true</code> means keys don&rsquo;t work anyway). Project MI gets only <code>Search Index Data Reader</code> for query-only grounding.</td></tr>
+</tbody></table>
+
+<div class="callout"><b>Defense-in-depth for model deployment:</b>
+On top of RBAC (N-03 shows a builder is denied at 403 via role permissions), the deployment installs a subscription-scope <b>Azure Policy</b> <code>deny-cognitive-services-model-deployments</code> with an empty <code>allowedModels</code> array. This blocks <code>Microsoft.CognitiveServices/accounts/deployments</code> PUTs from ANY identity &mdash; even Foundry Account Owner or subscription Owner &mdash; so only models pre-baked into the APIM gateway can be reached.</div>
+
+<div class="callout"><b>Defense-in-depth for AI Search index authoring (N-09 / N-10):</b>
+<ol>
+ <li><b>No Foundry role grants Search dataplane actions</b> &mdash; a Foundry User calling <code>PUT /indexes/{name}</code> with a valid Entra ID token is denied at the Search dataplane (N-09).</li>
+ <li><b><code>disableLocalAuth: true</code></b> on the Search resource &mdash; admin/query keys cannot be issued or used, so even a leaked key or a compromised <code>listAdminKeys</code> call would be useless (N-10).</li>
+ <li><b>Only the project's managed identity gets access</b>, and only as <code>Search Index Data Reader</code> &mdash; query-only, no index authoring. Index creation happens in CI/Bicep, not from user-facing surfaces.</li>
+</ol>
+Together these mean users can build knowledge-grounded agents (the project MI queries at runtime) but cannot create, modify, or discover indexes on the underlying Search service.</div>
+
+<h2 id='known-gaps'>4. Known gaps &mdash; where the customer requirements are NOT met</h2>
+
+<div class="warn"><b>&#10060; Gap 1 &mdash; Foundry User cannot create guardrails.</b><br>
+<b>Customer requirement:</b> &ldquo;Users must be able to configure guardrails.&rdquo;<br>
+<b>Observed:</b> Signed into the Foundry portal as Joe (Foundry User at project scope), the Guardrails / Content Safety configuration surface is hidden or read-only. Creating a new guardrail requires <b>Foundry Project Manager</b> or higher.<br>
+<b>Impact:</b> Builders cannot self-serve guardrail configuration &mdash; a project admin has to do it for them, breaking the &ldquo;builders own the full agent lifecycle&rdquo; expectation.<br>
+<b>Options:</b>
+ <ol>
+  <li><b>Elevate the builder persona to <code>Foundry Project Manager</code></b> at project scope. Trade-off: the builder can then also assign the Foundry User role to other users (conditional roleAssignments/write), which may or may not be acceptable to the customer.</li>
+  <li><b>Keep <code>Foundry User</code></b> and treat guardrail configuration as an admin-only activity documented in the ops runbook (project admin runs it on request).</li>
+  <li><b>Escalate to Microsoft</b> to expose guardrail configuration to Foundry User &mdash; this is a role-definition gap, not a Bicep/policy issue.</li>
+ </ol>
+</div>
+
+<div class="warn"><b>&#10060; Gap 2 &mdash; Foundry User cannot attach tools to an agent from the portal.</b><br>
+<b>Customer requirement:</b> &ldquo;Users must be able to create tools / skills.&rdquo;<br>
+<b>Observed:</b> Signed into the Foundry portal as Joe (Foundry User at project scope), the agent editor&rsquo;s &ldquo;+ Add tool&rdquo; affordance is either hidden or disabled. However, <b>the API path works</b> &mdash; test <b>B-03</b> in this harness programmatically creates an agent with an MCP tool attached using Joe&rsquo;s credentials and it succeeds.<br>
+<b>Impact:</b> Builders can ship tool-enabled agents through IaC/CI (Bicep + <code>agents_v2/create_agents.py</code>) but cannot self-serve them from the portal &mdash; contradicts the &ldquo;builders own the full agent lifecycle&rdquo; expectation.<br>
+<b>Options:</b>
+ <ol>
+  <li><b>Elevate the builder persona to <code>Foundry Project Manager</code></b> at project scope. Same trade-off as Gap 1 (they also gain conditional roleAssignments/write).</li>
+  <li><b>Automate tool attachment via CI</b> &mdash; keep <code>Foundry User</code> and have builders wire tools through the <code>agents_v2/create_agents.py</code> pipeline instead of the portal.</li>
+  <li><b>Escalate to Microsoft</b> &mdash; the UI is more restrictive than the underlying role; the &ldquo;+ Add tool&rdquo; control should be visible whenever <code>agents/write</code> is granted, which Foundry User has.</li>
+ </ol>
+</div>
+
+<div class="warn"><b>&#10060; Gap 3 &mdash; Foundry Project Runtime User cannot invoke the Responses API.</b><br>
+<b>Observed (R-03a):</b> A principal with only <code>Foundry Project Runtime User</code> gets HTTP 403 &ldquo;does not have permissions for AIServices/agents/write&rdquo; when calling <code>POST /openai/v1/responses</code> against a v2 agent. The endpoint enforces <code>agents/write</code> but the role only grants <code>responses/*</code>.<br>
+<b>Practical workaround:</b> use <b>Foundry User</b> for runtime apps until Microsoft closes the check (R-03b confirms this works).
+</div>
+
+<h2>5. What works as expected</h2>
+
+<div class="ok"><b>All 9 builder-forbidden actions are enforced</b> across the control plane (ARM), data plane (Foundry API + Azure AI Search), and Azure Policy &mdash; no unexpected access paths found. See the BuilderNegative suite below (includes new N-09/N-10 for AI Search).</div>
+<div class="ok"><b>All 6 built-in Foundry roles have the expected GUIDs and permissions</b> as returned by ARM &mdash; see RoleDefinition suite and <code>tests/output/foundry-role-definitions.actual.json</code>.</div>
+<div class="ok"><b>Every persona SP holds ONLY its designated role at the correct scope</b> &mdash; no inherited or broader RBAC. See Assignments suite.</div>
+
+<h2>6. Detailed results per suite</h2>
+<h3>6.1 RoleDefinition</h3>
+<p>Verifies that each of the 6 Foundry RBAC role definitions exists in the tenant with the expected GUID and role name.</p>
+<p><b>6</b> pass, <b>0</b> fail, <b>0</b> manual/UI &mdash; 6 total.</p>
+<table><thead><tr><th>Test ID</th><th>Persona</th><th>Expected</th><th>Actual</th><th>Status</th></tr></thead><tbody>
+<tr><td><code>RD-01/Foundry User</code></td><td>&amp;mdash;</td><td>200 OK, roleName matches</td><td>HTTP 200</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>RD-01/Foundry Agent Consumer</code></td><td>&amp;mdash;</td><td>200 OK, roleName matches</td><td>HTTP 200</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>RD-01/Foundry Project Runtime User</code></td><td>&amp;mdash;</td><td>200 OK, roleName matches</td><td>HTTP 200</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>RD-01/Foundry Project Manager</code></td><td>&amp;mdash;</td><td>200 OK, roleName matches</td><td>HTTP 200</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>RD-01/Foundry Account Owner</code></td><td>&amp;mdash;</td><td>200 OK, roleName matches</td><td>HTTP 200</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>RD-01/Foundry Owner</code></td><td>&amp;mdash;</td><td>200 OK, roleName matches</td><td>HTTP 200</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+</tbody></table>
+<h3>6.2 Assignments</h3>
+<p>Confirms every persona service principal has ONLY its designated Foundry role at the correct scope — no inherited or broader RBAC.</p>
+<p><b>6</b> pass, <b>0</b> fail, <b>0</b> manual/UI &mdash; 6 total.</p>
+<table><thead><tr><th>Test ID</th><th>Persona</th><th>Expected</th><th>Actual</th><th>Status</th></tr></thead><tbody>
+<tr><td><code>AS-01/builder</code></td><td>builder</td><td>Only Foundry User at project scope, no broad inherited access</td><td>HTTP 200</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>AS-01/runtime</code></td><td>runtime</td><td>Only Foundry Agent Consumer at project scope, no broad inherited access</td><td>HTTP 200</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>AS-01/responses</code></td><td>responses</td><td>Only Foundry Project Runtime User at project scope, no broad inherited access</td><td>HTTP 200</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>AS-01/platform</code></td><td>platform</td><td>Only Foundry Account Owner at account scope, no broad inherited access</td><td>HTTP 200</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>AS-01/project-admin</code></td><td>project-admin</td><td>Only Foundry Project Manager at project scope, no broad inherited access</td><td>HTTP 200</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>AS-01/none</code></td><td>none</td><td>Only no role at none scope, no broad inherited access</td><td>HTTP 200</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+</tbody></table>
+<h3>6.3 BuilderPositive</h3>
+<p>Proves the <b>Foundry User</b> (builder) persona CAN perform the six approved builder capabilities: build agents, add tools, add knowledge, add guardrails, run evaluations, build workflows.</p>
+<p><b>3</b> pass, <b>0</b> fail, <b>4</b> manual/UI &mdash; 7 total.</p>
+<table><thead><tr><th>Test ID</th><th>Persona</th><th>Expected</th><th>Actual</th><th>Status</th></tr></thead><tbody>
+<tr><td><code>B-01</code></td><td>builder</td><td>200 OK (v2 agents list)</td><td>HTTP 200</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>B-02</code></td><td>builder</td><td>2xx (v2 agent version created)</td><td>HTTP 200</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>B-03</code></td><td>builder</td><td>2xx — Foundry User can create agent with a tool attached</td><td>HTTP 200</td><td><span class="badge" style="background:#fef7e0;color:#8a6d00">MANUAL</span></td></tr>
+<tr><td><code>B-04</code></td><td>&amp;mdash;</td><td>Manual UI</td><td>ManualRequired</td><td><span class="badge" style="background:#fef7e0;color:#8a6d00">MANUAL</span></td></tr>
+<tr><td><code>B-05</code></td><td>&amp;mdash;</td><td>Manual UI</td><td>ManualRequired</td><td><span class="badge" style="background:#fef7e0;color:#8a6d00">MANUAL</span></td></tr>
+<tr><td><code>B-06</code></td><td>builder</td><td>200 OK</td><td>HTTP 200</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>B-07</code></td><td>&amp;mdash;</td><td>Manual UI</td><td>ManualRequired</td><td><span class="badge" style="background:#fef7e0;color:#8a6d00">MANUAL</span></td></tr>
+</tbody></table>
+<h3>6.4 BuilderNegative</h3>
+<p>Proves the <b>Foundry User</b> (builder) persona CANNOT perform any of the 8 forbidden control-plane actions (create Foundry account, create project, deploy models, create Logic App / storage, assign roles, publish to Teams, list account keys).</p>
+<p><b>9</b> pass, <b>0</b> fail, <b>1</b> manual/UI &mdash; 10 total.</p>
+<table><thead><tr><th>Test ID</th><th>Persona</th><th>Expected</th><th>Actual</th><th>Status</th></tr></thead><tbody>
+<tr><td><code>N-01</code></td><td>builder</td><td>403 AuthorizationFailed</td><td>HTTP 403</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>N-02</code></td><td>builder</td><td>403</td><td>HTTP 403</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>N-03</code></td><td>builder</td><td>403</td><td>HTTP 403</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>N-04</code></td><td>builder</td><td>403</td><td>HTTP 403</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>N-05</code></td><td>builder</td><td>403</td><td>HTTP 403</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>N-06</code></td><td>builder</td><td>403</td><td>HTTP 403</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>N-07</code></td><td>&amp;mdash;</td><td>Manual UI</td><td>ManualRequired</td><td><span class="badge" style="background:#fef7e0;color:#8a6d00">MANUAL</span></td></tr>
+<tr><td><code>N-08</code></td><td>builder</td><td>403 (disableLocalAuth=true &amp; builder lacks listkeys/action)</td><td>HTTP 403</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>N-09</code></td><td>builder</td><td>401/403 — Foundry User grants no Search dataActions</td><td>HTTP 403</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>N-10</code></td><td>builder</td><td>401/403 — listAdminKeys denied AND disableLocalAuth=true makes keys unusable</td><td>HTTP 403</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+</tbody></table>
+<h3>6.5 Runtime</h3>
+<p>Proves the runtime personas (Foundry Agent Consumer, Foundry Project Runtime User) enforce least-privilege on the Responses / Agents v2 data plane.</p>
+<p><b>4</b> pass, <b>0</b> fail, <b>0</b> manual/UI &mdash; 4 total.</p>
+<table><thead><tr><th>Test ID</th><th>Persona</th><th>Expected</th><th>Actual</th><th>Status</th></tr></thead><tbody>
+<tr><td><code>R-01</code></td><td>runtime</td><td>401/403 PermissionDenied (Agent Consumer has no agents/read)</td><td>HTTP 403</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>R-02</code></td><td>runtime</td><td>401/403</td><td>HTTP 403</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>R-03a</code></td><td>responses</td><td>403 PermissionDenied — role has no agents/write</td><td>HTTP 403 — Error code: 403</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>R-03b</code></td><td>builder</td><td>2xx — Foundry User can invoke</td><td>HTTP 200 — Hi.</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+</tbody></table>
+<h3>6.6 Controls</h3>
+<p>Sanity-checks the two &ldquo;privileged&rdquo; personas: the platform account owner can manage the existing account but cannot create a new one; the project manager can assign only Foundry User inside the project.</p>
+<p><b>4</b> pass, <b>0</b> fail, <b>0</b> manual/UI &mdash; 4 total.</p>
+<table><thead><tr><th>Test ID</th><th>Persona</th><th>Expected</th><th>Actual</th><th>Status</th></tr></thead><tbody>
+<tr><td><code>CTRL-PLAT-01a</code></td><td>platform</td><td>200 (account-scope read allowed)</td><td>HTTP 200</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>CTRL-PLAT-01b</code></td><td>platform</td><td>2xx (account-scope write allowed)</td><td>HTTP 202</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>CTRL-PLAT-01c</code></td><td>platform</td><td>401/403 (account-scope role cannot create new accounts at RG scope)</td><td>HTTP 403</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+<tr><td><code>CTRL-ADMIN-01</code></td><td>project-admin</td><td>2xx (conditional roleAssignments write allowed for Foundry User)</td><td>HTTP 201</td><td><span class="badge" style="background:#e6f4ea;color:#137333">PASS</span></td></tr>
+</tbody></table>
+
+<h2>7. Foundry built-in roles &mdash; reference</h2>
+<p>Descriptions below are consolidated from Microsoft&rsquo;s
+<a href="https://learn.microsoft.com/en-us/azure/foundry/concepts/rbac-foundry" target="_blank" rel="noopener">Role-based access control for Microsoft Foundry</a>
+(<a href="https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles/ai-machine-learning" target="_blank" rel="noopener">exact role definitions</a>).</p>
+<div class="callout"><b>Naming note.</b> Foundry roles were renamed &mdash; <b>Foundry User / Owner / Account Owner / Project Manager</b> were previously <i>Azure AI User / Owner / Account Owner / Project Manager</i>. Role IDs and permissions are unchanged; ARM accepts both names. This repo&rsquo;s IAM modules alias both. <b>Do NOT</b> use <code>Cognitive Services *</code> or the legacy <code>Azure AI Developer</code> role for Foundry &mdash; those apply to AI Services / AML hubs.</div>
+
+<h3>7.1 Summary</h3>
+<table><thead><tr><th>Role</th><th>GUID</th><th>Typical scope</th><th>Purpose (Microsoft Learn)</th></tr></thead><tbody>
+<tr><td><a href="#foundry-agent-consumer">Foundry Agent Consumer</a></td><td><code>eed3b665-ab3a-47b6-8f48-c9382fb1dad6</code></td><td>Project (or per-agent)</td><td>Least-privilege role for principals that need to <b>call an already-deployed agent's <code>interact</code> endpoint</b> and nothing else. Does NOT grant Responses API, agent management, project reads, or keys.</td></tr>
+<tr><td><a href="#foundry-project-runtime-user">Foundry Project Runtime User</a></td><td><code>142bfaed-a13f-4c2d-bed2-6db62c4a1009</code></td><td>Project</td><td>Least-privilege role for principals that need to <b>invoke a v2 agent via the OpenAI Responses API</b> (<code>POST /openai/v1/responses</code>, streaming, conversations, message events). Counterpart to Foundry Agent Consumer for the newer Responses-API surface.</td></tr>
+<tr><td><a href="#foundry-user">Foundry User</a></td><td><code>53ca6127-db72-4b80-b1b0-d745d6d5456d</code></td><td>Project (usually) or Account</td><td>Microsoft calls this the <b>&ldquo;least-privilege role for developers building and testing agents.&rdquo;</b> Maps 1-to-1 to the customer's "builder" persona: build agents, create tools/skills, knowledge, guardrails, run evaluations, build workflows.</td></tr>
+<tr><td><a href="#foundry-project-manager">Foundry Project Manager</a></td><td><code>eadc314b-1a2d-4efa-be10-5d325db5065e</code></td><td>Project</td><td>The "team lead" role. Whoever runs a particular project's developer team can onboard other builders without needing subscription Owner or Foundry Owner.</td></tr>
+<tr><td><a href="#foundry-account-owner">Foundry Account Owner</a></td><td><code>e47c6f54-e4a2-4754-9501-8e0985b135e1</code></td><td>Account (Foundry resource)</td><td>The IT/platform-operator role for <b>an existing Foundry account</b>. Distinguishes day-2 operations of an already-provisioned account from provisioning new accounts (which the customer explicitly forbids &mdash; all provisioning goes through Bicep in the pipeline).</td></tr>
+<tr><td><a href="#foundry-owner">Foundry Owner</a></td><td><code>c883944f-8b7b-4483-af10-35834be79c4a</code></td><td>Account</td><td>Microsoft: <i>"highly privileged self-serve role designed for digital natives."</i> Closest built-in to "I own this entire Foundry account and every project inside it, and I want to build in them too." Prefer separating <b>Foundry Account Owner</b> (ops) + <b>Foundry User</b> per project (build) when you have segregated duties.</td></tr>
+</tbody></table>
+<h3 id="foundry-agent-consumer">7.2 Foundry Agent Consumer</h3>
+<table style="width:auto;min-width:60%"><tbody>
+<tr><th style="width:180px">GUID</th><td><code>eed3b665-ab3a-47b6-8f48-c9382fb1dad6</code></td></tr>
+<tr><th>Scope</th><td>Project (or per-agent)</td></tr>
+<tr><th>Grants</th><td><code>Microsoft.CognitiveServices/accounts/AIServices/endpoints/interact/action</code> only. No management actions.</td></tr>
+</tbody></table>
+<p><b>Purpose.</b> Least-privilege role for principals that need to <b>call an already-deployed agent's <code>interact</code> endpoint</b> and nothing else. Does NOT grant Responses API, agent management, project reads, or keys.</p>
+<p><b>Assign it to:</b></p><table><thead><tr><th>Assignee</th><th>When</th></tr></thead><tbody>
+<tr><td>Managed identity of a front-end app / chat UI</td><td>The app relays end-user prompts to a specific agent and streams the reply back.</td></tr>
+<tr><td>End-user principals (via Entra group)</td><td>You want authenticated tenant users to appear in Foundry audit logs and be able to chat with a specific agent.</td></tr>
+<tr><td>Bots, IVR, back-office automation</td><td>Anything that only needs to <i>talk to</i> an agent.</td></tr>
+</tbody></table>
+<p><b>Do NOT assign to:</b></p><ul>
+<li>Developers building agents &rarr; use <b>Foundry User</b>.</li>
+<li>Apps that call <code>/openai/v1/responses</code> &rarr; see the current gap under <b>Foundry Project Runtime User</b>.</li>
+</ul>
+<p><b>Test evidence in this harness:</b> <code>RD-01/Foundry Agent Consumer</code>, <code>AS-01/runtime</code>, <code>R-01</code>, <code>R-02</code></p>
+<h3 id="foundry-project-runtime-user">7.3 Foundry Project Runtime User</h3>
+<table style="width:auto;min-width:60%"><tbody>
+<tr><th style="width:180px">GUID</th><td><code>142bfaed-a13f-4c2d-bed2-6db62c4a1009</code></td></tr>
+<tr><th>Scope</th><td>Project</td></tr>
+<tr><th>Grants</th><td><code>Microsoft.CognitiveServices/accounts/AIServices/responses/*</code> only. No management actions.</td></tr>
+</tbody></table>
+<p><b>Purpose.</b> Least-privilege role for principals that need to <b>invoke a v2 agent via the OpenAI Responses API</b> (<code>POST /openai/v1/responses</code>, streaming, conversations, message events). Counterpart to Foundry Agent Consumer for the newer Responses-API surface.</p>
+<p><b>Assign it to:</b></p><table><thead><tr><th>Assignee</th><th>When</th></tr></thead><tbody>
+<tr><td>Managed identity of a web/API app (App Service, Container Apps, AKS)</td><td>Server-side code calls <code>/openai/v1/responses</code> after authenticating its own end users. Most common case.</td></tr>
+<tr><td>Bot / function / batch job MI</td><td>Any workload that only needs to <i>use</i> an agent someone else already built.</td></tr>
+<tr><td>FIC on a workload / GitHub Actions</td><td>CI smoke tests or scheduled agent invocations.</td></tr>
+<tr><td>Service principal for evaluations / canaries</td><td>Load tests, SLA monitors.</td></tr>
+</tbody></table>
+<p><b>Do NOT assign to:</b></p><ul>
+<li>Agent builders / developers &rarr; use <b>Foundry User</b>.</li>
+<li>Project admins &rarr; use <b>Foundry Project Manager</b>.</li>
+<li>Platform / IT operators &rarr; use <b>Foundry Account Owner</b>.</li>
+</ul>
+<div class="warn"><b>&#9888; Current gap:</b> As of July 2026, a principal with <b>only</b> this role <b>cannot</b> invoke <code>POST /api/projects/{project}/openai/v1/responses</code> against a v2 agent. Foundry's authorization for that endpoint checks <code>AIServices/agents/write</code>, which the role does not grant. Call fails with 403 &ldquo;does not have permissions for AIServices/agents/write&rdquo;. Interim workaround: use <b>Foundry User</b> (validated by R-03b). Re-run <code>test_r03_responses_api_via_project_runtime</code> after Microsoft fixes the check.</div>
+<p><b>Test evidence in this harness:</b> <code>RD-01/Foundry Project Runtime User</code>, <code>AS-01/responses</code>, <code>R-03a</code>, <code>R-03b</code></p>
+<h3 id="foundry-user">7.4 Foundry User</h3>
+<table style="width:auto;min-width:60%"><tbody>
+<tr><th style="width:180px">GUID</th><td><code>53ca6127-db72-4b80-b1b0-d745d6d5456d</code></td></tr>
+<tr><th>Scope</th><td>Project (usually) or Account</td></tr>
+<tr><th>Grants</th><td>Reader over the Foundry project + Foundry resource, plus <b>all data-plane actions</b> inside the project (create/edit agents, tools, threads, evaluations, files, connections). Does NOT grant control-plane management (creating projects/accounts, RBAC, model deployments).</td></tr>
+</tbody></table>
+<p><b>Purpose.</b> Microsoft calls this the <b>&ldquo;least-privilege role for developers building and testing agents.&rdquo;</b> Maps 1-to-1 to the customer's "builder" persona: build agents, create tools/skills, knowledge, guardrails, run evaluations, build workflows.</p>
+<p><b>Assign it to:</b></p><table><thead><tr><th>Assignee</th><th>When</th></tr></thead><tbody>
+<tr><td>Developers / data scientists</td><td>Day-to-day builder workflow inside a specific project.</td></tr>
+<tr><td>The project's managed identity</td><td>Microsoft explicitly requires this so the project can act on its own connections. See "Minimum role assignments to get started" in the Learn doc.</td></tr>
+<tr><td>Runtime applications calling <code>/openai/v1/responses</code></td><td>Interim workaround until the Foundry Project Runtime User gap is fixed.</td></tr>
+</tbody></table>
+<p><b>Test evidence in this harness:</b> <code>RD-01/Foundry User</code>, <code>AS-01/builder</code>, <code>B-01</code>, <code>B-02</code>, <code>B-06</code>, <code>N-01</code>, <code>N-02</code>, <code>N-03</code>, <code>N-04</code>, <code>N-05</code>, <code>N-06</code>, <code>N-08</code>, <code>R-03b</code></p>
+<h3 id="foundry-project-manager">7.5 Foundry Project Manager</h3>
+<table style="width:auto;min-width:60%"><tbody>
+<tr><th style="width:180px">GUID</th><td><code>eadc314b-1a2d-4efa-be10-5d325db5065e</code></td></tr>
+<tr><th>Scope</th><td>Project</td></tr>
+<tr><th>Grants</th><td>Everything in Foundry User <b>plus</b> project management actions <b>plus</b> a <b>conditional</b> <code>Microsoft.Authorization/roleAssignments/write</code> scoped so it can only assign the <b>Foundry User</b> role inside the project.</td></tr>
+</tbody></table>
+<p><b>Purpose.</b> The "team lead" role. Whoever runs a particular project's developer team can onboard other builders without needing subscription Owner or Foundry Owner.</p>
+<p><b>Assign it to:</b></p><table><thead><tr><th>Assignee</th><th>When</th></tr></thead><tbody>
+<tr><td>Team lead / project admin</td><td>They need to onboard builders into their project.</td></tr>
+<tr><td>Automation SP running onboarding</td><td>e.g. HR + Entra group sync for programmatic project membership.</td></tr>
+</tbody></table>
+<p><b>Do NOT assign to:</b></p><ul>
+<li>Do NOT assign at account scope &mdash; that effectively promotes them across every project. Use Foundry Account Owner or Foundry Owner for cross-project rights.</li>
+</ul>
+<p><b>Test evidence in this harness:</b> <code>RD-01/Foundry Project Manager</code>, <code>AS-01/project-admin</code>, <code>CTRL-ADMIN-01</code></p>
+<h3 id="foundry-account-owner">7.6 Foundry Account Owner</h3>
+<table style="width:auto;min-width:60%"><tbody>
+<tr><th style="width:180px">GUID</th><td><code>e47c6f54-e4a2-4754-9501-8e0985b135e1</code></td></tr>
+<tr><th>Scope</th><td>Account (Foundry resource)</td></tr>
+<tr><th>Grants</th><td>Full management over the specific Foundry account (create/modify projects, capability hosts, deployments (subject to Azure Policy), diagnostic settings, connections). Conditionally assign Foundry User, ACR, and monitoring roles. Does NOT grant permission to create <b>new</b> Foundry accounts elsewhere in the subscription or RG.</td></tr>
+</tbody></table>
+<p><b>Purpose.</b> The IT/platform-operator role for <b>an existing Foundry account</b>. Distinguishes day-2 operations of an already-provisioned account from provisioning new accounts (which the customer explicitly forbids &mdash; all provisioning goes through Bicep in the pipeline).</p>
+<p><b>Assign it to:</b></p><table><thead><tr><th>Assignee</th><th>When</th></tr></thead><tbody>
+<tr><td>Platform team SPs</td><td>Day-2 ops (agent troubleshooting, capability host reconciliation, APIM model routing changes).</td></tr>
+<tr><td>Foundry landing-zone automation identities</td><td>Patch tags, diagnostic settings, or connections on an already-created account.</td></tr>
+</tbody></table>
+<p><b>Do NOT assign to:</b></p><ul>
+<li>Anyone who should be able to spin up new Foundry accounts &mdash; account creation must remain Bicep-only via subscription Owner in the CI pipeline.</li>
+</ul>
+<p><b>Test evidence in this harness:</b> <code>RD-01/Foundry Account Owner</code>, <code>AS-01/platform</code>, <code>CTRL-PLAT-01a</code>, <code>CTRL-PLAT-01b</code>, <code>CTRL-PLAT-01c</code></p>
+<h3 id="foundry-owner">7.7 Foundry Owner</h3>
+<table style="width:auto;min-width:60%"><tbody>
+<tr><th style="width:180px">GUID</th><td><code>c883944f-8b7b-4483-af10-35834be79c4a</code></td></tr>
+<tr><th>Scope</th><td>Account</td></tr>
+<tr><th>Grants</th><td>Everything Foundry Account Owner grants <b>plus</b> full data-plane rights inside every project of the account (Account Owner &cup; Foundry User across all projects). Conditionally assign Foundry User, ACR, and monitoring roles.</td></tr>
+</tbody></table>
+<p><b>Purpose.</b> Microsoft: <i>"highly privileged self-serve role designed for digital natives."</i> Closest built-in to "I own this entire Foundry account and every project inside it, and I want to build in them too." Prefer separating <b>Foundry Account Owner</b> (ops) + <b>Foundry User</b> per project (build) when you have segregated duties.</p>
+<p><b>Assign it to:</b></p><table><thead><tr><th>Assignee</th><th>When</th></tr></thead><tbody>
+<tr><td>Single-team, self-serve Foundry account</td><td>Ops and dev are the same person.</td></tr>
+<tr><td>Break-glass identity for the account</td><td>Document + monitor tightly.</td></tr>
+</tbody></table>
+<p><b>Do NOT assign to:</b></p><ul>
+<li>Anyone who should not be able to build inside every project &mdash; use Account Owner + per-project Foundry User instead.</li>
+</ul>
+<p><b>Test evidence in this harness:</b> <code>RD-01/Foundry Owner</code></p>
+
+<h2>8. Reproducing this report</h2>
+<pre><code>cd options-infra/ai-gateway-basic-rbac
+AZD_DISABLE_AGENT_DETECT=1 azd up          # deploys Foundry + APIM + 6 SPs + Azure Policy
+cd tests
+uv sync
+uv run pytest -v                            # writes output/rbac-validation-results.{json,csv}
+python ../scripts/gen_report.py             # regenerates this HTML</code></pre>
+
+<h2>9. Artifacts</h2>
+<ul>
+ <li><code>tests/output/rbac-validation-results.json</code> &mdash; machine-readable evidence for every test.</li>
+ <li><code>tests/output/rbac-validation-results.csv</code> &mdash; same, spreadsheet-friendly.</li>
+ <li><code>tests/output/foundry-role-definitions.actual.json</code> &mdash; the 6 Foundry role definitions as returned by ARM at test time.</li>
+ <li><code>docs/manual-ui-test-plan.md</code> &mdash; checklist for the 5 UI-only cases.</li>
+ <li><code>docs/foundry-roles.md</code>, <code>docs/architecture.md</code>, <code>docs/troubleshooting.md</code>.</li>
+</ul>
+
+<h2>10. References</h2>
+<ul>
+ <li><a href="https://learn.microsoft.com/en-us/azure/foundry/concepts/rbac-foundry" target="_blank" rel="noopener">Microsoft Learn &mdash; RBAC for Microsoft Foundry</a></li>
+ <li><a href="https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles/ai-machine-learning" target="_blank" rel="noopener">AI + Machine Learning built-in roles</a></li>
+</ul>
+</body></html>

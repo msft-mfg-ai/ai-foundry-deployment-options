@@ -1,0 +1,72 @@
+{
+  "Foundry User": {
+    "roleDefinitionId": "53ca6127-db72-4b80-b1b0-d745d6d5456d",
+    "description": "Grants reader access to Foundry projects, reader access to Foundry accounts, and data actions for a Foundry project.",
+    "mandatoryActions": ["Microsoft.CognitiveServices/*/read"],
+    "prohibitedActions": ["Microsoft.CognitiveServices/*", "Microsoft.Authorization/roleAssignments/write"],
+    "mandatoryDataActions": ["Microsoft.CognitiveServices/*"],
+    "mandatoryNotDataActions": [
+      "Microsoft.CognitiveServices/accounts/AIServices/agents/endpoints/UserIdentityImpersonation/action",
+      "Microsoft.CognitiveServices/accounts/OpenAI/fine-tunes-deployments/write",
+      "Microsoft.CognitiveServices/accounts/AIServices/fine_tuning_deployments/write"
+    ]
+  },
+  "Foundry Agent Consumer": {
+    "roleDefinitionId": "eed3b665-ab3a-47b6-8f48-c9382fb1dad6",
+    "description": "Allows interacting with Foundry agents at runtime.",
+    "mandatoryActions": [],
+    "prohibitedActions": ["Microsoft.CognitiveServices/*", "Microsoft.Authorization/roleAssignments/write"],
+    "mandatoryDataActions": ["Microsoft.CognitiveServices/accounts/AIServices/endpoints/interact/action"],
+    "mandatoryNotDataActions": []
+  },
+  "Foundry Project Runtime User": {
+    "roleDefinitionId": "142bfaed-a13f-4c2d-bed2-6db62c4a1009",
+    "description": "Allows interacting with Foundry agents at runtime with minimal required permissions.",
+    "mandatoryActions": [],
+    "prohibitedActions": ["Microsoft.CognitiveServices/*", "Microsoft.Authorization/roleAssignments/write"],
+    "mandatoryDataActions": ["Microsoft.CognitiveServices/accounts/AIServices/responses/*"],
+    "mandatoryNotDataActions": []
+  },
+  "Foundry Project Manager": {
+    "roleDefinitionId": "eadc314b-1a2d-4efa-be10-5d325db5065e",
+    "description": "Developer + management actions on Foundry Projects; conditional roleAssignments write limited to Foundry User.",
+    "mandatoryActions": [
+      "Microsoft.Authorization/roleAssignments/write",
+      "Microsoft.Authorization/roleAssignments/delete",
+      "Microsoft.CognitiveServices/accounts/projects/*"
+    ],
+    "prohibitedActions": [],
+    "mandatoryDataActions": ["Microsoft.CognitiveServices/*"],
+    "mandatoryNotDataActions": [
+      "Microsoft.CognitiveServices/accounts/AIServices/agents/endpoints/UserIdentityImpersonation/action",
+      "Microsoft.CognitiveServices/accounts/OpenAI/fine-tunes-deployments/write",
+      "Microsoft.CognitiveServices/accounts/AIServices/fine_tuning_deployments/write"
+    ]
+  },
+  "Foundry Account Owner": {
+    "roleDefinitionId": "e47c6f54-e4a2-4754-9501-8e0985b135e1",
+    "description": "Full management of Foundry projects and accounts; conditional roleAssignments write.",
+    "mandatoryActions": [
+      "Microsoft.CognitiveServices/*",
+      "Microsoft.Authorization/roleAssignments/write",
+      "Microsoft.Authorization/roleAssignments/delete"
+    ],
+    "prohibitedActions": [],
+    "mandatoryDataActions": [],
+    "mandatoryNotDataActions": []
+  },
+  "Foundry Owner": {
+    "roleDefinitionId": "c883944f-8b7b-4483-af10-35834be79c4a",
+    "description": "Highly privileged: manage accounts/projects/models, publish agents, data actions, conditional role assignments.",
+    "mandatoryActions": [
+      "Microsoft.CognitiveServices/*",
+      "Microsoft.Authorization/roleAssignments/write",
+      "Microsoft.Authorization/roleAssignments/delete"
+    ],
+    "prohibitedActions": [],
+    "mandatoryDataActions": ["Microsoft.CognitiveServices/*"],
+    "mandatoryNotDataActions": [
+      "Microsoft.CognitiveServices/accounts/AIServices/agents/endpoints/UserIdentityImpersonation/action"
+    ]
+  }
+}
