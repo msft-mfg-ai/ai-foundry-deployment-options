@@ -272,6 +272,28 @@ module realtimeWebrtcApi 'v2/realtime-webrtc-api.bicep' = if (hasRealtime && con
   }
 }
 
+// ============================================================================
+// -- Inference API #3 — Mock chat completions (no backend)
+// ============================================================================
+// Standalone mock API at `inference-mock` that answers chat completions
+// (streaming + non-streaming) with a canned "I'm an LLM mock" response using
+// APIM's `<return-response>` — no Foundry / backend call. Useful for smoke
+// tests, client wiring validation, and demos. Depends on inferenceApi purely
+// to serialize the shared `ai-gateway` service tag creation.
+module inferenceMockApi 'v2/inference-mock-api.bicep' = {
+  name: 'inference-mock-api-deployment'
+  dependsOn: [inferenceApi]
+  params: {
+    apiManagementName: apimName
+    apimLoggerId: apimLoggerId
+    inferenceAPIPath: 'inference-mock'
+    inferenceAPIName: 'inference-mock'
+    requireSubscriptionKey: gatewayAuthenticationType != 'ProjectManagedIdentity'
+    appInsightsInstrumentationKey: appInsightsInstrumentationKey
+    appInsightsId: appInsightsResourceId
+  }
+}
+
 // OpenAI v1 API has more than 100 Operations and requires Premium, Premiumv2, or StandardV2 SKU
 // https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-subscription-service-limits?toc=%2Fazure%2Fapi-management%2Ftoc.json&bc=%2Fazure%2Fapi-management%2Fbreadcrumb%2Ftoc.json#limits---api-management-v2-tiers
 // Depends on inference_api to avoid race condition creating duplicate APIM service-level tags

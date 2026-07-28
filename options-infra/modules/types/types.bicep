@@ -97,6 +97,10 @@ type StorageRoleAssignmentsType =
   | 'Storage Blob Data Reader'
 @export()
 type SearchRoleAssignmentsType = 'Search Index Data Contributor' | 'Search Index Data Reader'
+// "Foundry User" / "Foundry Project Manager" / "Foundry Account Owner" / "Foundry Owner"
+// are the newer names for the "Azure AI *" entries above (same GUIDs) and are
+// accepted here so callers can use either name. Runtime roles ("Foundry Agent
+// Consumer", "Foundry Project Runtime User") are new — see foundry-rbac-requirements.html.
 @export()
 type CognitiveServicesRoleAssignmentsType =
   | 'Reader'
@@ -107,3 +111,9 @@ type CognitiveServicesRoleAssignmentsType =
   | 'Azure AI Project Manager'
   | 'Azure AI Account Owner'
   | 'Azure AI Owner'
+  | 'Foundry User'
+  | 'Foundry Agent Consumer'
+  | 'Foundry Project Runtime User'
+  | 'Foundry Project Manager'
+  | 'Foundry Account Owner'
+  | 'Foundry Owner'

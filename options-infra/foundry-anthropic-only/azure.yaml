@@ -1,0 +1,17 @@
+# Azure Developer CLI configuration
+name: foundry-anthropic-only
+
+infra:
+  provider: bicep
+  path: .
+  module: main
+
+hooks:
+  postprovision:
+    posix:
+      shell: sh
+      run: ./scripts/verify-claude.sh
+    windows:
+      shell: pwsh
+      run: ./scripts/verify-claude.ps1
+

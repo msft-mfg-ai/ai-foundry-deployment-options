@@ -106,7 +106,7 @@
     <!-- ===================================================================
          Default contract-derived variables (used by the downstream
          policy-per-model.xml). When the orchestrator wires access contracts,
-         the {contracts-load-section} placeholder below is substituted with
+         the contracts-load-section placeholder below is substituted with
          JWT validate + blob fetch + contract match logic that OVERWRITES
          these defaults. When no contracts are wired (non-quota samples),
          the placeholder collapses to an empty string and these defaults

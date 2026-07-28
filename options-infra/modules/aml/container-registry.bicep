@@ -18,6 +18,8 @@ param haDeploymentEnabled bool = false
 param importRunOnDeploy bool = false
 @description('If true, the container registry will allow public access. Not recommended for production scenarios.')
 param publicAccessEnabled bool = false
+@description('IP allow-list (v4/CIDR) for the registry. Non-empty implies publicNetworkAccess=Enabled + defaultAction=Deny, so only these IPs (plus any private endpoints) can reach the registry.')
+param allowedIpAddresses string[] = []
 
 var pullRoleAssignments roleAssignmentType[] = map(principalIdsForPullPermission, id => {
   principalId: id
@@ -59,7 +61,11 @@ module containerRegistry 'br/public:avm/res/container-registry/registry:0.10.0' 
     acrSku: 'Premium'
     location: location
     tags: tags
-    publicNetworkAccess: publicAccessEnabled ? 'Enabled' : 'Disabled'
+    publicNetworkAccess: (publicAccessEnabled || !empty(allowedIpAddresses)) ? 'Enabled' : 'Disabled'
+    networkRuleSetIpRules: empty(allowedIpAddresses) ? null : map(allowedIpAddresses, ip => {
+      action: 'Allow'
+      value: ip
+    })
     acrAdminUserEnabled: false
     azureADAuthenticationAsArmPolicyStatus: 'enabled'
     // https://learn.microsoft.com/en-us/azure/architecture/patterns/quarantine
