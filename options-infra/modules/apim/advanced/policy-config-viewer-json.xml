@@ -6,7 +6,7 @@
     the API-level subscriptionRequired=true setting.
 
     Variables injected by Bicep:
-      {contracts-load-section}  same blob-fetch snippet used by the HTML viewer
+      contracts-load-section    same blob-fetch snippet used by the HTML viewer
 
     on-error preserves APIM auth errors (401/403) instead of masking them as
     500 — otherwise a missing/invalid subscription key would surface as

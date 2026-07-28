@@ -1,7 +1,7 @@
 <!--
     Contract Match Section
     ======================
-    Substituted into caller-identity-fragment.xml's {contracts-load-section}
+    Substituted into caller-identity-fragment.xml's contracts-load-section
     placeholder by caller-identity-fragment.bicep when access contracts are
     wired. Overwrites the fragment's default caller-* / model-* / quota
     variables based on a contract loaded from the configured store.

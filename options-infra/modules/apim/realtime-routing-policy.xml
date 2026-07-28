@@ -10,9 +10,9 @@
         `set-backend-service base-url="…"`.
 
         Token replacement (done in v2/realtime-ws-api.bicep before load):
-          {JWT_VALIDATION}  optional <validate-jwt> block (empty = no inbound
+          JWT_VALIDATION    optional <validate-jwt> block (empty = no inbound
                             caller-token validation).
-          {ROUTING_MAP}     XML-encoded JSON object mapping deployment/model
+          ROUTING_MAP       XML-encoded JSON object mapping deployment/model
                             name -> wss base URL, e.g.
                             {"gpt-realtime":"wss://acct.openai.azure.com/openai/realtime"}.
 

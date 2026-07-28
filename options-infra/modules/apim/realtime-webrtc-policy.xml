@@ -25,10 +25,10 @@
             through unmodified.
 
         Token replacement (done in v2/realtime-webrtc-api.bicep before load):
-          {JWT_VALIDATION}  Optional <validate-jwt> block for the
+          JWT_VALIDATION    Optional <validate-jwt> block for the
                             `/client_secrets` operation (empty = disabled).
                             Never applied to `/calls`.
-          {ROUTING_MAP}     XML-encoded JSON object mapping deployment/model
+          ROUTING_MAP       XML-encoded JSON object mapping deployment/model
                             name → foundry https base URL, e.g.
                               {"gpt-realtime-2":"https://acct.cognitiveservices.azure.com/openai"}.
     -->

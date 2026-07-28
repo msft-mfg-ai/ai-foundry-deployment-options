@@ -1,0 +1,190 @@
+<!--
+  Mock chat-completions policy.
+  Answers with a canned "I'm an LLM mock" response using <return-response>, so
+  no backend call is made. Detects streaming from the request body's `stream`
+  field and emits either a single JSON payload or an SSE-shaped body with
+  multiple `data: {...}` chunks + `data: [DONE]`.
+
+  Attached to both the Azure OpenAI–style and OpenAI v1–style chat-completion
+  operations in inference-mock-api.bicep.
+-->
+<policies>
+  <inbound>
+    <base />
+    <set-variable name="reqId" value="@(Guid.NewGuid().ToString())" />
+    <set-variable name="createdTs" value="@(((long)(DateTime.UtcNow - new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc)).TotalSeconds).ToString())" />
+    <set-variable name="deploymentName" value="@{
+      var mp = context.Request.MatchedParameters;
+      if (mp != null &amp;&amp; mp.ContainsKey("deployment") &amp;&amp; !string.IsNullOrEmpty(mp["deployment"])) { return mp["deployment"]; }
+      try {
+        var body = context.Request.Body.As<JObject>(preserveContent: true);
+        if (body != null &amp;&amp; body["model"] != null) { return body["model"].ToString(); }
+      } catch { }
+      return "mock-model";
+    }" />
+    <set-variable name="isStream" value="@{
+      try {
+        var body = context.Request.Body.As<JObject>(preserveContent: true);
+        if (body != null &amp;&amp; body["stream"] != null &amp;&amp; body["stream"].Type == JTokenType.Boolean) { return (bool)body["stream"]; }
+      } catch { }
+      return false;
+    }" />
+    <choose>
+      <when condition="@((bool)context.Variables["isStream"])">
+        <return-response>
+          <set-status code="200" reason="OK" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>text/event-stream; charset=utf-8</value>
+          </set-header>
+          <set-header name="apim-request-id" exists-action="override">
+            <value>@((string)context.Variables["reqId"])</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@((string)context.Variables["reqId"])</value>
+          </set-header>
+          <set-header name="x-ms-region" exists-action="override">
+            <value>@(context.Deployment.Region ?? "eastus2")</value>
+          </set-header>
+          <set-header name="openai-version" exists-action="override">
+            <value>2020-10-01</value>
+          </set-header>
+          <set-header name="openai-processing-ms" exists-action="override">
+            <value>42</value>
+          </set-header>
+          <set-header name="x-ratelimit-remaining-requests" exists-action="override">
+            <value>999</value>
+          </set-header>
+          <set-header name="x-ratelimit-remaining-tokens" exists-action="override">
+            <value>999999</value>
+          </set-header>
+          <set-header name="x-ratelimit-limit-requests" exists-action="override">
+            <value>1000</value>
+          </set-header>
+          <set-header name="x-ratelimit-limit-tokens" exists-action="override">
+            <value>1000000</value>
+          </set-header>
+          <set-header name="azureml-model-session" exists-action="override">
+            <value>d-mock-session</value>
+          </set-header>
+          <set-header name="x-content-type-options" exists-action="override">
+            <value>nosniff</value>
+          </set-header>
+          <set-header name="strict-transport-security" exists-action="override">
+            <value>max-age=31536000; includeSubDomains; preload</value>
+          </set-header>
+          <set-header name="cache-control" exists-action="override">
+            <value>no-cache, must-revalidate</value>
+          </set-header>
+          <set-body>@{
+            var id = "chatcmpl-" + Guid.NewGuid().ToString("N").Substring(0, 24);
+            var created = (string)context.Variables["createdTs"];
+            var model = (string)context.Variables["deploymentName"];
+            var sb = new System.Text.StringBuilder();
+            sb.Append("data: {\"id\":\"").Append(id).Append("\",\"object\":\"chat.completion.chunk\",\"created\":").Append(created).Append(",\"model\":\"").Append(model).Append("\",\"system_fingerprint\":\"fp_mock\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null,\"content_filter_results\":{}}]}\n\n");
+            var chunks = new[] { "I'm ", "an ", "LLM ", "mock" };
+            foreach (var w in chunks) {
+              sb.Append("data: {\"id\":\"").Append(id).Append("\",\"object\":\"chat.completion.chunk\",\"created\":").Append(created).Append(",\"model\":\"").Append(model).Append("\",\"system_fingerprint\":\"fp_mock\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"").Append(w).Append("\"},\"finish_reason\":null,\"content_filter_results\":{\"hate\":{\"filtered\":false,\"severity\":\"safe\"},\"self_harm\":{\"filtered\":false,\"severity\":\"safe\"},\"sexual\":{\"filtered\":false,\"severity\":\"safe\"},\"violence\":{\"filtered\":false,\"severity\":\"safe\"}}}]}\n\n");
+            }
+            sb.Append("data: {\"id\":\"").Append(id).Append("\",\"object\":\"chat.completion.chunk\",\"created\":").Append(created).Append(",\"model\":\"").Append(model).Append("\",\"system_fingerprint\":\"fp_mock\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\",\"content_filter_results\":{}}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n\n");
+            sb.Append("data: [DONE]\n\n");
+            return sb.ToString();
+          }</set-body>
+        </return-response>
+      </when>
+      <otherwise>
+        <return-response>
+          <set-status code="200" reason="OK" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="apim-request-id" exists-action="override">
+            <value>@((string)context.Variables["reqId"])</value>
+          </set-header>
+          <set-header name="x-request-id" exists-action="override">
+            <value>@((string)context.Variables["reqId"])</value>
+          </set-header>
+          <set-header name="x-ms-region" exists-action="override">
+            <value>@(context.Deployment.Region ?? "eastus2")</value>
+          </set-header>
+          <set-header name="openai-version" exists-action="override">
+            <value>2020-10-01</value>
+          </set-header>
+          <set-header name="openai-processing-ms" exists-action="override">
+            <value>42</value>
+          </set-header>
+          <set-header name="x-ratelimit-remaining-requests" exists-action="override">
+            <value>999</value>
+          </set-header>
+          <set-header name="x-ratelimit-remaining-tokens" exists-action="override">
+            <value>999999</value>
+          </set-header>
+          <set-header name="x-ratelimit-limit-requests" exists-action="override">
+            <value>1000</value>
+          </set-header>
+          <set-header name="x-ratelimit-limit-tokens" exists-action="override">
+            <value>1000000</value>
+          </set-header>
+          <set-header name="azureml-model-session" exists-action="override">
+            <value>d-mock-session</value>
+          </set-header>
+          <set-header name="x-content-type-options" exists-action="override">
+            <value>nosniff</value>
+          </set-header>
+          <set-header name="strict-transport-security" exists-action="override">
+            <value>max-age=31536000; includeSubDomains; preload</value>
+          </set-header>
+          <set-body>@{
+            var id = "chatcmpl-" + Guid.NewGuid().ToString("N").Substring(0, 24);
+            var created = long.Parse((string)context.Variables["createdTs"]);
+            var model = (string)context.Variables["deploymentName"];
+            var payload = new JObject {
+              ["id"] = id,
+              ["object"] = "chat.completion",
+              ["created"] = created,
+              ["model"] = model,
+              ["system_fingerprint"] = "fp_mock",
+              ["prompt_filter_results"] = new JArray(new JObject {
+                ["prompt_index"] = 0,
+                ["content_filter_results"] = new JObject {
+                  ["hate"] = new JObject { ["filtered"] = false, ["severity"] = "safe" },
+                  ["self_harm"] = new JObject { ["filtered"] = false, ["severity"] = "safe" },
+                  ["sexual"] = new JObject { ["filtered"] = false, ["severity"] = "safe" },
+                  ["violence"] = new JObject { ["filtered"] = false, ["severity"] = "safe" }
+                }
+              }),
+              ["choices"] = new JArray(new JObject {
+                ["index"] = 0,
+                ["message"] = new JObject {
+                  ["role"] = "assistant",
+                  ["content"] = "I'm an LLM mock"
+                },
+                ["finish_reason"] = "stop",
+                ["content_filter_results"] = new JObject {
+                  ["hate"] = new JObject { ["filtered"] = false, ["severity"] = "safe" },
+                  ["self_harm"] = new JObject { ["filtered"] = false, ["severity"] = "safe" },
+                  ["sexual"] = new JObject { ["filtered"] = false, ["severity"] = "safe" },
+                  ["violence"] = new JObject { ["filtered"] = false, ["severity"] = "safe" }
+                }
+              }),
+              ["usage"] = new JObject {
+                ["prompt_tokens"] = 10,
+                ["completion_tokens"] = 5,
+                ["total_tokens"] = 15
+              }
+            };
+            return payload.ToString(Newtonsoft.Json.Formatting.None);
+          }</set-body>
+        </return-response>
+      </otherwise>
+    </choose>
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>
