@@ -191,6 +191,37 @@ module ai_gateway '../modules/apim/ai-gateway-pe.bicep' = {
   }
 }
 
+// Shared private link from AI Search → APIM (Gateway subresource).
+// PARKED — the docs say `Microsoft.ApiManagement/service` with `groupId: Gateway`
+// is a supported SPL target, but provisioning fails against APIM StandardV2 +
+// External VNet with:
+//   "Call to Microsoft.ApiManagement/service failed. Error message:
+//    Subscription 053ee099-0596-462e-90dc-677e9afac2b7 not registered with
+//    provider Microsoft.ApiManagement."
+// The failing sub is a Microsoft-owned tenant (Search SPL back-end), so we
+// can't register the RP ourselves. Additionally, APIM v2 with VNet integration
+// only officially supports inbound PE when fronted by Azure Front Door Premium
+// (https://learn.microsoft.com/azure/api-management/private-endpoint#limitations).
+// Leaving the block commented out until either (a) Microsoft onboards
+// Microsoft.ApiManagement in the SPL back-end sub, or (b) we switch the topology
+// to AFD Premium in front of APIM.
+// resource aiSearchService 'Microsoft.Search/searchServices@2024-06-01-preview' existing = {
+//   name: 'project-search-${resourceToken}'
+// }
+//
+// resource searchToApim 'Microsoft.Search/searchServices/sharedPrivateLinkResources@2024-06-01-preview' = {
+//   parent: aiSearchService
+//   name: 'apim-gateway-${resourceToken}'
+//   properties: {
+//     groupId: 'Gateway'
+//     privateLinkResourceId: ai_gateway.outputs.apimResourceId
+//     requestMessage: 'AI Search → APIM Gateway for BYOM testing'
+//   }
+//   dependsOn: [
+//     ai_dependencies
+//   ]
+// }
+
 module dashboard '../modules/dashboard/dashboard.bicep' = {
   name: 'dashboard-deployment-${resourceToken}'
   params: {
@@ -349,4 +380,6 @@ output AZURE_CONTAINER_REGISTRY_ENDPOINT string = containerRegistry.outputs.AZUR
 // ARM resource ID of the first Foundry project — required by the azd
 // `azure.ai.agents` extension (env var: AZURE_AI_PROJECT_ID).
 output AZURE_AI_PROJECT_ID string = '${foundry.outputs.FOUNDRY_RESOURCE_ID}/projects/${first(projectNames)}'
+output APIM_BASE_URL string = ai_gateway.outputs.apimGatewayUrl
+output APIM_RESOURCE_ID string = ai_gateway.outputs.apimResourceId
 output config_validation_result bool = valid_config

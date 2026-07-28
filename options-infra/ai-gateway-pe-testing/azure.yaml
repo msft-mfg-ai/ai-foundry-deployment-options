@@ -35,6 +35,34 @@ services:
         protocols:
             - protocol: invocations
               version: 2.0.0
+    copilot-canary:
+        project: services/copilot-canary
+        host: azure.ai.agent
+        language: python
+        codeConfiguration:
+            entryPoint: main.py
+            runtime: python_3_13
+        container:
+            resources:
+                cpu: "0.5"
+                memory: 1Gi
+        description: |
+            Copilot SDK → APIM direct canary. Validates the `copilot-sdk-via-apim-direct` topology from *inside* the Foundry VNet, where APIM's private endpoint is reachable (public network access is disabled).
+        environmentVariables:
+            - name: APIM_BASE_URL
+              value: ${APIM_BASE_URL}
+            - name: CHAT_MODEL
+              value: ${CHAT_MODEL}
+        kind: hosted
+        metadata:
+            tags:
+                - byom
+                - copilot-sdk
+                - apim-direct
+        name: copilot-canary
+        protocols:
+            - protocol: invocations
+              version: 2.0.0
 infra:
     provider: bicep
     path: .
@@ -71,6 +99,15 @@ hooks:
                 # AI Search firewall is intentionally LEFT OPEN to MY_IP (not closed).
                 # Note: the ByomCanaryAgent hosted agent is built + registered by 'azd deploy'
                 # via the azure.ai.agents extension (see services: block above).
+
+                Write-Host "── Approving pending shared-private-link connections on APIM ──"
+                $pending = az network private-endpoint-connection list --id $env:APIM_RESOURCE_ID --query "[?properties.privateLinkServiceConnectionState.status=='Pending'].id" -o tsv
+                foreach ($cid in $pending) {
+                    if ($cid) {
+                        Write-Host "  approve $cid"
+                        az network private-endpoint-connection approve --id $cid --description "auto-approved for BYOM testing" --output none
+                    }
+                }
         posix:
             shell: sh
             run: |
@@ -103,6 +140,14 @@ hooks:
                 # NOTE: AI Search firewall is intentionally LEFT OPEN to MY_IP so that
                 # subsequent index CRUD (portal, azd re-runs, tests) works without a
                 # firewall dance. All other IPs are still denied.
+
+                echo "── Approving pending shared-private-link connections on APIM ──"
+                for cid in $(az network private-endpoint-connection list --id "${APIM_RESOURCE_ID}" \
+                    --query "[?properties.privateLinkServiceConnectionState.status=='Pending'].id" -o tsv); do
+                  [ -n "$cid" ] || continue
+                  echo "  approve $cid"
+                  az network private-endpoint-connection approve --id "$cid" --description "auto-approved for BYOM testing" --output none
+                done
 
                 echo "── Done. Paste these into the byom GH Environment: ──"
                 echo "PROJECT_ENDPOINT=${PROJECT_ENDPOINT}"

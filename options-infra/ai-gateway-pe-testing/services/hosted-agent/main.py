@@ -67,7 +67,18 @@ app = InvocationAgentServerHost()
 @app.invoke_handler
 async def handle_invoke(request: Request) -> JSONResponse:
     body = await request.body()
-    payload = json.loads(body) if body else {}
+    # `azd ai agent invoke <agent> <text>` sends the arg as a raw string, not
+    # JSON. Handle both shapes: JSON body {"message": "..."} OR a plain body.
+    if not body:
+        payload = {}
+    else:
+        try:
+            payload = json.loads(body)
+            if not isinstance(payload, dict):
+                # JSON body was a bare string / number / list — treat as message.
+                payload = {"message": payload if isinstance(payload, str) else json.dumps(payload)}
+        except json.JSONDecodeError:
+            payload = {"message": body.decode("utf-8", errors="replace")}
     # New Invocations schema uses "message"; keep "prompt" as a legacy fallback.
     prompt = payload.get("message") or payload.get("prompt") or "Reply with the single word: ok."
 
