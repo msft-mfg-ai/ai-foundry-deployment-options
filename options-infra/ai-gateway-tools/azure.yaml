@@ -1,0 +1,21 @@
+name: ai-gateway-tools
+
+infra:
+  provider: bicep
+  path: .
+  module: main
+
+hooks:
+  postprovision:
+    shell: sh
+    run: |
+      echo "✅ Deployment complete!"
+      echo "🔗 APIM gateway URL: ${APIM_GATEWAY_URL}"
+      echo "🧭 API Center:       ${API_CENTER_NAME}"
+      echo "🛠  MCP servers registered: ${REGISTERED_MCP_COUNT}"
+      echo ""
+      echo "Public MCP URLs (via APIM):"
+      echo "${PUBLIC_MCP_URLS}"
+      echo ""
+      echo "Private MCP URLs (via APIM):"
+      echo "${PRIVATE_MCP_URLS}"

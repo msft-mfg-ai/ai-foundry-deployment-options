@@ -14,6 +14,14 @@ param resourceToken string = toLower(uniqueString(resourceGroup().id, location))
 param aiServicesName string = 'foundry-landing-zone-${location}-${resourceToken}'
 param aiServicesName2 string = 'foundry-landing-zone-${foundrySecondaryRegion}-${resourceToken}'
 param aiServicesPublicName string = 'foundry-landing-zone-${location}-PUBLIC-${resourceToken}'
+
+@description('Set to false to skip deploying the OAuth-secured MCP server (cloud-helper). When true (default), an Entra app registration is created and the container app is provisioned unconditionally.')
+param deployMcpOAuth bool = true
+
+@description('Set to false to skip the Functions/Logic Apps sample deployment. Defaults to false because the current `function-app-with-plan.bicep` uses dedicated SKUs (WS1 + B1 = 2 dedicated VMs) which require VM quota — not Consumption.')
+param deployFunctionApps bool = false
+
+@description('Optional override — Entra client ID of an existing app registration to use for the OAuth MCP. When empty (default) and `deployMcpOAuth` is true, a new app registration is created in-place.')
 param mcpEntraAppClientId string = ''
 
 // Foundry doesn't support cross-subscription VNet injection or cross subscription resources, so we need to deploy it in the same subscription
@@ -61,7 +69,7 @@ module appInsights 'br/public:avm/res/insights/component:0.7.2' = {
   }
 }
 
-module apps '../modules/function/function-app-with-plan.bicep' = {
+module apps '../modules/function/function-app-with-plan.bicep' = if (deployFunctionApps) {
   name: 'function-app'
   params: {
     location: 'canadacentral'
@@ -113,12 +121,12 @@ module aiServices2 '../modules/ai/ai-foundry.bicep' = {
     publicNetworkAccess: 'Disabled' // 'enabled' or 'disabled'
     deployments: [
       {
-        name: 'gpt-5.2-chat'
+        name: 'gpt-4.1-mini'
         properties: {
           model: {
             format: 'OpenAI'
-            name: 'gpt-5.2-chat'
-            version: '2025-12-11'
+            name: 'gpt-4.1-mini'
+            version: '2025-04-14'
           }
         }
         sku: {
@@ -171,26 +179,45 @@ module managedEnvironment '../modules/aca/container-app-environment.bicep' = {
   }
 }
 
-module mcpEntraAuth '../modules/aca/container-app.bicep' = if (!empty(mcpEntraAppClientId)) {
+// ── OAuth-secured MCP server (cloud-helper) ─────────────────────────────────
+// Entra app registration for the MCP server. Created in-place unless the
+// caller supplies their own `mcpEntraAppClientId`. Identifier URI matches
+// the ACA FQDN so tokens with `resource=<mcp-url>` (RFC 8707) are accepted.
+var mcpOAuthAcaName = 'mcp-oauth-${resourceToken}'
+var mcpOAuthAcaFqdn = '${mcpOAuthAcaName}.${managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN}'
+
+module mcpOAuthAppReg '../modules/ai/mcp-oauth-app-registration.bicep' = if (deployMcpOAuth && empty(mcpEntraAppClientId)) {
+  name: 'mcp-oauth-app-reg'
+  params: {
+    nameSuffix: resourceToken
+    httpsIdentifierUri: 'https://${mcpOAuthAcaFqdn}/mcp'
+  }
+}
+
+var effectiveMcpEntraAppClientId = empty(mcpEntraAppClientId)
+  ? (deployMcpOAuth ? mcpOAuthAppReg!.outputs.clientId : '')
+  : mcpEntraAppClientId
+
+module mcpEntraAuth '../modules/aca/container-app.bicep' = if (deployMcpOAuth) {
   name: 'mcp-with-entra-auth'
   params: {
     location: location
     tags: tags
-    name: 'mcp-with-entra-auth-${resourceToken}'
+    name: mcpOAuthAcaName
     workloadProfileName: managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
     applicationInsightsConnectionString: appInsights.outputs.connectionString
     definition: {
       settings: [
         { name: 'TENANT_ID', value: tenant().tenantId }
-        { name: 'CLIENT_ID', value: mcpEntraAppClientId }
+        { name: 'CLIENT_ID', value: effectiveMcpEntraAppClientId }
         {
           name: 'RESOURCE_HOST'
-          value: 'https://mcp-with-entra-auth-${resourceToken}.${managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN}'
+          value: 'https://${mcpOAuthAcaFqdn}'
         }
       ]
     }
     ingressTargetPort: 8000
-    existingImage: 'ghcr.io/karpikpl/mcp-oauth:latest'
+    existingImage: 'ghcr.io/karpikpl/foundry-entra-passthrough:latest'
     userAssignedManagedIdentityClientId: identity.outputs.clientId
     userAssignedManagedIdentityResourceId: identity.outputs.resourceId
     ingressExternal: true
@@ -350,3 +377,7 @@ module privateEndpointAndDNS '../modules/networking/private-endpoint-and-dns.bic
     storageAccountSubscriptionId: ai_dependencies!.outputs.STORAGE_SUBSCRIPTION_ID // Subscription ID for Storage Account
   }
 }
+
+// ── Outputs — expose the OAuth MCP endpoint + client ID for wiring downstream ──
+output MCP_OAUTH_URL string = deployMcpOAuth ? 'https://${mcpOAuthAcaFqdn}/mcp' : ''
+output MCP_OAUTH_CLIENT_ID string = effectiveMcpEntraAppClientId

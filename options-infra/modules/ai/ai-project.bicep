@@ -133,6 +133,19 @@ resource foundry_project 'Microsoft.CognitiveServices/accounts/projects@2025-04-
   }
 }
 
+// Grants the project managed identity read access on Application Insights so
+// evaluation can read agent traces (incl. GenAI prompt/response content).
+module appInsightsRoleAssignments '../iam/role-assignment-appInsights.bicep' = if (!empty(appInsightsName)) {
+  name: 'app-insights-ra-${project_name}-deployment'
+  scope: resourceGroup(appInsightsSubscriptionId, appInsightsResourceGroupName)
+  params: {
+    appInsightsName: appInsightsName
+    principalId: empty(managedIdentityResourceId)
+      ? foundry_project.identity.principalId
+      : identity!.properties.principalId
+  }
+}
+
 resource byoAoaiConnectionFoundry 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-preview' = if (!empty(existingAiResourceId) && usingFoundryAiConnection) {
   name: byoAiFoundryConnectionName
   parent: foundry
