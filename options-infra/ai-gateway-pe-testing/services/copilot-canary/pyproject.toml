@@ -1,0 +1,17 @@
+[project]
+name = "copilot-canary"
+version = "0.1.0"
+description = "Copilot-SDK-over-APIM canary hosted agent"
+requires-python = ">=3.13"
+dependencies = [
+    "azure-ai-agentserver-invocations>=1.0.0b6",
+    "azure-identity>=1.19.0",
+    # Agent Framework wrapper. Pins github-copilot-sdk==1.0.2 transitively;
+    # do not pin it directly or pip will fail to resolve.
+    # https://devblogs.microsoft.com/agent-framework/build-ai-agents-with-github-copilot-sdk-and-microsoft-agent-framework/
+    "agent-framework-github-copilot>=1.0.0",
+    # PPTX authoring skill (agent can `import pptx` in bash to generate decks);
+    # LibreOffice `soffice` is installed in the image for pptx->pdf/png rendering.
+    "python-pptx>=1.0.2",
+    "pillow>=10.4.0",
+]

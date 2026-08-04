@@ -38,14 +38,12 @@ services:
     copilot-canary:
         project: services/copilot-canary
         host: azure.ai.agent
-        language: python
-        codeConfiguration:
-            entryPoint: main.py
-            runtime: python_3_13
+        language: docker
+        startupCommand: python main.py
         container:
             resources:
-                cpu: "0.5"
-                memory: 1Gi
+                cpu: "1.0"
+                memory: 2Gi
         description: |
             Copilot SDK → APIM direct canary. Validates the `copilot-sdk-via-apim-direct` topology from *inside* the Foundry VNet, where APIM's private endpoint is reachable (public network access is disabled).
         environmentVariables:
@@ -53,6 +51,13 @@ services:
               value: ${APIM_BASE_URL}
             - name: CHAT_MODEL
               value: ${CHAT_MODEL}
+            # Copilot SDK's built-in `apply_patch` tool is declared as an
+            # OpenAI custom-grammar tool (GPT-5 Responses API feature), so
+            # this canary tests against a real GPT-5 deployment on the
+            # Responses API path. Defaults to gpt-5.1 (the only real Foundry
+            # deployment); override if you deploy a different GPT-5 SKU.
+            - name: COPILOT_CANARY_MODEL
+              value: ${COPILOT_CANARY_MODEL=gpt-5.1}
         kind: hosted
         metadata:
             tags:
