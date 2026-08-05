@@ -8,8 +8,6 @@ on:
       - 'options-infra/modules/compute/wireguard-gateway-vm.bicep'
       - 'options-infra/modules/networking/wireguard-vpn-subnet.bicep'
       - 'options-infra/modules/networking/wireguard-vpn-nsg.bicep'
-      - 'options-infra/modules/networking/wireguard-workload-nsg.bicep'
-      - 'options-infra/modules/networking/wireguard-route-table.bicep'
       - '.github/workflows/bicep-validate-reusable.yml'
   pull_request:
     branches: [main]
@@ -18,8 +16,6 @@ on:
       - 'options-infra/modules/compute/wireguard-gateway-vm.bicep'
       - 'options-infra/modules/networking/wireguard-vpn-subnet.bicep'
       - 'options-infra/modules/networking/wireguard-vpn-nsg.bicep'
-      - 'options-infra/modules/networking/wireguard-workload-nsg.bicep'
-      - 'options-infra/modules/networking/wireguard-route-table.bicep'
       - '.github/workflows/bicep-validate-reusable.yml'
 
 jobs:

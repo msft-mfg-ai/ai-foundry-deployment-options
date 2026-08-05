@@ -6,7 +6,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from vpn import find_free_subnet, find_priority_base, find_tunnel_network
+from vpn import find_free_subnet, find_tunnel_network
 
 
 class NetworkSelectionTests(unittest.TestCase):
@@ -26,15 +26,6 @@ class NetworkSelectionTests(unittest.TestCase):
             find_tunnel_network(blocked),
             ipaddress.ip_network("10.99.2.0/24"),
         )
-
-    def test_priority_selection_ignores_managed_rule_names(self):
-        rules = [
-            {"name": "AllowNestedInbound", "direction": "Inbound", "priority": 2000},
-            {"name": "ExistingInbound", "direction": "Inbound", "priority": 2010},
-            {"name": "ExistingOutbound", "direction": "Outbound", "priority": 2020},
-        ]
-
-        self.assertEqual(find_priority_base(rules), 2020)
 
 
 if __name__ == "__main__":

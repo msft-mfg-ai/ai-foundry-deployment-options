@@ -22,12 +22,6 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS_DIR = ROOT / "results"
-MANAGED_RULE_NAMES = {
-    "AllowNestedInbound",
-    "AllowTunnelInbound",
-    "AllowNestedOutbound",
-    "AllowTunnelOutbound",
-}
 
 
 class VpnError(RuntimeError):
@@ -99,14 +93,6 @@ def env_or_prompt(key: str, label: str, default: str = "") -> str:
     return prompt(label, default)
 
 
-def confirm(label: str, default: bool = False) -> bool:
-    suffix = "Y/n" if default else "y/N"
-    answer = input(f"{label} [{suffix}]: ").strip().lower()
-    if not answer:
-        return default
-    return answer in {"y", "yes"}
-
-
 def choose(label: str, values: list[dict[str, Any]], formatter) -> dict[str, Any]:
     if not values:
         raise VpnError(f"No choices available for {label}.")
@@ -118,24 +104,6 @@ def choose(label: str, values: list[dict[str, Any]], formatter) -> dict[str, Any
         if raw.isdigit() and 1 <= int(raw) <= len(values):
             return values[int(raw) - 1]
         print("Enter one of the listed numbers.")
-
-
-def parse_resource_id(resource_id: str) -> dict[str, str]:
-    parts = resource_id.strip("/").split("/")
-    parsed: dict[str, str] = {}
-    for index, part in enumerate(parts[:-1]):
-        if part.lower() == "subscriptions":
-            parsed["subscription"] = parts[index + 1]
-        elif part.lower() == "resourcegroups":
-            parsed["resourceGroup"] = parts[index + 1]
-        elif part.lower() in {
-            "virtualnetworks",
-            "networksecuritygroups",
-            "routetables",
-            "subnets",
-        }:
-            parsed[part.lower()] = parts[index + 1]
-    return parsed
 
 
 def network(value: str, label: str) -> ipaddress.IPv4Network:
@@ -185,33 +153,6 @@ def usable_ssh_key() -> tuple[Path, str]:
         "No matching SSH key pair was found in ~/.ssh "
         "(checked id_ed25519, id_rsa, and id_ecdsa)."
     )
-
-
-def find_priority_base(rules: list[dict[str, Any]]) -> int:
-    occupied: dict[str, set[int]] = {"Inbound": set(), "Outbound": set()}
-    for rule in rules:
-        if rule.get("name") in MANAGED_RULE_NAMES:
-            continue
-        direction = rule.get("direction")
-        priority = rule.get("priority")
-        if direction in occupied and isinstance(priority, int):
-            occupied[direction].add(priority)
-    for base in range(2000, 4001, 10):
-        if (
-            base not in occupied["Inbound"]
-            and base + 10 not in occupied["Inbound"]
-            and base + 20 not in occupied["Outbound"]
-            and base + 30 not in occupied["Outbound"]
-        ):
-            return base
-    raise VpnError("No collision-free NSG priority block is available between 2000 and 4030.")
-
-
-def address_values(rule: dict[str, Any], singular: str, plural: str) -> list[str]:
-    values = rule.get(plural) or []
-    if value := rule.get(singular):
-        values.append(value)
-    return sorted(values)
 
 
 def discover_vnet_dns(subscription_id: str, vnet_id: str) -> tuple[list[str], list[str]]:
@@ -398,99 +339,6 @@ def ensure_encryption_at_host(subscription_id: str, register: bool) -> None:
     )
 
 
-def migrate_legacy_gateway(
-    subscription_id: str,
-    vnet_resource_group: str,
-    vpn_resource_group: str,
-    private_ip: str,
-    ownership_id: str,
-    execute: bool,
-) -> None:
-    if vnet_resource_group.lower() == vpn_resource_group.lower():
-        return
-    nics = az_json(
-        [
-            "network",
-            "nic",
-            "list",
-            "--subscription",
-            subscription_id,
-            "--resource-group",
-            vnet_resource_group,
-        ]
-    )
-    for nic in nics:
-        if not any(
-            config.get("privateIPAddress") == private_ip
-            for config in nic.get("ipConfigurations", [])
-        ):
-            continue
-        tags = nic.get("tags") or {}
-        if (
-            tags.get("created-by") != "options-infra-vpn"
-            or tags.get("vpn-owner") != ownership_id
-        ):
-            raise VpnError(
-                f"Private IP {private_ip} is allocated to NIC {nic['id']}, "
-                "which is not owned by this azd VPN environment."
-            )
-        print(f"Legacy sample-owned VPN NIC found in the VNet RG: {nic['id']}")
-        if not execute:
-            print("Dry run: the legacy NIC and public IP would be removed.")
-            continue
-        if vm_id := (nic.get("virtualMachine") or {}).get("id"):
-            vm = az_json(["vm", "show", "--ids", vm_id])
-            vm_tags = vm.get("tags") or {}
-            if (
-                vm_tags.get("created-by") != "options-infra-vpn"
-                or vm_tags.get("vpn-owner") != ownership_id
-            ):
-                raise VpnError(
-                    f"Legacy NIC is attached to VM {vm_id}, which is not owned by this environment."
-                )
-            run(["az", "vm", "delete", "--ids", vm_id, "--yes"])
-        public_ip_ids = [
-            config.get("publicIPAddress", {}).get("id")
-            for config in nic.get("ipConfigurations", [])
-            if config.get("publicIPAddress", {}).get("id")
-        ]
-        run(["az", "network", "nic", "delete", "--ids", nic["id"]])
-        for public_ip_id in public_ip_ids:
-            run_allow_not_found(
-                ["az", "network", "public-ip", "delete", "--ids", public_ip_id]
-            )
-        print("Removed the legacy VPN gateway allocation.")
-
-
-def ssh_args(key_path: str, endpoint: str, username: str, port: str) -> list[str]:
-    return [
-        "ssh",
-        "-i",
-        str(Path(key_path).expanduser()),
-        "-p",
-        port,
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "ConnectTimeout=15",
-        "-o",
-        "StrictHostKeyChecking=accept-new",
-        f"{username}@{endpoint}",
-    ]
-
-
-def remote_run(script: str, *, check: bool = True) -> subprocess.CompletedProcess[str]:
-    if env("VPN_REMOTE_ACCESS_MODE", "ssh") == "local":
-        return run(["sudo", "-n", "bash", "-s"], input_text=script, check=check)
-    args = ssh_args(
-        env("VPN_REMOTE_SSH_KEY_PATH"),
-        env("VPN_REMOTE_SSH_ENDPOINT"),
-        env("VPN_REMOTE_SSH_USERNAME"),
-        env("VPN_REMOTE_SSH_PORT", "22"),
-    )
-    return run([*args, "sudo", "-n", "bash", "-s"], input_text=script, check=check)
-
-
 def azure_run(script: str, *, check: bool = True) -> subprocess.CompletedProcess[str]:
     encoded_script = base64.b64encode(script.encode("utf-8")).decode("ascii")
     wrapper = (
@@ -550,16 +398,8 @@ def env(key: str, default: str = "") -> str:
     return value
 
 
-def env_json(key: str) -> Any:
-    raw = env(key)
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise VpnError(f"{key} is not valid JSON: {exc}") from exc
-
-
 def discover(dry_run: bool) -> None:
-    require_tools("az", "azd", "ssh")
+    require_tools("az", "azd")
     account = az_json(["account", "show"])
     subscription_id = azd_get("VPN_TARGET_SUBSCRIPTION_ID", account["id"])
     ownership_id = azd_get("VPN_OWNERSHIP_ID") or str(uuid.uuid4())
@@ -704,44 +544,15 @@ def discover(dry_run: bool) -> None:
     if any(vpn_subnet.overlaps(existing) for existing in comparison_subnets):
         raise VpnError("The VPN subnet overlaps an existing subnet.")
     gateway_private_ip = str(list(vpn_subnet.hosts())[3])
-    migrate_legacy_gateway(
-        subscription_id,
-        selected["resourceGroup"],
-        vpn_resource_group,
-        gateway_private_ip,
-        ownership_id,
-        execute=not dry_run,
-    )
 
     print("\nExisting subnets:")
     for subnet in subnets:
         prefixes = subnet.get("addressPrefixes") or [subnet.get("addressPrefix", "")]
-        name_lower = subnet["name"].lower()
-        delegated = [
-            delegation.get("serviceName", "")
-            for delegation in subnet.get("delegations", [])
-        ]
-        excluded_reason = ""
-        if subnet["name"] == "AzureBastionSubnet":
-            excluded_reason = "Bastion"
-        elif name_lower == vpn_subnet_name.lower():
-            excluded_reason = "VPN"
-        elif "private-endpoint" in name_lower or name_lower.startswith(("pe-", "pep-")):
-            excluded_reason = "private endpoint"
-        route_table = subnet.get("routeTable") or {}
-        nsg = subnet.get("networkSecurityGroup") or {}
-        print(
-            f"  {subnet['name']}: {', '.join(prefixes)}"
-            f" | NSG={parse_resource_id(nsg.get('id', '')).get('networksecuritygroups', '-')}"
-            f" | route table={parse_resource_id(route_table.get('id', '')).get('routetables', '-')}"
-            f" | delegations={','.join(delegated) or '-'}"
-            f"{' | excluded: ' + excluded_reason if excluded_reason else ''}"
-        )
+        print(f"  {subnet['name']}: {', '.join(prefixes)}")
     print(
         "\nPoint-to-site client mode uses source NAT on the Azure gateway, "
         "so existing workload/private-endpoint subnets do not need UDR or NSG changes."
     )
-    selected_subnets: list[dict[str, Any]] = []
 
     default_tunnel = str(find_tunnel_network([*vnet_prefixes, vpn_subnet]))
     tunnel = network(
@@ -751,20 +562,8 @@ def discover(dry_run: bool) -> None:
     if tunnel.prefixlen != 24 or not tunnel.subnet_of(ipaddress.ip_network("10.99.0.0/16")):
         raise VpnError("The tunnel must be a /24 within 10.99.0.0/16.")
 
-    remote_access_mode = "client-config"
-    remote_ssh_endpoint = ""
-    remote_ssh_port = "22"
-    remote_ssh_username = ""
-
-    default_key, public_key = usable_ssh_key()
-    key_path = default_key
-    public_path = Path(f"{key_path}.pub")
-    if not key_path.is_file() or not public_path.is_file():
-        raise VpnError("The selected SSH private key and matching .pub file must both exist.")
-    public_key = public_path.read_text(encoding="utf-8").strip()
+    _, public_key = usable_ssh_key()
     tunnel_hosts = list(tunnel.hosts())
-    remote_network = network(f"{tunnel_hosts[1]}/32", "Client tunnel address")
-    remote_lan_ip = tunnel_hosts[1]
     private_hostnames, linked_zones = discover_vnet_dns(subscription_id, vnet["id"])
     private_foundry_hostnames = [
         hostname
@@ -799,14 +598,11 @@ def discover(dry_run: bool) -> None:
         "Foundry hostnames discovered in the VNet resource group/private endpoints: "
         + (", ".join(foundry_hostnames) if foundry_hostnames else "none found")
     )
-    azure_target_ip = ""
     azure_target_host = env_or_prompt(
         "VPN_AZURE_VALIDATION_HOSTNAME",
         "Private hostname to validate through the VPN",
         foundry_hostnames[0] if foundry_hostnames else "",
     )
-    remote_target_ip = ""
-    remote_target_host = ""
     client_name = re.sub(
         r"[^A-Za-z0-9_.-]",
         "-",
@@ -817,14 +613,6 @@ def discover(dry_run: bool) -> None:
         ),
     )
 
-    route_tables: list[dict[str, Any]] = []
-    route_index: dict[tuple[str, str], int] = {}
-    shared_route_name = f"{vpn_subnet_name}-rt"
-    route_name_prefix = f"wg-{ownership_id.split('-')[0]}"
-    managed_route_names = {
-        f"{route_name_prefix}-remote-network": str(remote_network),
-        f"{route_name_prefix}-tunnel-network": str(tunnel),
-    }
     existing_vpn_nsg = run(
         [
             "az",
@@ -849,242 +637,8 @@ def discover(dry_run: bool) -> None:
                 f"VPN NSG name {vpn_subnet_name}-nsg already exists and is not owned by this azd environment."
             )
 
-    workload_configs: list[dict[str, Any]] = []
-    workload_nsgs: list[dict[str, Any]] = []
-    nsg_index: dict[tuple[str, str], int] = {}
-    nsg_rules: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for subnet in selected_subnets:
-        prefix = (subnet.get("addressPrefixes") or [subnet.get("addressPrefix")])[0]
-        nsg_id = subnet.get("networkSecurityGroup", {}).get("id", "")
-        if nsg_id:
-            nsg_parts = parse_resource_id(nsg_id)
-            nsg_name = nsg_parts["networksecuritygroups"]
-            nsg_rg = nsg_parts["resourceGroup"]
-            rules = az_json(
-                [
-                    "network",
-                    "nsg",
-                    "rule",
-                    "list",
-                    "--subscription",
-                    subscription_id,
-                    "--resource-group",
-                    nsg_rg,
-                    "--nsg-name",
-                    nsg_name,
-                ]
-            )
-            colliding_rules = [
-                rule for rule in rules if rule.get("name") in MANAGED_RULE_NAMES
-            ]
-            if colliding_rules and len(colliding_rules) != len(MANAGED_RULE_NAMES):
-                raise VpnError(
-                    f"NSG {nsg_name} contains only some reserved WireGuard rule names."
-                )
-            create_nsg = False
-            priority_base = (
-                next(
-                    rule["priority"]
-                    for rule in colliding_rules
-                    if rule["name"] == "AllowNestedInbound"
-                )
-                if colliding_rules
-                else find_priority_base(rules)
-            )
-        else:
-            nsg_name = f"{subnet['name']}-wireguard-nsg"
-            nsg_rg = selected["resourceGroup"]
-            create_nsg = True
-            priority_base = 3000
-            existing_generated_nsg = run(
-                [
-                    "az",
-                    "network",
-                    "nsg",
-                    "show",
-                    "--subscription",
-                    subscription_id,
-                    "--resource-group",
-                    nsg_rg,
-                    "--name",
-                    nsg_name,
-                    "-o",
-                    "json",
-                ],
-                check=False,
-            )
-            if existing_generated_nsg.returncode == 0:
-                existing = json.loads(existing_generated_nsg.stdout)
-                if existing.get("tags", {}).get("vpn-owner") != ownership_id:
-                    raise VpnError(
-                        f"Generated NSG name {nsg_name} already exists and is not owned by this azd environment."
-                    )
-
-        route_id = subnet.get("routeTable", {}).get("id", "")
-        if route_id:
-            route_parts = parse_resource_id(route_id)
-            route_name = route_parts["routetables"]
-            route_rg = route_parts["resourceGroup"]
-            create_route = False
-            routes = az_json(
-                [
-                    "network",
-                    "route-table",
-                    "route",
-                    "list",
-                    "--subscription",
-                    subscription_id,
-                    "--resource-group",
-                    route_rg,
-                    "--route-table-name",
-                    route_name,
-                ]
-            )
-            colliding_routes = [
-                route
-                for route in routes
-                if route.get("name") in managed_route_names
-            ]
-            for route in colliding_routes:
-                if (
-                    route.get("addressPrefix") != managed_route_names[route["name"]]
-                    or route.get("nextHopType") != "VirtualAppliance"
-                    or route.get("nextHopIpAddress") != gateway_private_ip
-                ):
-                    raise VpnError(
-                        f"Route table {route_name} contains a conflicting route named {route['name']}."
-                    )
-        else:
-            route_name = shared_route_name
-            route_rg = selected["resourceGroup"]
-            create_route = True
-            existing_generated_route_table = run(
-                [
-                    "az",
-                    "network",
-                    "route-table",
-                    "show",
-                    "--subscription",
-                    subscription_id,
-                    "--resource-group",
-                    route_rg,
-                    "--name",
-                    route_name,
-                    "-o",
-                    "json",
-                ],
-                check=False,
-            )
-            if existing_generated_route_table.returncode == 0:
-                existing = json.loads(existing_generated_route_table.stdout)
-                if existing.get("tags", {}).get("vpn-owner") != ownership_id:
-                    raise VpnError(
-                        f"Generated route table name {route_name} already exists and is not owned by this azd environment."
-                    )
-
-        nsg_key = (nsg_rg.lower(), nsg_name.lower())
-        if nsg_key not in nsg_index:
-            nsg_index[nsg_key] = len(workload_nsgs)
-            workload_nsgs.append(
-                {
-                    "name": nsg_name,
-                    "resourceGroup": nsg_rg,
-                    "create": create_nsg,
-                    "priorityBase": priority_base,
-                    "subnetPrefixes": [],
-                }
-            )
-            if nsg_id:
-                nsg_rules[nsg_key] = rules
-        group = workload_nsgs[nsg_index[nsg_key]]
-        if group["create"] != create_nsg or group["priorityBase"] != priority_base:
-            raise VpnError(f"Inconsistent discovery state for shared NSG {nsg_name}.")
-        group["subnetPrefixes"].append(prefix)
-
-        route_key = (route_rg.lower(), route_name.lower())
-        if route_key not in route_index:
-            route_index[route_key] = len(route_tables)
-            route_tables.append(
-                {
-                    "name": route_name,
-                    "resourceGroup": route_rg,
-                    "create": create_route,
-                }
-            )
-        workload_configs.append(
-            {
-                "name": subnet["name"],
-                "prefix": prefix,
-                "nsgName": nsg_name,
-                "nsgResourceGroup": nsg_rg,
-                "createNsg": create_nsg,
-                "nsgPriorityBase": priority_base,
-                "nsgGroupIndex": nsg_index[nsg_key],
-                "routeTableName": route_name,
-                "routeTableResourceGroup": route_rg,
-                "createRouteTable": create_route,
-                "routeTableIndex": route_index[route_key],
-            }
-        )
-
-    for nsg_key, group_index in nsg_index.items():
-        rules = nsg_rules.get(nsg_key, [])
-        rules_by_name = {rule["name"]: rule for rule in rules}
-        if not MANAGED_RULE_NAMES.issubset(rules_by_name):
-            continue
-        group = workload_nsgs[group_index]
-        expected_rules = {
-            "AllowNestedInbound": (
-                "Inbound",
-                [str(remote_network)],
-                sorted(group["subnetPrefixes"]),
-                group["priorityBase"],
-            ),
-            "AllowTunnelInbound": (
-                "Inbound",
-                [str(tunnel)],
-                sorted(group["subnetPrefixes"]),
-                group["priorityBase"] + 10,
-            ),
-            "AllowNestedOutbound": (
-                "Outbound",
-                sorted(group["subnetPrefixes"]),
-                [str(remote_network)],
-                group["priorityBase"] + 20,
-            ),
-            "AllowTunnelOutbound": (
-                "Outbound",
-                sorted(group["subnetPrefixes"]),
-                [str(tunnel)],
-                group["priorityBase"] + 30,
-            ),
-        }
-        for rule_name, expected in expected_rules.items():
-            rule = rules_by_name[rule_name]
-            actual = (
-                rule.get("direction"),
-                address_values(rule, "sourceAddressPrefix", "sourceAddressPrefixes"),
-                address_values(
-                    rule, "destinationAddressPrefix", "destinationAddressPrefixes"
-                ),
-                rule.get("priority"),
-            )
-            if (
-                actual != expected
-                or rule.get("access") != "Allow"
-                or rule.get("protocol") != "*"
-                or rule.get("sourcePortRange") != "*"
-                or rule.get("destinationPortRange") != "*"
-                or f"[vpn-owner:{ownership_id}]" not in rule.get("description", "")
-            ):
-                raise VpnError(
-                    f"NSG {group['name']} contains a conflicting rule named {rule_name}."
-                )
-
-    tunnel_hosts = list(tunnel.hosts())
     values = {
         "VPN_TARGET_SUBSCRIPTION_ID": subscription_id,
-        "VPN_MODE": "client",
         "VPN_VNET_RESOURCE_GROUP": selected["resourceGroup"],
         "VPN_RESOURCE_GROUP": vpn_resource_group,
         "VPN_LOCATION": selected["location"],
@@ -1097,45 +651,18 @@ def discover(dry_run: bool) -> None:
         "VPN_GATEWAY_PRIVATE_IP": gateway_private_ip,
         "VPN_TUNNEL_CIDR": str(tunnel),
         "VPN_AZURE_TUNNEL_IP": str(tunnel_hosts[0]),
-        "VPN_REMOTE_TUNNEL_IP": str(tunnel_hosts[1]),
-        "VPN_REMOTE_NETWORK_CIDR": str(remote_network),
-        "VPN_REMOTE_ACCESS_MODE": remote_access_mode,
-        "VPN_REMOTE_SSH_ENDPOINT": remote_ssh_endpoint,
-        "VPN_REMOTE_SSH_PORT": remote_ssh_port,
-        "VPN_REMOTE_SSH_USERNAME": remote_ssh_username,
-        "VPN_REMOTE_SSH_KEY_PATH": str(key_path),
-        "VPN_REMOTE_LAN_IP": str(remote_lan_ip),
+        "VPN_CLIENT_TUNNEL_IP": str(tunnel_hosts[1]),
         "VPN_ADMIN_SSH_PUBLIC_KEY": public_key,
         "VPN_AZURE_ADMIN_USERNAME": "wireguardadmin",
         "VPN_GATEWAY_VM_SIZE": "Standard_D2als_v6",
-        "VPN_WORKLOAD_SUBNETS_JSON": json.dumps(
-            workload_configs, separators=(",", ":")
-        ),
-        "VPN_WORKLOAD_NSGS_JSON": json.dumps(workload_nsgs, separators=(",", ":")),
-        "VPN_ROUTE_TABLES_JSON": json.dumps(route_tables, separators=(",", ":")),
         "VPN_OWNERSHIP_ID": ownership_id,
-        "VPN_ROUTE_NAME_PREFIX": route_name_prefix,
         "VPN_CLIENT_NAME": client_name,
         "VPN_PRIVATE_DNS_ZONES_JSON": json.dumps(linked_zones, separators=(",", ":")),
         "VPN_PRIVATE_HOSTNAMES_JSON": json.dumps(
             private_hostnames, separators=(",", ":")
         ),
-        "VPN_AZURE_VALIDATION_IP": azure_target_ip,
         "VPN_AZURE_VALIDATION_HOSTNAME": azure_target_host,
-        "VPN_REMOTE_VALIDATION_IP": remote_target_ip,
-        "VPN_REMOTE_VALIDATION_HOSTNAME": remote_target_host,
     }
-    remote_scope = "client-config"
-    if azd_get("VPN_REMOTE_STATE_SCOPE") != remote_scope:
-        values.update(
-            {
-                "VPN_REMOTE_STATE_SCOPE": remote_scope,
-                "VPN_REMOTE_WG_REPLACE_CONFIRMED": "false",
-                "VPN_REMOTE_WG_BACKUP_PATH": "",
-                "VPN_REMOTE_PRIOR_STATE_JSON": "",
-                "VPN_REMOTE_CLEANUP_COMPLETE": "false",
-            }
-        )
 
     print("\nResolved VPN configuration:")
     for key in (
@@ -1155,33 +682,6 @@ def discover(dry_run: bool) -> None:
     for key, value in values.items():
         azd_set(key, value)
     print("\nDiscovery complete. Configuration was saved to the current azd environment.")
-
-
-def associate_workload_subnets() -> None:
-    associations = env_json("VPN_WORKLOAD_ASSOCIATIONS")
-    for association in associations:
-        if not association["attachNsg"] and not association["attachRouteTable"]:
-            continue
-        args = [
-            "az",
-            "network",
-            "vnet",
-            "subnet",
-            "update",
-            "--subscription",
-            env("VPN_TARGET_SUBSCRIPTION_ID"),
-            "--resource-group",
-            env("VPN_VNET_RESOURCE_GROUP"),
-            "--vnet-name",
-            env("VPN_VNET_NAME"),
-            "--name",
-            association["subnetName"],
-        ]
-        if association["attachNsg"]:
-            args.extend(["--network-security-group", association["nsgResourceId"]])
-        if association["attachRouteTable"]:
-            args.extend(["--route-table", association["routeTableResourceId"]])
-        run([*args, "-o", "none"])
 
 
 def bootstrap_script() -> str:
@@ -1206,7 +706,8 @@ printf 'WG_PUBLIC_KEY=%s\n' "$(cat /etc/wireguard/publickey)"
 """
 
 
-def configure_client() -> None:
+def configure() -> None:
+    require_tools("az", "azd")
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
@@ -1280,7 +781,7 @@ PrivateKey = $private_key
 
 [Peer]
 PublicKey = {client_public_key}
-AllowedIPs = {env('VPN_REMOTE_TUNNEL_IP')}/32
+AllowedIPs = {env('VPN_CLIENT_TUNNEL_IP')}/32
 EOF
 chmod 600 /etc/wireguard/wg0.conf
 systemctl enable wg-quick@wg0 >/dev/null
@@ -1305,7 +806,7 @@ wg show wg0
     allowed_ips = ", ".join([*vnet_prefixes, f"{env('VPN_AZURE_TUNNEL_IP')}/32"])
     client_config = f"""[Interface]
 PrivateKey = {client_private_key}
-Address = {env('VPN_REMOTE_TUNNEL_IP')}/32
+Address = {env('VPN_CLIENT_TUNNEL_IP')}/32
 DNS = {env('VPN_AZURE_TUNNEL_IP')}
 
 [Peer]
@@ -1367,183 +868,9 @@ Clear-DnsClientCache
     print("Then run the DNS policy script from an elevated PowerShell session.")
 
 
-def configure() -> None:
-    require_tools("az", "azd")
-    associate_workload_subnets()
-    if env("VPN_MODE", "client") == "client":
-        configure_client()
-        return
-    require_tools("ssh")
-    azd_set("VPN_REMOTE_CLEANUP_COMPLETE", "false")
-
-    existing = remote_run(
-        """set -e
-if [ -f /etc/wireguard/wg0.conf ]; then echo WG_CONFIG_EXISTS=yes; else echo WG_CONFIG_EXISTS=no; fi
-printf 'WG_CONFIG_OWNER=%s\n' "$(sed -n 's/^# vpn-owner://p' /etc/wireguard/wg0.conf 2>/dev/null | head -1)"
-printf 'WG_SERVICE_ACTIVE=%s\n' "$(systemctl is-active wg-quick@wg0 2>/dev/null || true)"
-printf 'WG_SERVICE_ENABLED=%s\n' "$(systemctl is-enabled wg-quick@wg0 2>/dev/null || true)"
-printf 'IP_FORWARD=%s\n' "$(sysctl -n net.ipv4.ip_forward)"
-printf 'FORWARD_POLICY=%s\n' "$(iptables -S FORWARD | awk '$1 == "-P" { print $3 }')"
-"""
-    )
-    remote_scope = (
-        "local"
-        if env("VPN_REMOTE_ACCESS_MODE", "ssh") == "local"
-        else (
-            f"{env('VPN_REMOTE_SSH_USERNAME')}@{env('VPN_REMOTE_SSH_ENDPOINT')}:"
-            f"{env('VPN_REMOTE_SSH_PORT', '22')}"
-        )
-    )
-    if azd_get("VPN_REMOTE_STATE_SCOPE") != remote_scope:
-        raise VpnError("Remote state scope no longer matches the configured SSH endpoint.")
-    if not azd_get("VPN_REMOTE_PRIOR_STATE_JSON"):
-        prior_state = {
-            "configExisted": marker(existing.stdout, "WG_CONFIG_EXISTS") == "yes",
-            "serviceActive": marker(existing.stdout, "WG_SERVICE_ACTIVE"),
-            "serviceEnabled": marker(existing.stdout, "WG_SERVICE_ENABLED"),
-            "ipForward": marker(existing.stdout, "IP_FORWARD"),
-            "forwardPolicy": marker(existing.stdout, "FORWARD_POLICY") or "DROP",
-        }
-        azd_set("VPN_REMOTE_PRIOR_STATE_JSON", json.dumps(prior_state, separators=(",", ":")))
-    config_exists = marker(existing.stdout, "WG_CONFIG_EXISTS") == "yes"
-    config_owner = marker(existing.stdout, "WG_CONFIG_OWNER")
-    owned_config = config_owner == env("VPN_OWNERSHIP_ID")
-    if config_exists and not owned_config:
-        already_confirmed = azd_get("VPN_REMOTE_WG_REPLACE_CONFIRMED").lower() == "true"
-        if not already_confirmed:
-            if not sys.stdin.isatty() or not confirm(
-                "Remote /etc/wireguard/wg0.conf exists. Back it up and replace it?"
-            ):
-                raise VpnError("Remote WireGuard configuration replacement was not approved.")
-            azd_set("VPN_REMOTE_WG_REPLACE_CONFIRMED", "true")
-        if not azd_get("VPN_REMOTE_WG_BACKUP_PATH"):
-            backup_result = remote_run(
-                """set -e
-backup="/etc/wireguard/wg0.conf.pre-azd-$(date -u +%Y%m%dT%H%M%SZ)"
-cp -a /etc/wireguard/wg0.conf "$backup"
-printf 'WG_BACKUP_PATH=%s\n' "$backup"
-"""
-            )
-            azd_set(
-                "VPN_REMOTE_WG_BACKUP_PATH",
-                marker(backup_result.stdout, "WG_BACKUP_PATH"),
-            )
-        backup_path = env("VPN_REMOTE_WG_BACKUP_PATH")
-        if remote_run(f"test -f {shlex.quote(backup_path)}", check=False).returncode != 0:
-            raise VpnError(
-                f"The recorded remote WireGuard backup no longer exists: {backup_path}"
-            )
-    elif owned_config:
-        prior_state = json.loads(env("VPN_REMOTE_PRIOR_STATE_JSON"))
-        backup_path = azd_get("VPN_REMOTE_WG_BACKUP_PATH")
-        if prior_state.get("configExisted") and not backup_path:
-            raise VpnError(
-                "The remote gateway has sample-owned configuration but its original backup path is missing."
-            )
-        if backup_path:
-            backup_check = remote_run(
-                f"test -f {shlex.quote(backup_path)}", check=False
-            )
-            if backup_check.returncode != 0:
-                raise VpnError(
-                    f"The recorded remote WireGuard backup no longer exists: {backup_path}"
-                )
-
-    azure_bootstrap = azure_run(bootstrap_script())
-    remote_bootstrap = remote_run(bootstrap_script())
-    azure_public_key = marker(azure_bootstrap.stdout, "WG_PUBLIC_KEY")
-    remote_public_key = marker(remote_bootstrap.stdout, "WG_PUBLIC_KEY")
-
-    remote_allowed = ", ".join(
-        [*json.loads(env("VPN_VNET_PREFIXES_JSON")), f"{env('VPN_AZURE_TUNNEL_IP')}/32"]
-    )
-    azure_address = f"{env('VPN_AZURE_TUNNEL_IP')}/{network(env('VPN_TUNNEL_CIDR'), 'Tunnel CIDR').prefixlen}"
-    remote_address = f"{env('VPN_REMOTE_TUNNEL_IP')}/{network(env('VPN_TUNNEL_CIDR'), 'Tunnel CIDR').prefixlen}"
-
-    azure_config = f"""set -euo pipefail
-private_key=$(cat /etc/wireguard/privatekey)
-cat >/etc/wireguard/wg0.conf <<EOF
-[Interface]
-Address = {azure_address}
-ListenPort = 51820
-PrivateKey = $private_key
-
-[Peer]
-PublicKey = {remote_public_key}
-AllowedIPs = {env('VPN_REMOTE_NETWORK_CIDR')}, {env('VPN_REMOTE_TUNNEL_IP')}/32
-EOF
-chmod 600 /etc/wireguard/wg0.conf
-systemctl enable wg-quick@wg0 >/dev/null
-systemctl restart wg-quick@wg0
-wg show wg0
-"""
-    azure_run(azure_config)
-
-    remote_config = f"""set -euo pipefail
-private_key=$(cat /etc/wireguard/privatekey)
-cat >/etc/wireguard/wg0.conf <<EOF
-# vpn-owner:{env('VPN_OWNERSHIP_ID')}
-[Interface]
-Address = {remote_address}
-PrivateKey = $private_key
-
-[Peer]
-PublicKey = {azure_public_key}
-Endpoint = {env('VPN_GATEWAY_PUBLIC_IP')}:51820
-AllowedIPs = {remote_allowed}
-PersistentKeepalive = 25
-EOF
-chmod 600 /etc/wireguard/wg0.conf
-systemctl enable wg-quick@wg0 >/dev/null
-systemctl restart wg-quick@wg0
-wg show wg0
-"""
-    remote_run(remote_config)
-    print("WireGuard is configured on both gateways.")
-
-
-def validation_script(peer_ip: str, target_ip: str, target_hostname: str) -> str:
-    quoted_peer = shlex.quote(peer_ip)
-    quoted_ip = shlex.quote(target_ip)
-    quoted_hostname = shlex.quote(target_hostname)
-    return f"""set +e
-failed=0
-echo '## system'
-systemctl is-active wg-quick@wg0 || failed=1
-[ "$(sysctl -n net.ipv4.ip_forward)" = "1" ] || failed=1
-iptables -S FORWARD | tee /tmp/wg-forward-policy
-grep -q '^-P FORWARD ACCEPT$' /tmp/wg-forward-policy || failed=1
-echo '## wireguard'
-wg show wg0 || failed=1
-echo '## tunnel-ping'
-ping -c 4 -W 3 {quoted_peer} || failed=1
-echo '## target-ip'
-if [ -n {quoted_ip} ]; then
-  ip route get {quoted_ip} || failed=1
-  ping -c 4 -W 3 {quoted_ip} || failed=1
-else
-  echo SKIPPED
-fi
-echo '## target-hostname'
-if [ -n {quoted_hostname} ]; then
-  getent ahostsv4 {quoted_hostname} || failed=1
-  ping -c 4 -W 3 {quoted_hostname} || failed=1
-else
-  echo SKIPPED
-fi
-echo '## nat'
-iptables -t nat -S
-exit "$failed"
-"""
-
-
 def validation_checks() -> tuple[list[str], list[str]]:
     failures: list[str] = []
     checks: list[str] = []
-    associations = {
-        item["subnetName"]: item for item in env_json("VPN_WORKLOAD_ASSOCIATIONS")
-    }
-
     nic = az_json(
         [
             "network",
@@ -1591,144 +918,11 @@ def validation_checks() -> tuple[list[str], list[str]]:
     if encryption is not True:
         failures.append("Encryption at host is not enabled.")
 
-    for workload in env_json("VPN_WORKLOAD_SUBNETS_JSON"):
-        subnet = az_json(
-            [
-                "network",
-                "vnet",
-                "subnet",
-                "show",
-                "--subscription",
-                env("VPN_TARGET_SUBSCRIPTION_ID"),
-                "--resource-group",
-                env("VPN_VNET_RESOURCE_GROUP"),
-                "--vnet-name",
-                env("VPN_VNET_NAME"),
-                "--name",
-                workload["name"],
-            ]
-        )
-        checks.append(
-            f"Subnet {workload['name']}: NSG={subnet.get('networkSecurityGroup', {}).get('id', 'none')}, "
-            f"route table={subnet.get('routeTable', {}).get('id', 'none')}"
-        )
-        expected_association = associations[workload["name"]]
-        actual_nsg_id = subnet.get("networkSecurityGroup", {}).get("id", "").lower()
-        actual_route_id = subnet.get("routeTable", {}).get("id", "").lower()
-        if actual_nsg_id != expected_association["nsgResourceId"].lower():
-            failures.append(f"Subnet {workload['name']} has the wrong NSG association.")
-        if actual_route_id != expected_association["routeTableResourceId"].lower():
-            failures.append(f"Subnet {workload['name']} has the wrong route-table association.")
-
-    for nsg in env_json("VPN_WORKLOAD_NSGS_JSON"):
-        rules = az_json(
-            [
-                "network",
-                "nsg",
-                "rule",
-                "list",
-                "--subscription",
-                env("VPN_TARGET_SUBSCRIPTION_ID"),
-                "--resource-group",
-                nsg["resourceGroup"],
-                "--nsg-name",
-                nsg["name"],
-            ]
-        )
-        rules_by_name = {rule["name"]: rule for rule in rules}
-        missing_rules = MANAGED_RULE_NAMES.difference(rules_by_name)
-        if missing_rules:
-            failures.append(
-                f"NSG {nsg['name']} is missing rules: {', '.join(sorted(missing_rules))}."
-            )
-        expected_rules = {
-            "AllowNestedInbound": (
-                "Inbound",
-                [env("VPN_REMOTE_NETWORK_CIDR")],
-                sorted(nsg["subnetPrefixes"]),
-                nsg["priorityBase"],
-            ),
-            "AllowTunnelInbound": (
-                "Inbound",
-                [env("VPN_TUNNEL_CIDR")],
-                sorted(nsg["subnetPrefixes"]),
-                nsg["priorityBase"] + 10,
-            ),
-            "AllowNestedOutbound": (
-                "Outbound",
-                sorted(nsg["subnetPrefixes"]),
-                [env("VPN_REMOTE_NETWORK_CIDR")],
-                nsg["priorityBase"] + 20,
-            ),
-            "AllowTunnelOutbound": (
-                "Outbound",
-                sorted(nsg["subnetPrefixes"]),
-                [env("VPN_TUNNEL_CIDR")],
-                nsg["priorityBase"] + 30,
-            ),
-        }
-        for rule_name, expected in expected_rules.items():
-            if rule_name not in rules_by_name:
-                continue
-            rule = rules_by_name[rule_name]
-            actual = (
-                rule.get("direction"),
-                address_values(rule, "sourceAddressPrefix", "sourceAddressPrefixes"),
-                address_values(
-                    rule, "destinationAddressPrefix", "destinationAddressPrefixes"
-                ),
-                rule.get("priority"),
-            )
-            if (
-                actual != expected
-                or rule.get("access") != "Allow"
-                or rule.get("protocol") != "*"
-                or rule.get("sourcePortRange") != "*"
-                or rule.get("destinationPortRange") != "*"
-                or f"[vpn-owner:{env('VPN_OWNERSHIP_ID')}]" not in rule.get(
-                    "description", ""
-                )
-            ):
-                failures.append(f"NSG rule {nsg['name']}/{rule_name} has unexpected properties.")
-
-    for route_table in env_json("VPN_ROUTE_TABLES_JSON"):
-        routes = az_json(
-            [
-                "network",
-                "route-table",
-                "route",
-                "list",
-                "--subscription",
-                env("VPN_TARGET_SUBSCRIPTION_ID"),
-                "--resource-group",
-                route_table["resourceGroup"],
-                "--route-table-name",
-                route_table["name"],
-            ]
-        )
-        routes_by_name = {route["name"]: route for route in routes}
-        route_prefix = env("VPN_ROUTE_NAME_PREFIX")
-        for route_name, prefix in (
-            (f"{route_prefix}-remote-network", env("VPN_REMOTE_NETWORK_CIDR")),
-            (f"{route_prefix}-tunnel-network", env("VPN_TUNNEL_CIDR")),
-        ):
-            route = routes_by_name.get(route_name)
-            if not route:
-                failures.append(f"Route table {route_table['name']} is missing {route_name}.")
-                continue
-            if (
-                route.get("addressPrefix") != prefix
-                or route.get("nextHopType") != "VirtualAppliance"
-                or route.get("nextHopIpAddress") != env("VPN_GATEWAY_PRIVATE_IP")
-            ):
-                failures.append(
-                    f"Route table {route_table['name']}/{route_name} has unexpected properties."
-                )
-
     return checks, failures
 
 
-def validate_client() -> None:
+def validate() -> None:
+    require_tools("az", "azd")
     checks, failures = validation_checks()
     hostname = azd_get("VPN_AZURE_VALIDATION_HOSTNAME")
     dns_check = (
@@ -1821,370 +1015,8 @@ exit "$failed"
         raise VpnError("Point-to-site gateway validation failed. See the report.")
 
 
-def validate() -> None:
-    require_tools("az", "azd")
-    if env("VPN_MODE", "client") == "client":
-        validate_client()
-        return
-    require_tools("ssh")
-    checks, failures = validation_checks()
-    azure_result = azure_run(
-        validation_script(
-            env("VPN_REMOTE_TUNNEL_IP"),
-            azd_get("VPN_REMOTE_VALIDATION_IP"),
-            azd_get("VPN_REMOTE_VALIDATION_HOSTNAME"),
-        ),
-        check=False,
-    )
-    remote_result = remote_run(
-        validation_script(
-            env("VPN_AZURE_TUNNEL_IP"),
-            azd_get("VPN_AZURE_VALIDATION_IP"),
-            azd_get("VPN_AZURE_VALIDATION_HOSTNAME"),
-        ),
-        check=False,
-    )
-    timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    report = RESULTS_DIR / f"wireguard-validation-{timestamp}.md"
-    status = (
-        "PASS"
-        if not failures and azure_result.returncode == 0 and remote_result.returncode == 0
-        else "FAIL"
-    )
-    report.write_text(
-        "\n".join(
-            [
-                "# WireGuard VPN validation",
-                "",
-                f"- Timestamp (UTC): `{timestamp}`",
-                f"- Overall status: **{status}**",
-                f"- Azure VNet: `{env('VPN_VNET_NAME')}`",
-                f"- Azure prefixes: `{env('VPN_VNET_PREFIXES_JSON')}`",
-                f"- Remote network: `{env('VPN_REMOTE_NETWORK_CIDR')}`",
-                f"- Tunnel network: `{env('VPN_TUNNEL_CIDR')}`",
-                "",
-                "## Azure resource checks",
-                "",
-                *[f"- {item}" for item in checks],
-                "",
-                "## Azure resource failures",
-                "",
-                *([f"- {item}" for item in failures] if failures else ["- None"]),
-                "",
-                "## Azure gateway tests",
-                "",
-                "```text",
-                azure_result.stdout.strip(),
-                azure_result.stderr.strip(),
-                "```",
-                "",
-                "## Remote gateway tests",
-                "",
-                "```text",
-                remote_result.stdout.strip(),
-                remote_result.stderr.strip(),
-                "```",
-                "",
-                "## No-NAT return-path prerequisite",
-                "",
-                (
-                    f"The remote LAN router (or each remote host) must route "
-                    f"`{env('VPN_VNET_PREFIXES_JSON')}` through remote gateway "
-                    f"`{env('VPN_REMOTE_LAN_IP')}`. The sample does not add masquerade/SNAT."
-                ),
-                "",
-                (
-                    "DNS results reflect the existing resolvers on both gateways. "
-                    "This sample does not provision DNS forwarding."
-                ),
-            ]
-        ),
-        encoding="utf-8",
-    )
-    print(f"Validation report: {report}")
-    if status != "PASS":
-        raise VpnError("One or more validation checks failed. See the report for details.")
-
-
 def cleanup() -> None:
     require_tools("az", "azd")
-    workloads = env_json("VPN_WORKLOAD_SUBNETS_JSON")
-    associations = env_json("VPN_WORKLOAD_ASSOCIATIONS")
-    by_name = {item["name"]: item for item in workloads}
-    for association in associations:
-        workload = by_name[association["subnetName"]]
-        subnet = az_json(
-            [
-                "network",
-                "vnet",
-                "subnet",
-                "show",
-                "--subscription",
-                env("VPN_TARGET_SUBSCRIPTION_ID"),
-                "--resource-group",
-                env("VPN_VNET_RESOURCE_GROUP"),
-                "--vnet-name",
-                env("VPN_VNET_NAME"),
-                "--name",
-                workload["name"],
-            ]
-        )
-        remove_properties: list[str] = []
-        current_nsg = subnet.get("networkSecurityGroup", {}).get("id", "").lower()
-        current_route = subnet.get("routeTable", {}).get("id", "").lower()
-        if (
-            workload["createNsg"]
-            and current_nsg == association["nsgResourceId"].lower()
-        ):
-            remove_properties.append("networkSecurityGroup")
-        if (
-            workload["createRouteTable"]
-            and current_route == association["routeTableResourceId"].lower()
-        ):
-            remove_properties.append("routeTable")
-        if remove_properties:
-            args = [
-                "az",
-                "network",
-                "vnet",
-                "subnet",
-                "update",
-                "--subscription",
-                env("VPN_TARGET_SUBSCRIPTION_ID"),
-                "--resource-group",
-                env("VPN_VNET_RESOURCE_GROUP"),
-                "--vnet-name",
-                env("VPN_VNET_NAME"),
-                "--name",
-                workload["name"],
-            ]
-            for property_name in remove_properties:
-                args.extend(["--remove", property_name])
-            run([*args, "-o", "none"])
-
-    if (
-        (
-            env("VPN_REMOTE_ACCESS_MODE", "ssh") == "local"
-            or azd_get("VPN_REMOTE_SSH_ENDPOINT")
-        )
-        and azd_get("VPN_REMOTE_CLEANUP_COMPLETE").lower() != "true"
-    ):
-        backup = azd_get("VPN_REMOTE_WG_BACKUP_PATH")
-        prior_state = json.loads(azd_get("VPN_REMOTE_PRIOR_STATE_JSON", "{}"))
-        remote_script = "systemctl disable --now wg-quick@wg0 >/dev/null 2>&1 || true\n"
-        if backup:
-            remote_script += (
-                f"if [ -f {shlex.quote(backup)} ]; then "
-                f"mv {shlex.quote(backup)} /etc/wireguard/wg0.conf; fi\n"
-            )
-        else:
-            remote_script += "rm -f /etc/wireguard/wg0.conf\n"
-        remote_script += "rm -f /etc/sysctl.d/99-azd-wireguard-forward.conf\n"
-        if prior_state:
-            remote_script += (
-                f"sysctl -w net.ipv4.ip_forward={shlex.quote(str(prior_state.get('ipForward', '0')))} "
-                ">/dev/null\n"
-                f"iptables -P FORWARD {shlex.quote(prior_state.get('forwardPolicy', 'DROP'))}\n"
-                "netfilter-persistent save >/dev/null\n"
-            )
-            if prior_state.get("serviceEnabled") == "enabled":
-                remote_script += "systemctl enable wg-quick@wg0 >/dev/null 2>&1 || true\n"
-            if prior_state.get("serviceActive") == "active":
-                remote_script += "systemctl start wg-quick@wg0\n"
-        remote_run(remote_script)
-        azd_set("VPN_REMOTE_CLEANUP_COMPLETE", "true")
-
-    if azd_get("VPN_REMOTE_CLEANUP_COMPLETE").lower() == "true":
-        azd_set("VPN_REMOTE_WG_BACKUP_PATH", "")
-        azd_set("VPN_REMOTE_PRIOR_STATE_JSON", "")
-        azd_set("VPN_REMOTE_WG_REPLACE_CONFIRMED", "false")
-
-    route_failures: list[str] = []
-    for route_table in env_json("VPN_ROUTE_TABLES_JSON"):
-        route_prefix = env("VPN_ROUTE_NAME_PREFIX")
-        for route_name, expected_prefix in (
-            (f"{route_prefix}-remote-network", env("VPN_REMOTE_NETWORK_CIDR")),
-            (f"{route_prefix}-tunnel-network", env("VPN_TUNNEL_CIDR")),
-        ):
-            current = run(
-                [
-                    "az",
-                    "network",
-                    "route-table",
-                    "route",
-                    "show",
-                    "--subscription",
-                    env("VPN_TARGET_SUBSCRIPTION_ID"),
-                    "--resource-group",
-                    route_table["resourceGroup"],
-                    "--route-table-name",
-                    route_table["name"],
-                    "--name",
-                    route_name,
-                    "-o",
-                    "json",
-                ],
-                check=False,
-            )
-            if current.returncode != 0:
-                if "not found" not in (current.stderr or current.stdout).lower():
-                    route_failures.append(f"{route_table['name']}/{route_name}")
-                continue
-            route = json.loads(current.stdout)
-            if (
-                route.get("addressPrefix") != expected_prefix
-                or route.get("nextHopType") != "VirtualAppliance"
-                or route.get("nextHopIpAddress") != env("VPN_GATEWAY_PRIVATE_IP")
-            ):
-                route_failures.append(
-                    f"{route_table['name']}/{route_name} (definition changed)"
-                )
-                continue
-            result = run(
-                [
-                    "az",
-                    "network",
-                    "route-table",
-                    "route",
-                    "delete",
-                    "--subscription",
-                    env("VPN_TARGET_SUBSCRIPTION_ID"),
-                    "--resource-group",
-                    route_table["resourceGroup"],
-                    "--route-table-name",
-                    route_table["name"],
-                    "--name",
-                    route_name,
-                ],
-                check=False,
-            )
-            message = (result.stderr or result.stdout).lower()
-            if result.returncode != 0 and "not found" not in message:
-                route_failures.append(f"{route_table['name']}/{route_name}")
-        if route_table["create"] and not route_failures:
-            run_allow_not_found(
-                [
-                    "az",
-                    "network",
-                    "route-table",
-                    "delete",
-                    "--subscription",
-                    env("VPN_TARGET_SUBSCRIPTION_ID"),
-                    "--resource-group",
-                    route_table["resourceGroup"],
-                    "--name",
-                    route_table["name"],
-                ]
-            )
-    if route_failures:
-        raise VpnError(
-            "Refusing to delete the gateway because these routes could not be removed: "
-            + ", ".join(route_failures)
-        )
-
-    for nsg in env_json("VPN_WORKLOAD_NSGS_JSON"):
-        if nsg["create"]:
-            continue
-        expected_rules = {
-            "AllowNestedInbound": (
-                "Inbound",
-                [env("VPN_REMOTE_NETWORK_CIDR")],
-                sorted(nsg["subnetPrefixes"]),
-                nsg["priorityBase"],
-            ),
-            "AllowTunnelInbound": (
-                "Inbound",
-                [env("VPN_TUNNEL_CIDR")],
-                sorted(nsg["subnetPrefixes"]),
-                nsg["priorityBase"] + 10,
-            ),
-            "AllowNestedOutbound": (
-                "Outbound",
-                sorted(nsg["subnetPrefixes"]),
-                [env("VPN_REMOTE_NETWORK_CIDR")],
-                nsg["priorityBase"] + 20,
-            ),
-            "AllowTunnelOutbound": (
-                "Outbound",
-                sorted(nsg["subnetPrefixes"]),
-                [env("VPN_TUNNEL_CIDR")],
-                nsg["priorityBase"] + 30,
-            ),
-        }
-        for rule_name, expected in expected_rules.items():
-            current = run(
-                [
-                    "az",
-                    "network",
-                    "nsg",
-                    "rule",
-                    "show",
-                    "--subscription",
-                    env("VPN_TARGET_SUBSCRIPTION_ID"),
-                    "--resource-group",
-                    nsg["resourceGroup"],
-                    "--nsg-name",
-                    nsg["name"],
-                    "--name",
-                    rule_name,
-                    "-o",
-                    "json",
-                ],
-                check=False,
-            )
-            if current.returncode != 0:
-                if "not found" in (current.stderr or current.stdout).lower():
-                    continue
-                raise VpnError(
-                    f"Failed to inspect managed NSG rule {nsg['name']}/{rule_name}."
-                )
-            rule = json.loads(current.stdout)
-            actual = (
-                rule.get("direction"),
-                address_values(rule, "sourceAddressPrefix", "sourceAddressPrefixes"),
-                address_values(
-                    rule, "destinationAddressPrefix", "destinationAddressPrefixes"
-                ),
-                rule.get("priority"),
-            )
-            if (
-                actual != expected
-                or rule.get("access") != "Allow"
-                or rule.get("protocol") != "*"
-                or rule.get("sourcePortRange") != "*"
-                or rule.get("destinationPortRange") != "*"
-                or f"[vpn-owner:{env('VPN_OWNERSHIP_ID')}]" not in rule.get(
-                    "description", ""
-                )
-            ):
-                raise VpnError(
-                    f"Refusing to delete changed NSG rule {nsg['name']}/{rule_name}."
-                )
-            result = run(
-                [
-                    "az",
-                    "network",
-                    "nsg",
-                    "rule",
-                    "delete",
-                    "--subscription",
-                    env("VPN_TARGET_SUBSCRIPTION_ID"),
-                    "--resource-group",
-                    nsg["resourceGroup"],
-                    "--nsg-name",
-                    nsg["name"],
-                    "--name",
-                    rule_name,
-                ],
-                check=False,
-            )
-            message = (result.stderr or result.stdout).lower()
-            if result.returncode != 0 and "not found" not in message:
-                raise VpnError(
-                    f"Failed to remove managed NSG rule {nsg['name']}/{rule_name}."
-                )
-
     run_allow_not_found(
         [
             "az",
@@ -2222,15 +1054,8 @@ def cleanup() -> None:
             env("VPN_SUBNET_NAME"),
         ]
     )
-    nsg_ids = [
-        item["resourceId"]
-        for item in env_json("VPN_WORKLOAD_NSGS")
-        if item["created"]
-    ]
     if vpn_nsg := azd_get("VPN_NSG_RESOURCE_ID"):
-        nsg_ids.append(vpn_nsg)
-    for nsg_id in nsg_ids:
-        run_allow_not_found(["az", "network", "nsg", "delete", "--ids", nsg_id])
+        run_allow_not_found(["az", "network", "nsg", "delete", "--ids", vpn_nsg])
     vpn_rg = run(
         [
             "az",
@@ -2261,7 +1086,7 @@ def cleanup() -> None:
                     "--no-wait",
                 ]
             )
-    print("Sample-owned VPN resources and associations were removed.")
+    print("Sample-owned VPN resources were removed.")
 
 
 def main() -> int:

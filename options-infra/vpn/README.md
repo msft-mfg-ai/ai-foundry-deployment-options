@@ -120,5 +120,3 @@ The predown hook deletes the sample-owned VPN resource group and the VPN subnet 
 - `../modules/compute/wireguard-gateway-vm.bicep`
 - `../modules/networking/wireguard-vpn-nsg.bicep`
 - `../modules/networking/wireguard-vpn-subnet.bicep`
-
-The route-table and workload-NSG modules remain available for the optional site-to-site implementation but are not used by the default point-to-site client mode.
