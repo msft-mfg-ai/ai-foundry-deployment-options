@@ -143,6 +143,7 @@ async def _create_agents_for_project(conn_string: str, spec_file: str | None):
                             server_label=label,
                             server_url=mcp["target"],
                             require_approval="never",
+                            project_connection_id=mcp["name"],
                         )
                         await utils.create_agent(
                             name=agent_name,
