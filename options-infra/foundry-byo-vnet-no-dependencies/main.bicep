@@ -127,5 +127,7 @@ output project_connection_strings string[] = [
 ]
 output project_names string[] = [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
 output FOUNDRY_NAME string = foundry.outputs.FOUNDRY_NAME
+output FOUNDRY_PROJECT_ENDPOINT string = 'https://${foundry.outputs.FOUNDRY_NAME}.services.ai.azure.com/api/projects/${projects[0].outputs.FOUNDRY_PROJECT_NAME}'
+output AZURE_AI_PROJECT_ID string = '${foundry.outputs.FOUNDRY_RESOURCE_ID}/projects/${projects[0].outputs.FOUNDRY_PROJECT_NAME}'
 output AZURE_OPENAI_CHAT_DEPLOYMENT_NAME string = 'gpt-5.2'
 output OPENAPI_URL string = first(filter(apiServices, api => api.name == 'weather-openapi')).?uri ?? ''

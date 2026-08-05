@@ -121,6 +121,23 @@ function pickPrompt() {
   return PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
 }
 
+function newRequestId() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.floor(Math.random() * 16);
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+function responseHeader(response, ...names) {
+  for (const name of names) {
+    const wanted = name.toLowerCase();
+    for (const [key, value] of Object.entries(response.headers || {})) {
+      if (key.toLowerCase() === wanted) return Array.isArray(value) ? value[0] : value;
+    }
+  }
+  return '';
+}
+
 function endpointForVariant() {
   let agentName;
   if (FAMILY === 'hosted') {
@@ -159,7 +176,11 @@ export default function () {
       ? JSON.stringify({ input: prompt, stream: false, agent_session_id: HOSTED_SESSION_ID })
       : JSON.stringify({ input: prompt, stream: false });
 
-  const headers = { 'Content-Type': 'application/json' };
+  const clientRequestId = newRequestId();
+  const headers = {
+    'Content-Type': 'application/json',
+    'x-ms-client-request-id': clientRequestId,
+  };
   if (needsAad) headers['Authorization'] = `Bearer ${AAD_TOKEN}`;
   if (FAMILY === 'hosted' || FAMILY === 'hosted-bypass') headers['Foundry-Features'] = 'HostedAgents=V1Preview';
 
@@ -204,6 +225,10 @@ export default function () {
     status: resp.status,
     ms: elapsed,
     ok,
+    client_request_id: clientRequestId,
+    request_id: responseHeader(resp, 'x-ms-request-id', 'request-id', 'x-request-id'),
+    apim_request_id: responseHeader(resp, 'apim-request-id'),
+    traceparent: responseHeader(resp, 'traceparent'),
     tool_calls: toolCalls,
     prompt: prompt.slice(0, 120),
     reply: (replyText || (resp.body || '').toString()).slice(0, 400),

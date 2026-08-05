@@ -73,6 +73,7 @@ module ai_dependencies '../modules/ai/ai-dependencies-with-dns.bicep' = {
     resourceToken: resourceToken
     aiServicesName: '' // create AI services PE later
     aiAccountNameResourceGroupName: ''
+    semanticSearch: 'free'
   }
 }
 
@@ -131,11 +132,28 @@ module foundry '../modules/ai/ai-foundry.bicep' = {
     managedIdentityResourceId: foundry_identity.outputs.MANAGED_IDENTITY_RESOURCE_ID
     name: 'ai-foundry-${resourceToken}'
     disableLocalAuth: false // enable local auth because AI Foundry needs it
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: 'Disabled'
     agentSubnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.agentSubnet.resourceId // Use the first agent subnet
     deployments: [] // no models
     keyVaultResourceId: keyVault.outputs.KEY_VAULT_RESOURCE_ID
     keyVaultConnectionEnabled: true
+  }
+}
+
+// Private endpoint for the Foundry account created by this deployment.
+// `ai-pe-dns.bicep` attaches all three required AI DNS zones:
+// services.ai.azure.com, openai.azure.com, and cognitiveservices.azure.com.
+module foundry_private_endpoint '../modules/networking/ai-pe-dns.bicep' = {
+  name: 'foundry-private-endpoint-${resourceToken}'
+  params: {
+    tags: tags
+    location: location
+    aiAccountName: foundry.outputs.FOUNDRY_NAME
+    aiAccountNameResourceGroup: resourceGroup().name
+    aiAccountSubscriptionId: subscription().subscriptionId
+    peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+    resourceToken: 'foundry-${resourceToken}'
+    existingDnsZones: ai_dependencies.outputs.DNS_ZONES
   }
 }
 

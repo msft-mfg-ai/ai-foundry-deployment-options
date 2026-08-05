@@ -38,7 +38,9 @@ The heavy lifting lives in two small modules:
   to the sample VNet, then registers the MCP server on APIM.
 - [`modules/apim/apim-streamable-mcp/api.bicep`](../modules/apim/apim-streamable-mcp/api.bicep)
   — creates the APIM backend + `type: 'mcp'` API with
-  `mcpProperties.transportType = 'streamable'`.
+  `mcpProperties.transportType = 'streamable'`. Its per-API diagnostics set
+  `mcp.logPayload = true` so MCP request and response payloads are captured
+  by the configured Azure Monitor and Application Insights loggers.
 - [`modules/apim/api-center.bicep`](../modules/apim/api-center.bicep) —
   provisions API Center and grants its system-assigned managed identity
   the `API Management Service Reader Role` on the APIM so the APIM

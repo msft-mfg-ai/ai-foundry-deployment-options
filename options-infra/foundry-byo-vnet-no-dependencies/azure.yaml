@@ -1,5 +1,39 @@
-# deploying using AZD because https://github.com/Azure/azure-cli/pull/31990
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+requiredVersions:
+  extensions:
+    azure.ai.agents: '>=1.0.0-beta.7'
+
 name: foundry-byo-vnet-no-dependencies
+
+services:
+  simple-hosted-agent:
+    project: services/simple-hosted-agent
+    host: azure.ai.agent
+    language: python
+    codeConfiguration:
+      runtime: python_3_13
+      entryPoint: main.py
+      dependencyResolution: remote_build
+    container:
+      resources:
+        cpu: '0.5'
+        memory: 1Gi
+    description: Simple Agent Framework assistant hosted by Microsoft Foundry.
+    displayName: Simple Hosted Agent
+    environmentVariables:
+      - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+        value: ${AZURE_OPENAI_CHAT_DEPLOYMENT_NAME}
+    kind: hosted
+    metadata:
+      tags:
+        - sample
+        - hosted
+        - Agent Framework
+    name: simple-hosted-agent
+    protocols:
+      - protocol: responses
+        version: 2.0.0
 
 infra:
   provider: bicep

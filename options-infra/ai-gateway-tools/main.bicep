@@ -146,7 +146,7 @@ module apiCenter '../modules/apim/api-center.bicep' = {
   params: {
     tags: tags
     location: location
-    name: 'apic-tools-${resourceToken}'
+    name: 'apic-mcps-${resourceToken}'
     apimResourceId: apim.outputs.id
     sku: 'Free'
   }

@@ -63,7 +63,9 @@ stateful mode without pinning `scaleMaxReplicas: 1`.
 - `K6_PROFILE=short perf/run.sh custom hosted prompt` — 2-min ramp for smoke.
 - No `K6_PROFILE` = full 9m30s production ramp.
 - Every k6 iteration emits a `__ITER__{...}` console line captured into
-  `results/*.jsonl` with `{v, vu, it, status, ms, ok, tool_calls, prompt, reply}`.
+  `results/*.jsonl` with `{v, vu, it, status, ms, ok, client_request_id,
+  request_id, apim_request_id, traceparent, tool_calls, prompt, reply}`. Use
+  these IDs to correlate a failing iteration with app, APIM, and Foundry logs.
 
 ## APIM front-door
 

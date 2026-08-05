@@ -8,6 +8,8 @@
 #pragma warning disable MEAI001 // ModelContextProtocol client APIs are experimental
 
 using System;
+using System.Diagnostics;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
@@ -59,6 +61,9 @@ public static class SupportAgentBuilder
             ManagedIdentityClientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID"),
         });
 
+    private static readonly System.ClientModel.Primitives.HttpClientPipelineTransport RequestIdLoggingTransport = new(
+        new HttpClient(new RequestIdLoggingHandler()));
+
     /// <summary>
     /// Build an <see cref="AIAgent"/> for the HOSTED variant. Routes model calls
     /// through the Foundry PROJECT endpoint (via AIProjectClient.AsAIAgent),
@@ -73,7 +78,13 @@ public static class SupportAgentBuilder
             ? await LoadMcpToolsAsync(cfg.McpServerUrl!, ct).ConfigureAwait(false)
             : Array.Empty<AITool>();
 
-        var project = new AIProjectClient(new Uri(cfg.FoundryProjectEndpoint), SharedCredential);
+        var project = new AIProjectClient(
+            new Uri(cfg.FoundryProjectEndpoint),
+            SharedCredential,
+            new AIProjectClientOptions
+            {
+                Transport = RequestIdLoggingTransport,
+            });
         return project.AsAIAgent(
             model: cfg.ChatModelDeployment,
             instructions: SystemPrompt,
@@ -101,13 +112,25 @@ public static class SupportAgentBuilder
         AzureOpenAIClient openAi;
         if (!string.IsNullOrWhiteSpace(apimBase))
         {
-            openAi = new AzureOpenAIClient(new Uri(apimBase), SharedCredential);
+            openAi = new AzureOpenAIClient(
+                new Uri(apimBase),
+                SharedCredential,
+                new AzureOpenAIClientOptions
+                {
+                    Transport = RequestIdLoggingTransport,
+                });
         }
         else
         {
             if (string.IsNullOrWhiteSpace(cfg.FoundryAccountEndpoint))
                 throw new InvalidOperationException("FoundryAccountEndpoint is required when ApimBaseUrl/APIM_BASE_URL is not set.");
-            openAi = new AzureOpenAIClient(new Uri(cfg.FoundryAccountEndpoint), SharedCredential);
+            openAi = new AzureOpenAIClient(
+                new Uri(cfg.FoundryAccountEndpoint),
+                SharedCredential,
+                new AzureOpenAIClientOptions
+                {
+                    Transport = RequestIdLoggingTransport,
+                });
         }
 
         ChatClient chat = openAi.GetChatClient(cfg.ChatModelDeployment);
@@ -116,6 +139,64 @@ public static class SupportAgentBuilder
             name: "support-agent",
             description: "Customer-support agent (custom variant)",
             tools: tools);
+    }
+
+    private sealed class RequestIdLoggingHandler : DelegatingHandler
+    {
+        private static readonly string[] ResponseRequestIdHeaders =
+        [
+            "x-ms-request-id",
+            "apim-request-id",
+            "request-id",
+            "x-request-id",
+        ];
+
+        public RequestIdLoggingHandler()
+            : base(new HttpClientHandler())
+        {
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var started = Stopwatch.GetTimestamp();
+            var traceId = Activity.Current?.TraceId.ToString() ?? string.Empty;
+            var clientRequestId = GetHeader(request, "x-ms-client-request-id")
+                ?? GetHeader(request, "client-request-id")
+                ?? string.Empty;
+
+            try
+            {
+                var response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                Console.WriteLine(
+                    $"[request-id] direction=downstream method={request.Method} host={request.RequestUri?.Host} "
+                    + $"path={request.RequestUri?.AbsolutePath} status={(int)response.StatusCode} "
+                    + $"elapsed_ms={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F0} "
+                    + $"trace_id={traceId} client_request_id={clientRequestId} "
+                    + $"request_id={GetFirstHeader(response, ResponseRequestIdHeaders) ?? string.Empty} "
+                    + $"apim_request_id={GetHeader(response, "apim-request-id") ?? string.Empty}");
+                return response;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(
+                    $"[request-id] direction=downstream method={request.Method} host={request.RequestUri?.Host} "
+                    + $"path={request.RequestUri?.AbsolutePath} elapsed_ms={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F0} "
+                    + $"trace_id={traceId} client_request_id={clientRequestId} "
+                    + $"error={ex.GetType().Name}:{ex.Message}");
+                throw;
+            }
+        }
+
+        private static string? GetFirstHeader(HttpResponseMessage response, IEnumerable<string> names) =>
+            names.Select(name => GetHeader(response, name)).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+
+        private static string? GetHeader(HttpRequestMessage request, string name) =>
+            request.Headers.TryGetValues(name, out var values) ? values.FirstOrDefault() : null;
+
+        private static string? GetHeader(HttpResponseMessage response, string name) =>
+            response.Headers.TryGetValues(name, out var values) ? values.FirstOrDefault() : null;
     }
 
     // MCP tools are loaded once per process. The IMcpClient owns the transport

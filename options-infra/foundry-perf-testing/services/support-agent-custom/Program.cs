@@ -36,6 +36,17 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 var app = builder.Build();
 
+app.Use(async (context, next) =>
+{
+    var requestId = context.Request.Headers["x-ms-client-request-id"].FirstOrDefault()
+        ?? context.TraceIdentifier;
+    context.Response.Headers["x-request-id"] = requestId;
+    Console.WriteLine(
+        $"[request-id] direction=inbound method={context.Request.Method} path={context.Request.Path} "
+        + $"trace_id={Activity.Current?.TraceId} client_request_id={requestId}");
+    await next(context);
+});
+
 // Read environment. The mock/real pair lets the SAME container serve both
 // perf lanes — a request param picks which pre-built agent handles the call.
 var accountEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_ACCOUNT_ENDPOINT")

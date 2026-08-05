@@ -17,6 +17,7 @@
 //   WITH_TOOLS=false → skip MCP entirely ("-mock" perf lane).
 
 using System;
+using System.Diagnostics;
 using Azure.AI.AgentServer.Core;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
@@ -67,4 +68,14 @@ builder.Services.AddFoundryResponses(agent);
 builder.RegisterProtocol("responses", endpoints => endpoints.MapFoundryResponses());
 
 var app = builder.Build();
+app.App.Use(async (context, next) =>
+{
+    var requestId = context.Request.Headers["x-ms-client-request-id"].FirstOrDefault()
+        ?? context.TraceIdentifier;
+    context.Response.Headers["x-request-id"] = requestId;
+    Console.WriteLine(
+        $"[request-id] direction=inbound method={context.Request.Method} path={context.Request.Path} "
+        + $"trace_id={Activity.Current?.TraceId} client_request_id={requestId}");
+    await next(context);
+});
 app.Run();
