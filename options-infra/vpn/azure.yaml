@@ -1,0 +1,48 @@
+name: foundry-wireguard-vpn
+
+infra:
+  provider: bicep
+  path: .
+  module: main
+
+hooks:
+  preprovision:
+    windows:
+      shell: pwsh
+      run: uv run python scripts/vpn.py discover
+      interactive: true
+      continueOnError: false
+    posix:
+      shell: sh
+      run: uv run python scripts/vpn.py discover
+      interactive: true
+      continueOnError: false
+
+  postprovision:
+    windows:
+      shell: pwsh
+      run: |
+        uv run python scripts/vpn.py configure
+        uv run python scripts/vpn.py validate
+      interactive: true
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        set -e
+        uv run python scripts/vpn.py configure
+        uv run python scripts/vpn.py validate
+      interactive: true
+      continueOnError: false
+
+  predown:
+    windows:
+      shell: pwsh
+      run: uv run python scripts/vpn.py cleanup
+      interactive: true
+      continueOnError: false
+    posix:
+      shell: sh
+      run: uv run python scripts/vpn.py cleanup
+      interactive: true
+      continueOnError: false

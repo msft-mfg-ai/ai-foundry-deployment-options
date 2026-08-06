@@ -16,6 +16,14 @@ param azureStorageName string = 'projstorage${resourceToken}'
 param aiSearchName string = 'project-search-${resourceToken}'
 param cosmosDBName string = 'project-cosmosdb-${resourceToken}'
 
+@description('Semantic ranker tier for a newly created AI Search service.')
+@allowed([
+  'disabled'
+  'free'
+  'standard'
+])
+param semanticSearch string = 'disabled'
+
 param azureStorageId string?
 param aiSearchId string?
 param cosmosDBId string?
@@ -38,6 +46,7 @@ module ai_dependencies '../ai-dependencies/standard-dependent-resources.bicep' =
 
     // AI Search Service parameters
     aiSearchResourceId: aiSearchId
+    semanticSearch: semanticSearch
 
     // Storage Account
     azureStorageAccountResourceId: azureStorageId
@@ -108,5 +117,4 @@ output AI_DEPENDECIES types.aiDependenciesType = {
     subscriptionId: ai_dependencies.outputs.COSMOS_DB_SUBSCRIPTION_ID
   }
 }
-
 

@@ -29,8 +29,7 @@
 #
 # Behaviour:
 #   * No inputs set                    → write "[]" and exit 0 (Bicep will fail
-#                                        with a clear "no instances" message —
-#                                        we don't deploy a gateway with no backends).
+#                                        with a clear "no instances" message).
 #   * Inputs set but an account missing → fail with a clear error.
 #   * Re-runs are idempotent: the env var is overwritten each invocation.
 # ---------------------------------------------------------------------------

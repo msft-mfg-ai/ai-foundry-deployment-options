@@ -12,6 +12,9 @@ param existingCosmosDBId string
 @description('Name of the EXISTING Storage Account Id in App VNet')
 param existingStorageId string
 
+@description('Optional EXISTING Application Insights resource id. When provided, the project MI is granted read access on it so evaluation can read agent traces.')
+param existingApplicationInsightsResourceId string = ''
+
 // validation
 var is_valid = empty(foundryName) || empty(existingAISearchId) || empty(existingCosmosDBId) || empty(existingStorageId)
   ? fail('FOUNDRY_NAME, EXISTING_AI_SEARCH_ID, EXISTING_COSMOS_ID, EXISTING_STORAGE_ID are required')
@@ -56,6 +59,7 @@ module projects '../modules/ai/ai-project-with-caphost.bicep' = [
       aiDependencies: aiDependencies
       existingAiResourceId: null // can provide existing AI resource in the same region
       managedIdentityResourceId: null // can provide user-assigned identity here
+      appInsightsResourceId: empty(existingApplicationInsightsResourceId) ? null : existingApplicationInsightsResourceId
     }
   }
 ]

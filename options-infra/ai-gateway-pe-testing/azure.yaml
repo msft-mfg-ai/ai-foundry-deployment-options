@@ -38,14 +38,11 @@ services:
     copilot-canary:
         project: services/copilot-canary
         host: azure.ai.agent
-        language: python
-        codeConfiguration:
-            entryPoint: main.py
-            runtime: python_3_13
+        language: docker
         container:
             resources:
-                cpu: "0.5"
-                memory: 1Gi
+                cpu: "1.0"
+                memory: 2Gi
         description: |
             Copilot SDK → APIM direct canary. Validates the `copilot-sdk-via-apim-direct` topology from *inside* the Foundry VNet, where APIM's private endpoint is reachable (public network access is disabled).
         environmentVariables:
@@ -53,6 +50,8 @@ services:
               value: ${APIM_BASE_URL}
             - name: CHAT_MODEL
               value: ${CHAT_MODEL}
+            - name: COPILOT_CANARY_MODEL
+              value: ${COPILOT_CANARY_MODEL=gpt-5.1}
         kind: hosted
         metadata:
             tags:
@@ -63,6 +62,7 @@ services:
         protocols:
             - protocol: invocations
               version: 2.0.0
+        startupCommand: python main.py
 infra:
     provider: bicep
     path: .
@@ -184,6 +184,7 @@ hooks:
             shell: sh
             run: |
                 set -eu
+                sh ../scripts/preprovision-select-foundry-instances.sh
                 sh ../scripts/preprovision-list-foundry-models.sh
                 if [ -z "${MY_IP:-}" ]; then
                   ip=$(curl -sf https://api.ipify.org)
@@ -196,3 +197,4 @@ hooks:
                 # in azure.yaml. Only set if unset so operators can override.
                 [ -n "${CHAT_MODEL:-}" ]      || azd env set CHAT_MODEL      "gpt-4o-mini"
                 [ -n "${ANTHROPIC_MODEL:-}" ] || azd env set ANTHROPIC_MODEL "claude-haiku-4-5"
+            interactive: true

@@ -1,8 +1,8 @@
 # preprovision-list-foundry-models.ps1
 # ---------------------------------------------------------------------------
-# Windows equivalent of preprovision-list-foundry-models.sh. See that script
-# for the full contract, fallback semantics, and the JSON shape produced.
-# Behaviour must stay in lockstep with the bash version.
+# Windows equivalent of preprovision-list-foundry-models.sh for configured
+# resource IDs. See that script for the fallback semantics and JSON shape.
+# Interactive account selection is intentionally provided by the POSIX hook.
 # ---------------------------------------------------------------------------
 $ErrorActionPreference = 'Stop'
 

@@ -60,15 +60,22 @@ This deployment creates a Foundry environment with an **external Azure API Manag
 
 ## Prerequisites
 
-Set the backing Foundry / Azure AI Services instances before deployment:
+On POSIX systems, run `azd up` and
+[`preprovision-select-foundry-instances.sh`](../scripts/preprovision-select-foundry-instances.sh)
+checks for `EXISTING_FOUNDRY_RESOURCE_IDS`. If no Foundry input is configured,
+it lists Microsoft Foundry accounts across every enabled subscription available
+to the current `az login`. Select one or more accounts by number; the selection
+is saved to the azd environment as `EXISTING_FOUNDRY_RESOURCE_IDS`.
+
+For non-interactive deployments, or to skip the prompt, configure the backing instances before deployment:
 
 ```bash
 export EXISTING_FOUNDRY_RESOURCE_IDS="/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<foundry-1>,/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<foundry-2>"
 ```
 
-`EXISTING_FOUNDRY_RESOURCE_IDS` is the preferred comma-separated, multi-instance form. For backwards compatibility, the discovery hook also accepts `EXISTING_FOUNDRY_RESOURCE_ID` or legacy `OPENAI_RESOURCE_ID` for a single instance.
+`EXISTING_FOUNDRY_RESOURCE_IDS` is the preferred comma-separated, multi-instance form. For backwards compatibility, the selector and discovery hook also accept `EXISTING_FOUNDRY_RESOURCE_ID` or legacy `OPENAI_RESOURCE_ID` for a single instance. Configured IDs take precedence over interactive selection.
 
-The `azure.yaml` `preprovision` hook runs [`preprovision-list-foundry-models.sh`](../scripts/preprovision-list-foundry-models.sh) / `.ps1`, calls ARM (`az cognitiveservices account deployment list`) to enumerate model deployments on every instance, and writes `FOUNDRY_INSTANCES_JSON`. `main.bicepparam` reads that JSON into the `foundryInstances` parameter using the [`foundryInstanceType[]`](../modules/apim/advanced/types.bicep) shape. Deployment fails fast with a clear error when no instances are configured.
+After selection, the hook runs [`preprovision-list-foundry-models.sh`](../scripts/preprovision-list-foundry-models.sh), calls ARM (`az cognitiveservices account deployment list`) to enumerate model deployments on every selected instance, and writes `FOUNDRY_INSTANCES_JSON`. `main.bicepparam` reads that JSON into the `foundryInstances` parameter using the [`foundryInstanceType[]`](../modules/apim/advanced/types.bicep) shape. The PowerShell and non-interactive paths still require configured IDs and fail fast with a clear error when none are present.
 
 ### Optional Parameters
 - `PROJECTS_COUNT` - Number of Foundry projects to create (default: 1)

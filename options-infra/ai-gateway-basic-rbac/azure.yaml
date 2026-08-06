@@ -21,9 +21,10 @@ hooks:
     posix:
       shell: sh
       run: |
+        sh ../scripts/preprovision-select-foundry-instances.sh
         sh ../scripts/preprovision-list-foundry-models.sh
         sh ../scripts/preprovision-rbac-sps.sh
-      interactive: false
+      interactive: true
       continueOnError: false
 
   # Postprovision: export deployment outputs + persona SP creds → tests/.env

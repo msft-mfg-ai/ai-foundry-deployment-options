@@ -24,6 +24,14 @@ param cosmosDBName string
 @description('The AI Search Service full ARM Resource ID. This is an optional field, and if not provided, the resource will be created.')
 param aiSearchResourceId string?
 
+@description('Semantic ranker tier for a newly created AI Search service.')
+@allowed([
+  'disabled'
+  'free'
+  'standard'
+])
+param semanticSearch string = 'disabled'
+
 @description('The AI Storage Account full ARM Resource ID. This is an optional field, and if not provided, the resource will be created.')
 param azureStorageAccountResourceId string?
 
@@ -118,7 +126,7 @@ resource aiSearch 'Microsoft.Search/searchServices@2024-06-01-preview' = if(!aiS
     partitionCount: 1
     publicNetworkAccess: 'disabled'
     replicaCount: 1
-    semanticSearch: 'disabled'
+    semanticSearch: semanticSearch
     networkRuleSet: {
       bypass: 'None'
       ipRules: []

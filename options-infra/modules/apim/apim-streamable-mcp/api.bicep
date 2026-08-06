@@ -86,6 +86,11 @@ resource apiDiagnostics 'Microsoft.ApiManagement/service/apis/diagnostics@2024-0
       samplingType: 'fixed'
       percentage: json('100')
     }
+    // APIM supports this MCP-specific switch even though it is absent from the published Bicep type.
+    #disable-next-line BCP037
+    mcp: {
+      logPayload: true
+    }
     frontend: {
       request: {
         headers: []
@@ -142,6 +147,11 @@ resource apiDiagnosticsAppInsights 'Microsoft.ApiManagement/service/apis/diagnos
       samplingType: 'fixed'
       percentage: 100
     }
+    // APIM supports this MCP-specific switch even though it is absent from the published Bicep type.
+    #disable-next-line BCP037
+    mcp: {
+      logPayload: true
+    }
     frontend: {
       request: logSettings
       response: logSettings
@@ -155,4 +165,3 @@ resource apiDiagnosticsAppInsights 'Microsoft.ApiManagement/service/apis/diagnos
 
 
 output mcpUrl string = '${apim.properties.gatewayUrl}/${mcp.properties.path}'
-

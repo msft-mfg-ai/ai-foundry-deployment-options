@@ -2,8 +2,6 @@
 // No storage, AI Search, or Cosmos DB dependencies are created.
 // MCP tools are connected via private endpoints in the VNet.
 
-// NOTE: THIS SAMPLE DOES NOT WORK
-
 targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
@@ -11,7 +9,7 @@ param projectsCount int = 1
 
 var tags = {
   'created-by': 'foundry-byo-vnet'
-  'hidden-title': 'Foundry Standard - BYO VNet (No Dependencies) NOT WORKING!'
+  'hidden-title': 'Foundry Standard - BYO VNet (No BYOS Dependencies)'
 }
 
 import { apiType } from '../modules/apps/apps-private-link.bicep'
@@ -122,10 +120,24 @@ module mcp_apis '../modules/apps/apps-private-link.bicep' = {
   }
 }
 
+module foundry_private_endpoint '../modules/networking/ai-pe-dns.bicep' = {
+  name: 'foundry-private-endpoint-${resourceToken}'
+  params: {
+    tags: tags
+    location: location
+    aiAccountName: foundry.outputs.FOUNDRY_NAME
+    peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+    vnetId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
+    resourceToken: resourceToken
+  }
+}
+
 output project_connection_strings string[] = [
   for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_CONNECTION_STRING
 ]
 output project_names string[] = [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
 output FOUNDRY_NAME string = foundry.outputs.FOUNDRY_NAME
+output FOUNDRY_PROJECT_ENDPOINT string = 'https://${foundry.outputs.FOUNDRY_NAME}.services.ai.azure.com/api/projects/${projects[0].outputs.FOUNDRY_PROJECT_NAME}'
+output AZURE_AI_PROJECT_ID string = '${foundry.outputs.FOUNDRY_RESOURCE_ID}/projects/${projects[0].outputs.FOUNDRY_PROJECT_NAME}'
 output AZURE_OPENAI_CHAT_DEPLOYMENT_NAME string = 'gpt-5.2'
 output OPENAPI_URL string = first(filter(apiServices, api => api.name == 'weather-openapi')).?uri ?? ''

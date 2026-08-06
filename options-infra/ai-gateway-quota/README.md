@@ -241,16 +241,17 @@ curl -X POST https://<apim-gateway>/ai-gateway/config/update \
 ```bash
 cd options-infra/ai-gateway-quota
 
-# Set Foundry instance details (or use azd env set)
-export OPENAI_API_BASE="https://your-openai.openai.azure.com/"
-export OPENAI_RESOURCE_ID="/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<name>"
+# Optional: preselect instances for non-interactive deployment.
+# Without this value, the POSIX pre-provision hook lists accessible Foundry
+# accounts across all enabled subscriptions and prompts for a multi-selection.
+azd env set EXISTING_FOUNDRY_RESOURCE_IDS "/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<name>"
 
 azd up
 ```
 
 The deployment:
 1. Creates Entra ID app registrations dynamically per contract (empty `identities`)
-2. Runs `options-infra/scripts/preprovision-list-foundry-models.sh` before each `azd up` to discover Foundry instances/deployments and write `FOUNDRY_INSTANCES_JSON`; `main.bicepparam` reads it via `json(readEnvironmentVariable('FOUNDRY_INSTANCES_JSON', '[]'))`
+2. Runs `options-infra/scripts/preprovision-select-foundry-instances.sh` to populate `EXISTING_FOUNDRY_RESOURCE_IDS` when needed, then `preprovision-list-foundry-models.sh` discovers deployments and writes `FOUNDRY_INSTANCES_JSON`; `main.bicepparam` reads it via `json(readEnvironmentVariable('FOUNDRY_INSTANCES_JSON', '[]'))`
 3. Deploys APIM with the single `policy-per-model.xml` stack, fragments, backend pools, blob storage for contracts, and monitoring
 4. Post-provision hook creates client secrets and stores them in `azd env`
 

@@ -1,0 +1,15 @@
+using 'main.bicep'
+
+param targetSubscriptionId = readEnvironmentVariable('VPN_TARGET_SUBSCRIPTION_ID', '')
+param vnetResourceGroupName = readEnvironmentVariable('VPN_VNET_RESOURCE_GROUP', '')
+param vpnResourceGroupName = readEnvironmentVariable('VPN_RESOURCE_GROUP', '')
+param location = readEnvironmentVariable('VPN_LOCATION', '')
+param vnetName = readEnvironmentVariable('VPN_VNET_NAME', '')
+param azureVnetAddressPrefixes = json(readEnvironmentVariable('VPN_VNET_PREFIXES_JSON', '[]'))
+param vpnSubnetName = readEnvironmentVariable('VPN_SUBNET_NAME', 'wireguard-vpn-subnet')
+param vpnSubnetPrefix = readEnvironmentVariable('VPN_SUBNET_CIDR', '')
+param gatewayPrivateIp = readEnvironmentVariable('VPN_GATEWAY_PRIVATE_IP', '')
+param adminSshPublicKey = readEnvironmentVariable('VPN_ADMIN_SSH_PUBLIC_KEY', '')
+param adminUsername = readEnvironmentVariable('VPN_AZURE_ADMIN_USERNAME', 'wireguardadmin')
+param vmSize = readEnvironmentVariable('VPN_GATEWAY_VM_SIZE', 'Standard_D2als_v6')
+param ownershipId = readEnvironmentVariable('VPN_OWNERSHIP_ID', '')

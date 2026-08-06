@@ -1,0 +1,26 @@
+name: 'Bicep: vpn'
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'options-infra/vpn/**'
+      - 'options-infra/modules/compute/wireguard-gateway-vm.bicep'
+      - 'options-infra/modules/networking/wireguard-vpn-subnet.bicep'
+      - 'options-infra/modules/networking/wireguard-vpn-nsg.bicep'
+      - '.github/workflows/bicep-validate-reusable.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'options-infra/vpn/**'
+      - 'options-infra/modules/compute/wireguard-gateway-vm.bicep'
+      - 'options-infra/modules/networking/wireguard-vpn-subnet.bicep'
+      - 'options-infra/modules/networking/wireguard-vpn-nsg.bicep'
+      - '.github/workflows/bicep-validate-reusable.yml'
+
+jobs:
+  validate:
+    uses: ./.github/workflows/bicep-validate-reusable.yml
+    with:
+      bicep-file: main.bicep
+      working-directory: options-infra/vpn

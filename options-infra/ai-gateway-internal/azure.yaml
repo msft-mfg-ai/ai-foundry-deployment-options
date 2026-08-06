@@ -18,8 +18,9 @@ hooks:
     posix:
       shell: sh
       run: |
+        sh ../scripts/preprovision-select-foundry-instances.sh
         sh ../scripts/preprovision-list-foundry-models.sh
-      interactive: false
+      interactive: true
       continueOnError: false
 
   postprovision:

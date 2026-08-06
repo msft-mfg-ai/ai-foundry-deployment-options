@@ -6,7 +6,7 @@ This variant deploys the same private-networked Foundry + APIM Standard v2 priva
 
 ## What deploys
 
-- Private-networked AI Foundry account and one Foundry project by default.
+- Private-networked AI Foundry account with public network access disabled, a private endpoint, all three AI private DNS zone registrations, and one Foundry project by default.
 - APIM Standard v2 with VNet injection and a private endpoint.
 - Private endpoints from APIM to the OpenAI/Foundry instances listed in `FOUNDRY_INSTANCES_JSON`.
 - Per-model APIM routing for the discovered deployments.
