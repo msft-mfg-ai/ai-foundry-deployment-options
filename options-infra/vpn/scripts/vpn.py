@@ -778,15 +778,12 @@ cat >/etc/wireguard/wg0.conf <<EOF
 Address = {azure_address}
 ListenPort = 51820
 PrivateKey = $private_key
-PostUp = systemctl restart --no-block dnsmasq
 
 [Peer]
 PublicKey = {client_public_key}
 AllowedIPs = {env('VPN_CLIENT_TUNNEL_IP')}/32
 EOF
 chmod 600 /etc/wireguard/wg0.conf
-systemctl enable wg-quick@wg0 >/dev/null
-systemctl restart wg-quick@wg0
 cat >/etc/dnsmasq.d/azd-wireguard.conf <<EOF
 interface=wg0
 listen-address={env('VPN_AZURE_TUNNEL_IP')}
@@ -806,8 +803,11 @@ Restart=on-failure
 RestartSec=5s
 EOF
 systemctl daemon-reload
-systemctl enable dnsmasq >/dev/null
+systemctl enable wg-quick@wg0 dnsmasq >/dev/null
+systemctl restart wg-quick@wg0
 systemctl restart dnsmasq
+systemctl is-active --quiet wg-quick@wg0
+systemctl is-active --quiet dnsmasq
 dev=$(ip -4 route show default | awk 'NR==1 {{print $5}}')
 test -n "$dev"
 {forward_rules}
