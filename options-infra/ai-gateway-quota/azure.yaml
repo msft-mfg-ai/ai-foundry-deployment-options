@@ -21,9 +21,10 @@ hooks:
       run: |
         set -e
         echo "Pre-provisioning steps..."
+        sh ../scripts/preprovision-select-foundry-instances.sh
         sh ../scripts/preprovision-list-foundry-models.sh
         azd env set CURRENT_USER_OBJECT_ID $(az ad signed-in-user show --query id -o tsv)
-      interactive: false
+      interactive: true
       continueOnError: false
 
   postprovision:

@@ -185,10 +185,12 @@ hooks:
                 # in azure.yaml. Only set if unset so operators can override.
                 if (-not $env:CHAT_MODEL)      { azd env set CHAT_MODEL      "gpt-4o-mini" }
                 if (-not $env:ANTHROPIC_MODEL) { azd env set ANTHROPIC_MODEL "claude-haiku-4-5" }
+            interactive: false
         posix:
             shell: sh
             run: |
                 set -eu
+                sh ../scripts/preprovision-select-foundry-instances.sh
                 sh ../scripts/preprovision-list-foundry-models.sh
                 if [ -z "${MY_IP:-}" ]; then
                   ip=$(curl -sf https://api.ipify.org)
@@ -201,3 +203,4 @@ hooks:
                 # in azure.yaml. Only set if unset so operators can override.
                 [ -n "${CHAT_MODEL:-}" ]      || azd env set CHAT_MODEL      "gpt-4o-mini"
                 [ -n "${ANTHROPIC_MODEL:-}" ] || azd env set ANTHROPIC_MODEL "claude-haiku-4-5"
+            interactive: true
