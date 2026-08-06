@@ -209,36 +209,26 @@ module ai_gateway '../modules/apim/ai-gateway-pe.bicep' = {
   }
 }
 
-// Shared private link from AI Search → APIM (Gateway subresource).
-// PARKED — the docs say `Microsoft.ApiManagement/service` with `groupId: Gateway`
-// is a supported SPL target, but provisioning fails against APIM StandardV2 +
-// External VNet with:
-//   "Call to Microsoft.ApiManagement/service failed. Error message:
-//    Subscription 053ee099-0596-462e-90dc-677e9afac2b7 not registered with
-//    provider Microsoft.ApiManagement."
-// The failing sub is a Microsoft-owned tenant (Search SPL back-end), so we
-// can't register the RP ourselves. Additionally, APIM v2 with VNet integration
-// only officially supports inbound PE when fronted by Azure Front Door Premium
-// (https://learn.microsoft.com/azure/api-management/private-endpoint#limitations).
-// Leaving the block commented out until either (a) Microsoft onboards
-// Microsoft.ApiManagement in the SPL back-end sub, or (b) we switch the topology
-// to AFD Premium in front of APIM.
-// resource aiSearchService 'Microsoft.Search/searchServices@2024-06-01-preview' existing = {
-//   name: 'project-search-${resourceToken}'
-// }
-//
-// resource searchToApim 'Microsoft.Search/searchServices/sharedPrivateLinkResources@2024-06-01-preview' = {
-//   parent: aiSearchService
-//   name: 'apim-gateway-${resourceToken}'
-//   properties: {
-//     groupId: 'Gateway'
-//     privateLinkResourceId: ai_gateway.outputs.apimResourceId
-//     requestMessage: 'AI Search → APIM Gateway for BYOM testing'
-//   }
-//   dependsOn: [
-//     ai_dependencies
-//   ]
-// }
+
+resource aiSearchService 'Microsoft.Search/searchServices@2024-06-01-preview' existing = {
+  name: 'project-search-${resourceToken}'
+  dependsOn: [
+    ai_dependencies
+  ]
+}
+
+resource searchToApim 'Microsoft.Search/searchServices/sharedPrivateLinkResources@2024-06-01-preview' = {
+  parent: aiSearchService
+  name: 'apim-gateway-${resourceToken}'
+  properties: {
+    groupId: 'Gateway'
+    privateLinkResourceId: ai_gateway.outputs.apimResourceId
+    requestMessage: 'AI Search → APIM Gateway for BYOM testing'
+  }
+  dependsOn: [
+    ai_dependencies
+  ]
+}
 
 module dashboard '../modules/dashboard/dashboard.bicep' = {
   name: 'dashboard-deployment-${resourceToken}'
@@ -347,13 +337,24 @@ resource existing_bing_project_connection 'Microsoft.CognitiveServices/accounts/
 //   name: 'policy-definition-deployment-${resourceToken}'
 // }
 
+module models_compliance_policy '../modules/policy/models-compliance-policy.bicep' = {
+  scope: subscription()
+  name: 'policy-compliance-deployment-${resourceToken}'
+}
+
+module models_compliance_policy_assignment '../modules/policy/models-compliance-policy-assignment.bicep' = {
+  name: 'compliance-policy-assignment-deployment-${resourceToken}'
+  params: {
+    cognitiveServicesPolicyDefinitionId: models_compliance_policy.outputs.cognitiveServicesPolicyDefinitionId
+  }
+}
+
 // module models_policy_assignment '../modules/policy/models-policy-assignment.bicep' = {
 //   name: 'policy-assignment-deployment-${resourceToken}'
 //   params: {
 //     cognitiveServicesPolicyDefinitionId: models_policy.outputs.cognitiveServicesPolicyDefinitionId
 //     allowedCognitiveServicesModels: []
 //   }
-//   dependsOn: [openai_with_models]
 // }
 
 module mcp_apis '../modules/apps/apps-private-link.bicep' = if (!empty(apiServices)) {
