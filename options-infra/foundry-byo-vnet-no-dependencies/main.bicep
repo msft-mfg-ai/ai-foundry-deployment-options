@@ -2,8 +2,6 @@
 // No storage, AI Search, or Cosmos DB dependencies are created.
 // MCP tools are connected via private endpoints in the VNet.
 
-// NOTE: THIS SAMPLE DOES NOT WORK
-
 targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
@@ -11,7 +9,7 @@ param projectsCount int = 1
 
 var tags = {
   'created-by': 'foundry-byo-vnet'
-  'hidden-title': 'Foundry Standard - BYO VNet (No Dependencies) NOT WORKING!'
+  'hidden-title': 'Foundry Standard - BYO VNet (No BYOS Dependencies)'
 }
 
 import { apiType } from '../modules/apps/apps-private-link.bicep'
