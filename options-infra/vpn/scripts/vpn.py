@@ -778,6 +778,7 @@ cat >/etc/wireguard/wg0.conf <<EOF
 Address = {azure_address}
 ListenPort = 51820
 PrivateKey = $private_key
+PostUp = systemctl restart --no-block dnsmasq
 
 [Peer]
 PublicKey = {client_public_key}
@@ -793,6 +794,13 @@ bind-dynamic
 server=168.63.129.16
 cache-size=1000
 EOF
+mkdir -p /etc/systemd/system/dnsmasq.service.d
+cat >/etc/systemd/system/dnsmasq.service.d/after-wg.conf <<EOF
+[Unit]
+After=wg-quick@wg0.service
+Wants=wg-quick@wg0.service
+EOF
+systemctl daemon-reload
 systemctl enable dnsmasq >/dev/null
 systemctl restart dnsmasq
 dev=$(ip -4 route show default | awk 'NR==1 {{print $5}}')
@@ -950,6 +958,7 @@ def validate() -> None:
 failed=0
 systemctl is-active wg-quick@wg0 || failed=1
 systemctl is-active dnsmasq || failed=1
+ss -ulnp | grep -q '{env('VPN_AZURE_TUNNEL_IP')}:53' || failed=1
 [ "$(sysctl -n net.ipv4.ip_forward)" = "1" ] || failed=1
 wg show wg0
 echo '## DNS'
