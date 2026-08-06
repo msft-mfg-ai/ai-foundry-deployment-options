@@ -17,7 +17,7 @@ param adminUsername string = 'wireguardadmin'
 param adminSshPublicKey string
 
 @description('VM size.')
-param vmSize string = 'Standard_D2als_v6'
+param vmSize string = 'Standard_B1ls'
 
 @description('Tags applied to the VM resources.')
 param tags object = {}

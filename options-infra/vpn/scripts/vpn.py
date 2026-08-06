@@ -654,7 +654,7 @@ def discover(dry_run: bool) -> None:
         "VPN_CLIENT_TUNNEL_IP": str(tunnel_hosts[1]),
         "VPN_ADMIN_SSH_PUBLIC_KEY": public_key,
         "VPN_AZURE_ADMIN_USERNAME": "wireguardadmin",
-        "VPN_GATEWAY_VM_SIZE": "Standard_D2als_v6",
+        "VPN_GATEWAY_VM_SIZE": "Standard_B1ls",
         "VPN_OWNERSHIP_ID": ownership_id,
         "VPN_CLIENT_NAME": client_name,
         "VPN_PRIVATE_DNS_ZONES_JSON": json.dumps(linked_zones, separators=(",", ":")),
@@ -797,8 +797,13 @@ EOF
 mkdir -p /etc/systemd/system/dnsmasq.service.d
 cat >/etc/systemd/system/dnsmasq.service.d/after-wg.conf <<EOF
 [Unit]
-After=wg-quick@wg0.service
-Wants=wg-quick@wg0.service
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target
+Requires=wg-quick@wg0.service
+
+[Service]
+Restart=on-failure
+RestartSec=5s
 EOF
 systemctl daemon-reload
 systemctl enable dnsmasq >/dev/null

@@ -34,7 +34,7 @@ param adminSshPublicKey string
 param adminUsername string = 'wireguardadmin'
 
 @description('VM size for the Azure WireGuard gateway.')
-param vmSize string = 'Standard_D2als_v6'
+param vmSize string = 'Standard_B1ls'
 
 @description('Stable ownership identifier for resources created by this azd environment.')
 param ownershipId string
