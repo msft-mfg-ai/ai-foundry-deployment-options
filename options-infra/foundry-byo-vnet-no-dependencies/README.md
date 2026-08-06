@@ -35,6 +35,18 @@ After deployment, invoke the hosted agent with:
 azd ai agent invoke "Say hello in one short sentence."
 ```
 
+The hosted agent includes a `validate_network_injection` tool and a
+`network-injection-diagnostics` skill. Run the diagnostics from inside the
+hosted runtime with:
+
+```bash
+azd ai agent invoke "Validate whether network injection and Azure DNS are working."
+```
+
+The tool resolves the agent's own Foundry project hostname through the system
+resolver, queries Azure's platform DNS resolver (`168.63.129.16`) directly, and
+tests HTTPS/TLS reachability to `FOUNDRY_PROJECT_ENDPOINT`.
+
 ## Parameters
 
 | Parameter | Description | Default |

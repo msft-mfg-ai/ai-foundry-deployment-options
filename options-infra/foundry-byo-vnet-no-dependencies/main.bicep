@@ -122,6 +122,18 @@ module mcp_apis '../modules/apps/apps-private-link.bicep' = {
   }
 }
 
+module foundry_private_endpoint '../modules/networking/ai-pe-dns.bicep' = {
+  name: 'foundry-private-endpoint-${resourceToken}'
+  params: {
+    tags: tags
+    location: location
+    aiAccountName: foundry.outputs.FOUNDRY_NAME
+    peSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+    vnetId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
+    resourceToken: resourceToken
+  }
+}
+
 output project_connection_strings string[] = [
   for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_CONNECTION_STRING
 ]
