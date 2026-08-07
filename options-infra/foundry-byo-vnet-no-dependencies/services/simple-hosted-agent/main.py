@@ -1,5 +1,7 @@
 import http.client
 import ipaddress
+import json
+import logging
 import os
 import secrets
 import socket
@@ -7,7 +9,7 @@ import struct
 from pathlib import Path
 from urllib.parse import urlparse
 
-from agent_framework import Agent, SkillsProvider
+from agent_framework import Agent, MCPStreamableHTTPTool, SkillsProvider
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.identity import DefaultAzureCredential
@@ -15,6 +17,7 @@ from azure.identity import DefaultAzureCredential
 
 AZURE_PLATFORM_DNS_IP = "168.63.129.16"
 NETWORK_TIMEOUT_SECONDS = 5
+logger = logging.getLogger(__name__)
 
 
 def _system_dns_lookup(hostname: str) -> dict[str, object]:
@@ -103,11 +106,56 @@ def _https_probe(hostname: str, path: str) -> dict[str, object]:
         connection.close()
 
 
-def validate_network_injection() -> dict[str, object]:
-    """Test DNS and HTTPS connectivity from this hosted agent to its own Foundry project.
+def _arm_get(resource_id: str, credential: DefaultAzureCredential) -> dict[str, object]:
+    token = credential.get_token("https://management.azure.com/.default").token
+    connection = http.client.HTTPSConnection(
+        "management.azure.com", timeout=NETWORK_TIMEOUT_SECONDS
+    )
+    try:
+        connection.request(
+            "GET",
+            f"{resource_id}/capabilityHosts?api-version=2025-06-01",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+        payload = json.loads(body) if body else {}
+        result: dict[str, object] = {
+            "ok": response.status == 200,
+            "status": response.status,
+            "reason": response.reason,
+        }
+        if response.status == 200:
+            result["capability_hosts"] = [
+                {
+                    "name": item.get("name"),
+                    "properties": item.get("properties", {}),
+                }
+                for item in payload.get("value", [])
+            ]
+        else:
+            result["error"] = payload.get("error", payload)
+            if response.status == 403:
+                result["remediation"] = (
+                    "Assign the hosted agent instance identity the Reader role "
+                    "on the resource group containing the Foundry account."
+                )
+        return result
+    except (OSError, TimeoutError, http.client.HTTPException, json.JSONDecodeError) as error:
+        return {
+            "ok": False,
+            "error": str(error),
+            "error_type": type(error).__name__,
+        }
+    finally:
+        connection.close()
+
+
+async def validate_network_injection() -> dict[str, object]:
+    """Test Foundry and configured MCP connectivity from this hosted agent.
 
     Use this tool when asked whether VNet injection, Azure DNS, name resolution,
-    or connectivity to this agent's Foundry project is working.
+    MCP tool discovery, or private connectivity is working.
     """
     project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     parsed_endpoint = urlparse(project_endpoint)
@@ -127,6 +175,76 @@ def validate_network_injection() -> dict[str, object]:
         "azure_platform_dns": azure_dns,
         "foundry_https": https,
     }
+
+    project_resource_id = os.environ.get("AZURE_AI_PROJECT_ID")
+    if project_resource_id and "/projects/" in project_resource_id:
+        account_resource_id = project_resource_id.rsplit("/projects/", 1)[0]
+        credential = DefaultAzureCredential()
+        try:
+            checks["foundry_account_capability_hosts"] = _arm_get(
+                account_resource_id, credential
+            )
+            checks["foundry_project_capability_hosts"] = _arm_get(
+                project_resource_id, credential
+            )
+        finally:
+            credential.close()
+    else:
+        checks["capability_hosts"] = {
+            "ok": False,
+            "error": "AZURE_AI_PROJECT_ID is missing or invalid.",
+        }
+
+    mcp_server_url = os.environ.get("MCP_SERVER_URL")
+    if mcp_server_url:
+        mcp_server_name = os.environ.get("MCP_SERVER_NAME", "mcp-server")
+        parsed_mcp_url = urlparse(mcp_server_url)
+        if parsed_mcp_url.scheme != "https" or not parsed_mcp_url.hostname:
+            checks["mcp_server"] = {
+                "ok": False,
+                "server_name": mcp_server_name,
+                "server_url": mcp_server_url,
+                "error": "MCP_SERVER_URL is not a valid HTTPS URL.",
+            }
+        else:
+            mcp_dns = _system_dns_lookup(parsed_mcp_url.hostname)
+            try:
+                async with MCPStreamableHTTPTool(
+                    name=f"{mcp_server_name}-diagnostic",
+                    url=mcp_server_url,
+                    load_prompts=False,
+                    request_timeout=NETWORK_TIMEOUT_SECONDS,
+                ) as mcp_probe:
+                    available_tools = [
+                        {
+                            "name": function.name,
+                            "description": function.description,
+                        }
+                        for function in mcp_probe.functions
+                    ]
+                checks["mcp_server"] = {
+                    "ok": True,
+                    "server_name": mcp_server_name,
+                    "server_url": mcp_server_url,
+                    "hostname": parsed_mcp_url.hostname,
+                    "addresses": mcp_dns.get("addresses", []),
+                    "private_addresses": mcp_dns.get("private_addresses", []),
+                    "tools": available_tools,
+                    "tools_count": len(available_tools),
+                }
+            except Exception as error:
+                logger.exception("Failed to list tools from MCP server %s", mcp_server_url)
+                checks["mcp_server"] = {
+                    "ok": False,
+                    "server_name": mcp_server_name,
+                    "server_url": mcp_server_url,
+                    "hostname": parsed_mcp_url.hostname,
+                    "addresses": mcp_dns.get("addresses", []),
+                    "private_addresses": mcp_dns.get("private_addresses", []),
+                    "error": str(error),
+                    "error_type": type(error).__name__,
+                }
+
     passed = all(bool(check.get("ok")) for check in checks.values())
 
     return {
@@ -140,8 +258,10 @@ def validate_network_injection() -> dict[str, object]:
         "hostname": hostname,
         "checks": checks,
         "scope_note": (
-            "This validates the runtime DNS and HTTPS path from inside the hosted agent. "
-            "It does not independently read the ARM networkInjections configuration."
+            "This validates runtime DNS and HTTPS connectivity to Foundry and performs "
+            "MCP tools/list from inside the hosted agent when MCP_SERVER_URL is configured. "
+            "It also reads account and project capability hosts through Azure Resource "
+            "Manager when AZURE_AI_PROJECT_ID is configured."
         ),
     }
 
@@ -153,13 +273,32 @@ def main() -> None:
         model=model_name,
         credential=DefaultAzureCredential(),
     )
+    tools = [validate_network_injection]
+    mcp_server_url = os.environ.get("MCP_SERVER_URL")
+    mcp_server_name = os.environ.get("MCP_SERVER_NAME", "mcp-server")
+    if mcp_server_url:
+        tools.append(
+            MCPStreamableHTTPTool(
+                name=mcp_server_name,
+                url=mcp_server_url,
+                description=f"Tools provided by the {mcp_server_name} MCP server.",
+                approval_mode="never_require",
+            )
+        )
+    else:
+        logger.warning(
+            "MCP_SERVER_URL is not set. The %s MCP tool will not be registered.",
+            mcp_server_name,
+        )
+
     agent = Agent(
         client=client,
         instructions=(
-            "You are a friendly assistant. Keep answers brief. Use the network "
-            "injection diagnostics skill for Foundry networking questions."
+            f"You are a friendly assistant. Keep answers brief. Use the "
+            f"{mcp_server_name} MCP tools when relevant and the network injection "
+            "diagnostics skill for Foundry networking questions."
         ),
-        tools=[validate_network_injection],
+        tools=tools,
         context_providers=[
             SkillsProvider.from_paths(
                 skill_paths=str(Path(__file__).parent / "skills")

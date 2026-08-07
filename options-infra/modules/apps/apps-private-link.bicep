@@ -122,7 +122,6 @@ resource aiFoundry 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' exi
   scope: resourceGroup()
 }
 
-// Create the connection with ApiKey authentication
 resource mcpTools 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-preview' = [
   for (api, index) in externalApis: if (api.apiType == 'mcp' && !empty(aiFoundryName) && !empty(apimGatewayUrl)) {
     name: 'MCP-${api.name}'
@@ -143,7 +142,6 @@ resource mcpTools 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-p
   }
 ]
 
-// Create the connection with ApiKey authentication
 resource mcpToolsDirect 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-preview' = [
   for (api, index) in externalApis: if (api.apiType == 'mcp' && !empty(aiFoundryName) && empty(apimGatewayUrl)) {
     name: 'MCP-${api.name}'

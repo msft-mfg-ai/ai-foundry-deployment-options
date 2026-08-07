@@ -77,36 +77,47 @@ module project_identities '../modules/iam/identity.bicep' = [
   }
 ]
 
-@batchSize(1)
-module projects '../modules/ai/ai-project.bicep' = [
-  for i in range(1, projectsCount): {
-    name: 'ai-project-${i}-${resourceToken}'
+
+module project_no_cap '../modules/ai/ai-project.bicep' = {
+    name: 'ai-project-1-${resourceToken}'
     params: {
       tags: tags
       location: location
       foundry_name: foundry.outputs.FOUNDRY_NAME
-      project_name: 'ai-project-${i}-${resourceToken}'
-      project_description: 'AI Project ${i} ${resourceToken}'
-      display_name: 'AI Project ${i} ${resourceToken}'
-      managedIdentityResourceId: project_identities[i - 1].outputs.MANAGED_IDENTITY_RESOURCE_ID
+      project_name: 'ai-project-1-no-cap-${resourceToken}'
+      project_description: 'AI Project 1 ${resourceToken} No Caphost, No Storage, No Search, No Cosmos'
+      display_name: 'AI Project 1 No Caphost ${resourceToken}'
+      managedIdentityResourceId: project_identities[0].outputs.MANAGED_IDENTITY_RESOURCE_ID
       appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
       // Account-level caphost is created automatically with VNet injection; only create once
       createAccountCapabilityHost: false
     }
   }
-]
 
-// Create a project capability host for each project (no storage/search/cosmos connections)
-@batchSize(1)
-module caphosts '../modules/ai/add-project-capability-host.bicep' = [
-  for i in range(1, projectsCount): {
-    name: 'caphost-${i}-${resourceToken}'
+  module project_with_cap '../modules/ai/ai-project.bicep' = {
+    name: 'ai-project-1-with-cap-${resourceToken}'
     params: {
-      accountName: foundry.outputs.FOUNDRY_NAME
-      projectName: projects[i - 1].outputs.FOUNDRY_PROJECT_NAME
+      tags: tags
+      location: location
+      foundry_name: foundry.outputs.FOUNDRY_NAME
+      project_name: 'ai-project-1-with-cap-${resourceToken}'
+      project_description: 'AI Project 1 ${resourceToken} With Caphost, No Storage, No Search, No Cosmos'
+      display_name: 'AI Project 1 With Caphost ${resourceToken}'
+      managedIdentityResourceId: project_identities[0].outputs.MANAGED_IDENTITY_RESOURCE_ID
+      appInsightsResourceId: logAnalytics.outputs.APPLICATION_INSIGHTS_RESOURCE_ID
+      // Account-level caphost is created automatically with VNet injection; only create once
+      createAccountCapabilityHost: false
     }
   }
-]
+
+
+module caphosts '../modules/ai/add-project-capability-host.bicep' =  {
+    name: 'caphost-proj-with-cap-${resourceToken}'
+    params: {
+      accountName: foundry.outputs.FOUNDRY_NAME
+      projectName: project_with_cap.outputs.FOUNDRY_PROJECT_NAME
+    }
+  }
 
 module mcp_apis '../modules/apps/apps-private-link.bicep' = {
   name: 'mcp-apis-private-link-${resourceToken}'
@@ -133,11 +144,20 @@ module foundry_private_endpoint '../modules/networking/ai-pe-dns.bicep' = {
 }
 
 output project_connection_strings string[] = [
-  for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_CONNECTION_STRING
+  project_no_cap.outputs.FOUNDRY_PROJECT_CONNECTION_STRING
+  project_with_cap.outputs.FOUNDRY_PROJECT_CONNECTION_STRING
 ]
-output project_names string[] = [for i in range(1, projectsCount): projects[i - 1].outputs.FOUNDRY_PROJECT_NAME]
+output project_names string[] = [
+  project_no_cap.outputs.FOUNDRY_PROJECT_NAME
+  project_with_cap.outputs.FOUNDRY_PROJECT_NAME
+]
 output FOUNDRY_NAME string = foundry.outputs.FOUNDRY_NAME
-output FOUNDRY_PROJECT_ENDPOINT string = 'https://${foundry.outputs.FOUNDRY_NAME}.services.ai.azure.com/api/projects/${projects[0].outputs.FOUNDRY_PROJECT_NAME}'
-output AZURE_AI_PROJECT_ID string = '${foundry.outputs.FOUNDRY_RESOURCE_ID}/projects/${projects[0].outputs.FOUNDRY_PROJECT_NAME}'
+output FOUNDRY_PROJECT_ENDPOINT_NO_CAP string = 'https://${foundry.outputs.FOUNDRY_NAME}.services.ai.azure.com/api/projects/${project_no_cap.outputs.FOUNDRY_PROJECT_NAME}'
+output AZURE_AI_PROJECT_ID_NO_CAP string = '${foundry.outputs.FOUNDRY_RESOURCE_ID}/projects/${project_no_cap.outputs.FOUNDRY_PROJECT_NAME}'
+output FOUNDRY_PROJECT_ENDPOINT_WITH_CAP string = 'https://${foundry.outputs.FOUNDRY_NAME}.services.ai.azure.com/api/projects/${project_with_cap.outputs.FOUNDRY_PROJECT_NAME}'
+output AZURE_AI_PROJECT_ID_WITH_CAP string = '${foundry.outputs.FOUNDRY_RESOURCE_ID}/projects/${project_with_cap.outputs.FOUNDRY_PROJECT_NAME}'
+
 output AZURE_OPENAI_CHAT_DEPLOYMENT_NAME string = 'gpt-5.2'
+output MCP_SERVER_URL string = first(filter(apiServices, api => api.name == 'weather-mcp')).?uri ?? ''
+output SAMPLE_MCP_SERVER_URL string = first(filter(apiServices, api => api.name == 'sample-mcp')).?uri ?? ''
 output OPENAPI_URL string = first(filter(apiServices, api => api.name == 'weather-openapi')).?uri ?? ''
