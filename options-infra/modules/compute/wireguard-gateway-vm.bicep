@@ -19,6 +19,9 @@ param adminSshPublicKey string
 @description('VM size.')
 param vmSize string = 'Standard_B1ls'
 
+@description('Enable accelerated networking on the gateway NIC. Disabled by default because the default B-series VM size does not support it.')
+param enableAcceleratedNetworking bool = false
+
 @description('Tags applied to the VM resources.')
 param tags object = {}
 
@@ -45,6 +48,7 @@ module virtualMachine 'br/public:avm/res/compute/virtual-machine:0.22.2' = {
         name: '${name}-nic'
         deleteOption: 'Delete'
         enableIPForwarding: true
+        enableAcceleratedNetworking: enableAcceleratedNetworking
         networkSecurityGroupResourceId: ''
         ipConfigurations: [
           {

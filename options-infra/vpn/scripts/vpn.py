@@ -21,7 +21,7 @@ import uuid
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RESULTS_DIR = ROOT / "results"
+RESULTS_DIR = Path(os.environ.get("VPN_RESULTS_DIR", ROOT / "results")).resolve()
 
 
 class VpnError(RuntimeError):
@@ -847,16 +847,30 @@ $hostnames = @(
 {hostnames}
 )
 
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = [Security.Principal.WindowsPrincipal]::new($identity)
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {{
+    throw 'This script must run from an elevated PowerShell session.'
+}}
+
+Get-DnsClientNrptRule |
+    Where-Object Comment -eq $comment |
+    Remove-DnsClientNrptRule -Force
+
 foreach ($hostname in $hostnames) {{
-    Get-DnsClientNrptRule |
-        Where-Object {{
-            $_.Comment -eq $comment -and $_.Namespace -contains $hostname
-        }} |
-        Remove-DnsClientNrptRule -Force
     Add-DnsClientNrptRule -Namespace $hostname -NameServers $dnsServer -Comment $comment
 }}
 
 Clear-DnsClientCache
+
+foreach ($hostname in $hostnames) {{
+    $answers = Resolve-DnsName $hostname -Type A -DnsOnly
+    $addresses = @($answers | Where-Object IPAddress | Select-Object -ExpandProperty IPAddress)
+    if ($addresses.Count -eq 0) {{
+        throw "No A record returned for $hostname through $dnsServer."
+    }}
+    Write-Host "$hostname -> $($addresses -join ', ')"
+}}
 """.format(
         dns_server=env("VPN_AZURE_TUNNEL_IP"),
         hostnames="\n".join(f"    '{hostname}'" for hostname in dns_hostnames),
