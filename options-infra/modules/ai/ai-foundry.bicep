@@ -45,7 +45,8 @@ type aiModelTDeploymentType = {
       name: string
       @description('The version of the model, e.g. "2024-11-20" or "0125"')
       version: string
-      format: 'OpenAI' | 'Cohere' | 'Anthropic'
+      @description('Provider format returned by the Foundry model catalog, for example OpenAI, Anthropic, Cohere, or Black Forest Labs.')
+      format: string
     }
     @description('Required for Anthropic models: customer attestation forwarded to Anthropic on every request. See https://learn.microsoft.com/azure/developer/ai/how-to/deploy-claude-foundry')
     modelProviderData: {
