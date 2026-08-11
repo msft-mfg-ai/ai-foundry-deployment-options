@@ -14,7 +14,9 @@ This deployment creates the unified **Azure API Management (APIM)** AI Gateway a
 - **Automatic Entra ID App Registration** — Dynamic creation per contract via Microsoft Graph Bicep extension
 - **Multi-Backend Routing** — One backend per `(instance, model, location)`, plus per-model mixed and PAYG-only pools with circuit breaker failover
 - **Event Hub Notifications** — Quota-exceeded events for downstream processing
-- **Azure Portal Dashboard** — KQL-based monitoring (token usage, rate limits, routing decisions)
+- **Azure Portal Dashboard** — Selected-range operational monitoring for token usage, throttling, errors, routing, and failover
+- **Monthly Cost Workbook** — Month-selectable quota, caller, model, Foundry, backend, reliability, billed-cost, and hybrid-cost views
+- **Optional Billed-Cost Ingestion** — Managed-identity Cost Management collectors write Foundry costs to `AICostData_CL`
 - **Foundry Headers** — `x-foundry-agent-id`, `x-foundry-project-name`, `x-foundry-project-id` for Foundry agent tracing
 - **Observability Headers** — Captured by `log-settings.bicep`, including `x-caller-*`, `x-backend-*`, `x-inference-failover`, quota/rate-limit, and Foundry project headers
 
@@ -194,6 +196,51 @@ All Azure OpenAI / Foundry instances serving the same model **must** use the **s
 See [Section 5 of PTU Design Risks](docs/ptu-design-risks.md#5-deployment-naming-convention--hard-requirement) for the full rationale and setup checklist.
 
 ## Known Limitations
+
+### Optional Cost Management Collection
+
+The monthly workbook is always deployed. Its billed-cost sections read the
+`AICostData_CL` table, which is created even when collection is disabled so the
+tiles return no data instead of a missing-table error.
+
+Enable collectors before `azd up`:
+
+```bash
+azd env set DEPLOY_COST_INGESTION true
+azd env set COST_INGESTION_PUBLIC_NETWORK_ACCESS true
+```
+
+One collector is deployed in each Foundry resource group. Each Logic App uses
+managed identity and receives:
+
+- **Cost Management Reader** on that Foundry resource group.
+- **Monitoring Metrics Publisher** on its Data Collection Rule.
+
+This per-Foundry design supports BYO resources across resource groups and
+subscriptions without subscription-wide Cost Management grants. Entries marked
+`isApim: true` are excluded because downstream gateways are not billable
+Foundry resources.
+
+The collector re-queries a rolling four-day window to capture delayed billing
+updates. Workbook queries deduplicate the append-only records before summing
+cost or deriving rates.
+
+For a historical backfill:
+
+```bash
+./scripts/backfill-cost-ingestion.sh \
+  --subscription <subscription-id> \
+  --resource-group <foundry-resource-group> \
+  --logic-app <cost-logic-app-name> \
+  --from 2026-08-01 \
+  --to 2026-08-10
+
+# Repeat with --commit after reviewing the dry-run sample.
+```
+
+`COST_INGESTION_PUBLIC_NETWORK_ACCESS=false` requires private ingestion
+connectivity to be configured separately; this option does not create the DCE
+private endpoint or its DNS records.
 
 - **`x-quota-remaining-tokens` is an unreliable estimate on APIM StandardV2.** The value bounces erratically between requests due to platform-level counter behavior, not policy logic. The internal counter tracks correctly — enforcement (403) fires at the right time, but the reported remaining value is noisy. Per [Microsoft docs](https://learn.microsoft.com/en-us/azure/api-management/azure-openai-token-limit-policy): *"The value is an estimate for informational purposes."*
 

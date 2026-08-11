@@ -142,3 +142,6 @@ param accessContracts = hasBYO ? byoContracts : selfContainedContracts
 // every model into a single {model}-pool (PTU at low priority as overflow).
 param priorityRouting = true
 
+// Cost collection is opt-in because it creates cross-scope role assignments.
+param deployCostIngestion = bool(readEnvironmentVariable('DEPLOY_COST_INGESTION', 'false'))
+param costIngestionPublicNetworkAccess = bool(readEnvironmentVariable('COST_INGESTION_PUBLIC_NETWORK_ACCESS', 'true'))

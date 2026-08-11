@@ -32,6 +32,12 @@ param createFoundryDeployments aiModelTDeploymentType[] = []
 @description('When true, create a dedicated {model}-ptu-pool per model with PTU backends and route priority==1 callers there. When false, all backends live in a single {model}-pool with PTU at priority 200 (overflow). Defaults to true in this showcase since the quota gateway is the canonical priority/contract scenario.')
 param priorityRouting bool = true
 
+@description('Deploy managed-identity Cost Management collectors for Foundry backends. Disabled by default because deployment requires Cost Management Reader and role-assignment permissions in every target resource group.')
+param deployCostIngestion bool = false
+
+@description('Enable public network access on cost-ingestion Data Collection Endpoints. Disable only when private ingestion connectivity is configured separately.')
+param costIngestionPublicNetworkAccess bool = true
+
 // -- Variables ----------------------------------------------------------------
 
 var tags = {
@@ -182,9 +188,68 @@ module quotaDashboard 'dashboard/dashboard.bicep' = {
   params: {
     location: location
     logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
-    callerTierMapping: aiGateway.outputs.contractMapJson
   }
 }
+
+// ============================================================================
+// -- Monthly Workbook and Billed-Cost Collection
+// ============================================================================
+// The table is always present so cost workbook tiles return no rows rather than
+// a missing-table error when collection is disabled.
+module aiCostTable '../modules/dashboard/cost-ingestion-table.bicep' = {
+    name: 'ai-cost-table'
+    params: {
+      logAnalyticsWorkspaceName: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_NAME
+    }
+  }
+
+  module monthlyWorkbook 'dashboard/monthly-workbook.bicep' = {
+    name: 'monthly-workbook-deployment'
+    params: {
+      location: location
+      logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
+    }
+    dependsOn: [
+      aiCostTable
+    ]
+  }
+
+  // Deploy one collector per BYO Foundry. This preserves resource-group-scoped
+  // Cost Management Reader grants across cross-RG and cross-subscription inputs.
+  @batchSize(1)
+  module byoCostIngestion '../modules/dashboard/cost-ingestion.bicep' = [
+    for (instance, i) in foundryInstances: if (deployCostIngestion && !(instance.?isApim ?? false)) {
+      name: 'cost-ingestion-${i}-${resourceToken}'
+      scope: resourceGroup(split(instance.resourceId, '/')[2], split(instance.resourceId, '/')[4])
+      params: {
+        // DCE/DCR resources must share the destination workspace's region.
+        location: location
+        namePrefix: 'aigw-${substring(uniqueString(instance.resourceId), 0, 8)}-'
+        logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
+        foundryResourceIds: [instance.resourceId]
+        dataCollectionEndpointPublicNetworkAccess: costIngestionPublicNetworkAccess
+        tags: tags
+      }
+      dependsOn: [
+        aiCostTable
+      ]
+    }
+  ]
+
+  module selfFoundryCostIngestion '../modules/dashboard/cost-ingestion.bicep' = if (deployCostIngestion && !empty(createFoundryDeployments)) {
+    name: 'cost-ingestion-self-${resourceToken}'
+    params: {
+      location: location
+      namePrefix: 'aigw-${resourceToken}-'
+      logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
+      foundryResourceIds: [selfFoundry!.outputs.FOUNDRY_RESOURCE_ID]
+      dataCollectionEndpointPublicNetworkAccess: costIngestionPublicNetworkAccess
+      tags: tags
+    }
+    dependsOn: [
+      aiCostTable
+    ]
+  }
 
 // ============================================================================
 // -- Outputs
@@ -204,3 +269,5 @@ output CONFIG_VALIDATION_RESULT bool = validConfig
 output CREATED_APP_IDS array = entraApps.outputs.createdAppIds
 output EVENTHUB_NAMESPACE string = eventHub.outputs.namespaceName
 output EVENTHUB_NAME string = eventHub.outputs.eventHubName
+output MONTHLY_WORKBOOK_ID string = monthlyWorkbook.outputs.workbookId
+output COST_INGESTION_ENABLED bool = deployCostIngestion
