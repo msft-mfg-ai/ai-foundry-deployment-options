@@ -6,7 +6,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from vpn import find_free_subnet, find_tunnel_network
+from vpn import find_free_subnet, find_tunnel_network, wireguard_profile_name
 
 
 class NetworkSelectionTests(unittest.TestCase):
@@ -25,6 +25,12 @@ class NetworkSelectionTests(unittest.TestCase):
         self.assertEqual(
             find_tunnel_network(blocked),
             ipaddress.ip_network("10.99.2.0/24"),
+        )
+
+    def test_profile_name_follows_vnet_resource_group(self):
+        self.assertEqual(
+            wireguard_profile_name("rg-foundry (private)"),
+            "rg-foundry--private-",
         )
 
 

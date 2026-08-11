@@ -38,8 +38,9 @@ Discovery asks you to:
 2. Confirm the separate VPN resource group name.
 3. Confirm a free VPN subnet CIDR.
 4. Confirm a `10.99.x.0/24` WireGuard tunnel network.
-5. Name the generated client profile.
-6. Confirm the DNS validation hostname, defaulted to an `AIServices` Foundry account in the VNet resource group.
+5. Confirm the DNS validation hostname, defaulted to an `AIServices` Foundry account in the VNet resource group.
+
+The generated WireGuard client profile is named after the resource group containing the selected VNet. Characters unsupported in profile filenames are replaced with `-`.
 
 On subsequent `azd up` runs, discovery reuses values already stored in the current azd environment and only prompts for missing settings.
 

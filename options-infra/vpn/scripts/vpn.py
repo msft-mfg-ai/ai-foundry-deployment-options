@@ -138,6 +138,10 @@ def find_tunnel_network(blocked: list[ipaddress.IPv4Network]) -> ipaddress.IPv4N
     raise VpnError("No non-overlapping 10.99.x.0/24 tunnel network is available.")
 
 
+def wireguard_profile_name(resource_group_name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "-", resource_group_name)
+
+
 def usable_ssh_key() -> tuple[Path, str]:
     ssh_dir = Path.home() / ".ssh"
     candidates = [
@@ -603,15 +607,7 @@ def discover(dry_run: bool) -> None:
         "Private hostname to validate through the VPN",
         foundry_hostnames[0] if foundry_hostnames else "",
     )
-    client_name = re.sub(
-        r"[^A-Za-z0-9_.-]",
-        "-",
-        env_or_prompt(
-            "VPN_CLIENT_NAME",
-            "WireGuard client profile name",
-            os.environ.get("COMPUTERNAME") or os.environ.get("HOSTNAME") or "foundry-client",
-        ),
-    )
+    client_name = wireguard_profile_name(selected["resourceGroup"])
 
     existing_vpn_nsg = run(
         [
