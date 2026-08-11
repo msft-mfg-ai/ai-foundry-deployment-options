@@ -15,7 +15,7 @@ resource existingIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023
   name: existingIdentityName!
 }
 
-module botServiceIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.1' = if (!useExistingIdentity) {
+module botServiceIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.6.0' = if (!useExistingIdentity) {
   name: '${identityName}-deployment'
   params: {
     name: identityName

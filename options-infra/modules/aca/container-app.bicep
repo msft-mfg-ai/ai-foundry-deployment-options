@@ -10,14 +10,14 @@ param ingressTargetPort int
 param containerRegistryLoginServer string?
 param containerAppsEnvironmentResourceId string
 param ingressExternal bool = false
-param cpu string
-param memory string
+param cpu containerAppCpu
+param memory containerAppMemory
 param volumeMounts array = []
 param volumes array = []
 param workloadProfileName string
 param scaleMinReplicas int = 1
 param scaleMaxReplicas int = 2
-param probes array = []
+param probes containerAppProbe[] = []
 param keyVaultName string? // New parameter for Key Vault name
 @description('Optional. List of specialized containers that run before app containers.')
 param initContainersTemplate array = []
@@ -75,7 +75,7 @@ var additionalVolumes = union(
   volumes
 )
 
-module containerApp 'br/public:avm/res/app/container-app:0.20.0' = {
+module containerApp 'br/public:avm/res/app/container-app:0.23.0' = {
   name: 'containerAppDeployment-${name}'
   params: {
     name: name
@@ -184,6 +184,75 @@ output CONTAINER_APP_AUTHENTICATION_CALLBACK_URI string = 'https://${containerAp
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+@export()
+@description('CPU allocation for a container app in cores, matching Azure Container Apps values such as 0.25, 0.5, 1.0, or 2.')
+type containerAppCpu = '0.25' | '0.5' | '0.75' | '1' | '1.0' | '1.5' | '2' | '2.0' | '3' | '3.0' | '4' | '4.0' | '5' | '5.0' | '6' | '6.0' | '8' | '8.0'
+
+@export()
+@description('Memory allocation for a container app, matching Azure Container Apps values such as 0.5Gi, 1Gi, or 2Gi.')
+type containerAppMemory = '0.5Gi' | '0.75Gi' | '1Gi' | '1.0Gi' | '1.5Gi' | '2Gi' | '2.0Gi' | '3Gi' | '3.0Gi' | '4Gi' | '4.0Gi' | '5Gi' | '5.0Gi' | '6Gi' | '6.0Gi' | '8Gi' | '8.0Gi' | '16Gi' | '16.0Gi'
+
+@export()
+@description('HTTP probe metadata for a container app health check.')
+type containerAppProbeHttpGet = {
+  @description('Request path to probe, e.g. /health.')
+  path: string
+
+  @description('Target port for the HTTP request.')
+  port: int
+
+  @description('HTTP scheme to use for the probe.')
+  scheme: ('HTTP' | 'HTTPS')?
+}
+
+@export()
+@description('TCP socket probe metadata for a container app health check.')
+type containerAppProbeTcpSocket = {
+  @description('Target port for the TCP probe.')
+  port: int
+
+  @description('Optional host interface to probe.')
+  host: string?
+}
+
+@export()
+@description('Executable probe metadata for a container app health check.')
+type containerAppProbeExec = {
+  @description('Command to run inside the container.')
+  command: string[]
+}
+
+@export()
+@description('Probe definition for a container app, matching the AVM type used by Azure Container Apps resources.')
+type containerAppProbe = {
+  @description('Probe type: readiness, liveness, or startup.')
+  type: ('Readiness' | 'Liveness' | 'Startup')
+
+  @description('Number of seconds after the container is started before the probe begins.')
+  initialDelaySeconds: int?
+
+  @description('How often to run the probe in seconds.')
+  periodSeconds: int?
+
+  @description('How long in seconds the probe waits before timing out.')
+  timeoutSeconds: int?
+
+  @description('Minimum consecutive failures before the probe is considered failed.')
+  failureThreshold: int?
+
+  @description('Minimum consecutive successes before the probe is considered successful.')
+  successThreshold: int?
+
+  @description('HTTP GET probe configuration.')
+  httpGet: containerAppProbeHttpGet?
+
+  @description('TCP socket probe configuration.')
+  tcpSocket: containerAppProbeTcpSocket?
+
+  @description('Exec probe configuration.')
+  exec: containerAppProbeExec?
+}
+
 @export()
 @description('One entry in `definition.settings`. Plain env var (`name` + `value`), Key Vault-backed secret (`name` + `secret: true` + `keyVaultSecretName`), or inline secret stored as a Container Apps secret (`name` + `secret: true` + `secretValue`).')
 type containerAppSetting = {

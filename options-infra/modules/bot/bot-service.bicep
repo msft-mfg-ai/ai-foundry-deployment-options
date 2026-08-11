@@ -99,7 +99,7 @@ var valid = (requiresExplicitAppId && empty(msaAppId))
 // ---------------------------------------------------------------------------
 // Optional User-Assigned Managed Identity (only when msaAppType = UserAssignedMSI)
 // ---------------------------------------------------------------------------
-module botIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.1' = if (createNewMsi) {
+module botIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.6.0' = if (createNewMsi) {
   name: '${identityName}-deployment'
   params: {
     name: identityName

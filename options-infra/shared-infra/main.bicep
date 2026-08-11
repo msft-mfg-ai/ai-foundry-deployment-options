@@ -27,7 +27,7 @@ param mcpEntraAppClientId string = ''
 // Foundry doesn't support cross-subscription VNet injection or cross subscription resources, so we need to deploy it in the same subscription
 var doesFoundrySupportsCrossSubscriptionVnet = false
 
-module identity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.1' = {
+module identity 'br/public:avm/res/managed-identity/user-assigned-identity:0.6.0' = {
   name: 'mgmtidentity-${uniqueString(deployment().name, location)}'
   params: {
     location: location
@@ -36,7 +36,7 @@ module identity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.1
   }
 }
 
-module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.15.1' = {
+module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.16.1' = {
   name: 'log-${resourceToken}'
   params: {
     location: location
@@ -50,7 +50,7 @@ module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.15.1' = 
   }
 }
 
-module appInsights 'br/public:avm/res/insights/component:0.7.2' = {
+module appInsights 'br/public:avm/res/insights/component:0.8.0' = {
   name: 'appinsights-${resourceToken}'
   params: {
     location: location
@@ -265,7 +265,14 @@ module SampleMcp '../modules/aca/container-app.bicep' = {
       {
         type: 'Readiness'
         httpGet: {
-          path: '/'
+          path: '/health'
+          port: 8080
+        }
+      }
+      {
+        type: 'Liveness'
+        httpGet: {
+          path: '/health'
           port: 8080
         }
       }
