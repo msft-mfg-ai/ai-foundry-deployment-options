@@ -1,0 +1,951 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="data:,">
+  <title>OAuth2 ModelGateway Connection - REST Field Guide</title>
+  <style>
+    :root {
+      --ink: #e9edf2;
+      --muted: #9ca9b8;
+      --paper: #0b1118;
+      --panel: #111a24;
+      --panel-2: #162231;
+      --line: #2a3a4c;
+      --signal: #ffb000;
+      --signal-2: #56d6c9;
+      --danger: #ff6b61;
+      --code: #071018;
+      --shadow: 0 22px 70px rgba(0, 0, 0, 0.34);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px),
+        radial-gradient(circle at 86% 8%, rgba(86, 214, 201, .13), transparent 30rem),
+        radial-gradient(circle at 8% 28%, rgba(255, 176, 0, .1), transparent 25rem),
+        var(--paper);
+      background-size: 28px 28px, 28px 28px, auto, auto, auto;
+      font-family: Georgia, "Times New Roman", serif;
+      line-height: 1.65;
+    }
+
+    a {
+      color: var(--signal-2);
+      text-underline-offset: .2em;
+    }
+
+    code, pre, .eyebrow, .step-no, .rail, button, .tag, .checklist {
+      font-family: "Courier New", Courier, monospace;
+    }
+
+    .progress {
+      position: fixed;
+      inset: 0 auto auto 0;
+      z-index: 50;
+      width: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--signal), var(--signal-2));
+      box-shadow: 0 0 18px var(--signal);
+    }
+
+    .shell {
+      width: min(1260px, calc(100% - 36px));
+      margin: 0 auto;
+      padding: 30px 0 90px;
+    }
+
+    .hero {
+      position: relative;
+      min-height: 78vh;
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(280px, .55fr);
+      gap: clamp(40px, 8vw, 120px);
+      align-items: center;
+      padding: clamp(70px, 12vh, 150px) 0 90px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .hero::after {
+      content: "REST / OAUTH2 / MODELGATEWAY";
+      position: absolute;
+      right: 0;
+      bottom: 18px;
+      color: rgba(233, 237, 242, .16);
+      font: 700 11px/1 "Courier New", monospace;
+      letter-spacing: .22em;
+    }
+
+    .eyebrow {
+      margin: 0 0 22px;
+      color: var(--signal);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .19em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3 {
+      font-weight: 400;
+      line-height: 1.05;
+      text-wrap: balance;
+    }
+
+    h1 {
+      max-width: 840px;
+      margin: 0;
+      font-size: clamp(54px, 8.4vw, 126px);
+      letter-spacing: -.055em;
+    }
+
+    h1 em {
+      color: var(--signal);
+      font-style: italic;
+    }
+
+    .lede {
+      max-width: 720px;
+      margin: 36px 0 0;
+      color: var(--muted);
+      font-size: clamp(18px, 2vw, 25px);
+    }
+
+    .spec-card {
+      position: relative;
+      padding: 28px;
+      background: rgba(17, 26, 36, .88);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+    }
+
+    .spec-card::before {
+      content: "";
+      position: absolute;
+      inset: -1px auto -1px -1px;
+      width: 4px;
+      background: var(--signal);
+    }
+
+    .spec-card dl {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 12px 20px;
+      margin: 0;
+      font-size: 14px;
+    }
+
+    .spec-card dt {
+      color: var(--muted);
+      font-family: "Courier New", monospace;
+    }
+
+    .spec-card dd {
+      margin: 0;
+      text-align: right;
+    }
+
+    .tag {
+      display: inline-block;
+      padding: 2px 7px;
+      color: #091118;
+      background: var(--signal-2);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 230px minmax(0, 1fr);
+      gap: clamp(35px, 7vw, 110px);
+      padding-top: 70px;
+    }
+
+    .rail {
+      position: sticky;
+      top: 28px;
+      align-self: start;
+      padding: 22px 0;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+    }
+
+    .rail strong {
+      display: block;
+      margin-bottom: 15px;
+      color: var(--signal);
+      letter-spacing: .14em;
+    }
+
+    .rail a {
+      display: block;
+      padding: 7px 0;
+      color: var(--muted);
+      text-decoration: none;
+      transition: color .2s, transform .2s;
+    }
+
+    .rail a:hover {
+      color: var(--ink);
+      transform: translateX(5px);
+    }
+
+    main {
+      min-width: 0;
+    }
+
+    section {
+      position: relative;
+      padding: 30px 0 100px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    section:last-child {
+      border-bottom: 0;
+    }
+
+    .step-head {
+      display: grid;
+      grid-template-columns: 75px 1fr;
+      gap: 18px;
+      align-items: start;
+      margin-bottom: 34px;
+    }
+
+    .step-no {
+      color: var(--signal);
+      font-size: 14px;
+      letter-spacing: .12em;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: clamp(36px, 5vw, 68px);
+      letter-spacing: -.035em;
+    }
+
+    h3 {
+      margin: 44px 0 14px;
+      color: var(--signal-2);
+      font-size: clamp(22px, 2.3vw, 31px);
+    }
+
+    p, li {
+      max-width: 830px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(7, auto);
+      align-items: center;
+      gap: 10px;
+      margin: 36px 0;
+      overflow-x: auto;
+      padding: 8px 0 16px;
+    }
+
+    .flow span {
+      min-width: 130px;
+      padding: 20px 14px;
+      text-align: center;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      font-family: "Courier New", monospace;
+      font-size: 12px;
+    }
+
+    .flow b {
+      color: var(--signal);
+      font-family: "Courier New", monospace;
+      font-weight: 400;
+    }
+
+    .callout {
+      max-width: 880px;
+      margin: 30px 0;
+      padding: 22px 26px;
+      background: var(--panel-2);
+      border-left: 4px solid var(--signal-2);
+    }
+
+    .callout.warning {
+      border-left-color: var(--danger);
+    }
+
+    .callout strong {
+      color: var(--signal-2);
+    }
+
+    .callout.warning strong {
+      color: var(--danger);
+    }
+
+    .code-wrap {
+      position: relative;
+      max-width: 970px;
+      margin: 22px 0 34px;
+      background: var(--code);
+      border: 1px solid var(--line);
+      box-shadow: 0 14px 42px rgba(0,0,0,.22);
+    }
+
+    .code-label {
+      padding: 9px 14px;
+      color: var(--muted);
+      background: #0d1721;
+      border-bottom: 1px solid var(--line);
+      font: 11px/1.4 "Courier New", monospace;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+
+    pre {
+      margin: 0;
+      padding: 24px;
+      overflow-x: auto;
+      color: #d7e2ec;
+      font-size: 13px;
+      line-height: 1.62;
+      tab-size: 2;
+    }
+
+    .copy {
+      position: absolute;
+      top: 6px;
+      right: 7px;
+      padding: 5px 10px;
+      color: var(--muted);
+      background: transparent;
+      border: 1px solid var(--line);
+      cursor: pointer;
+    }
+
+    .copy:hover, .copy.copied {
+      color: var(--paper);
+      background: var(--signal);
+      border-color: var(--signal);
+    }
+
+    .vars {
+      width: min(100%, 920px);
+      border-collapse: collapse;
+      margin: 24px 0 36px;
+      font-size: 15px;
+    }
+
+    .vars th, .vars td {
+      padding: 13px 14px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .vars th {
+      color: var(--signal);
+      font: 700 11px/1.4 "Courier New", monospace;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+
+    .vars td:first-child {
+      color: var(--signal-2);
+      font-family: "Courier New", monospace;
+      font-size: 13px;
+    }
+
+    .checklist {
+      max-width: 830px;
+      padding: 0;
+      list-style: none;
+      font-size: 14px;
+    }
+
+    .checklist li {
+      position: relative;
+      padding: 13px 0 13px 34px;
+      border-bottom: 1px dashed var(--line);
+    }
+
+    .checklist li::before {
+      content: "[ ]";
+      position: absolute;
+      left: 0;
+      color: var(--signal);
+    }
+
+    footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      padding-top: 42px;
+      color: var(--muted);
+      font: 11px/1.5 "Courier New", monospace;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    @media (max-width: 820px) {
+      .hero {
+        grid-template-columns: 1fr;
+      }
+
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .rail {
+        position: relative;
+        top: auto;
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0 14px;
+      }
+
+      .rail strong {
+        grid-column: 1 / -1;
+      }
+
+      .step-head {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .hero > * {
+        opacity: 0;
+        transform: translateY(20px);
+        animation: enter .7s ease forwards;
+      }
+
+      .hero > :nth-child(2) {
+        animation-delay: .18s;
+      }
+
+      @keyframes enter {
+        to { opacity: 1; transform: none; }
+      }
+    }
+
+    @media print {
+      body {
+        color: #111;
+        background: #fff;
+      }
+
+      .progress, .rail, .copy {
+        display: none;
+      }
+
+      .shell {
+        width: 100%;
+      }
+
+      .hero {
+        min-height: auto;
+      }
+
+      .layout {
+        display: block;
+      }
+
+      .spec-card, .callout, .code-wrap {
+        box-shadow: none;
+        break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress" id="progress"></div>
+  <div class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Implementation record / REST edition</p>
+        <h1>OAuth2 into <em>Foundry</em></h1>
+        <p class="lede">
+          A field guide for registering an OAuth client, creating a
+          <code>ModelGateway</code> connection through ARM REST, validating the
+          token in APIM, and proving the complete client-credentials path.
+        </p>
+      </div>
+      <aside class="spec-card" aria-label="Connection specification">
+        <dl>
+          <dt>Connection</dt><dd><span class="tag">custom-oauth</span></dd>
+          <dt>Category</dt><dd>ModelGateway</dd>
+          <dt>Grant</dt><dd>client_credentials</dd>
+          <dt>Scope</dt><dd>AI.Gateway</dd>
+          <dt>Target</dt><dd>/inference-keycloak</dd>
+          <dt>ARM API</dt><dd>2025-04-01-preview</dd>
+        </dl>
+      </aside>
+    </header>
+
+    <div class="layout">
+      <nav class="rail" aria-label="Guide sections">
+        <strong>RUNBOOK INDEX</strong>
+        <a href="#shape">00 / Request shape</a>
+        <a href="#variables">01 / Variables</a>
+        <a href="#entra">02 / Entra registration</a>
+        <a href="#connection">03 / Foundry connection</a>
+        <a href="#apim">04 / APIM validation</a>
+        <a href="#verify">05 / Verification</a>
+        <a href="#keycloak">06 / Keycloak variant</a>
+        <a href="#diagnostics">07 / Diagnostics</a>
+      </nav>
+
+      <main>
+        <section id="shape">
+          <div class="step-head">
+            <span class="step-no">00</span>
+            <h2>What the connection actually does</h2>
+          </div>
+          <p>
+            Foundry stores the OAuth client credentials in a project connection.
+            Before calling APIM, Foundry posts those credentials to the configured
+            token endpoint. It then forwards the returned access token as a bearer
+            token. APIM validates the token and uses its own managed identity for
+            the outbound call to the model backend.
+          </p>
+          <div class="flow" aria-label="OAuth request flow">
+            <span>Foundry agent</span><b>-&gt;</b>
+            <span>custom-oauth</span><b>-&gt;</b>
+            <span>OIDC token endpoint</span><b>-&gt;</b>
+            <span>APIM /inference-keycloak</span><b>-&gt;</b>
+            <span>Model backend</span>
+          </div>
+          <div class="callout">
+            <strong>Two independent identities:</strong> the OAuth token secures
+            Foundry-to-APIM. APIM's managed identity secures APIM-to-Foundry or
+            APIM-to-Azure OpenAI.
+          </div>
+        </section>
+
+        <section id="variables">
+          <div class="step-head">
+            <span class="step-no">01</span>
+            <h2>Set the working variables</h2>
+          </div>
+          <table class="vars">
+            <thead>
+              <tr><th>Variable</th><th>Meaning</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>TENANT_ID</td><td>Microsoft Entra tenant hosting the app registration.</td></tr>
+              <tr><td>SUBSCRIPTION_ID</td><td>Subscription containing the Foundry project.</td></tr>
+              <tr><td>RESOURCE_GROUP</td><td>Resource group containing the Foundry account.</td></tr>
+              <tr><td>FOUNDRY_ACCOUNT</td><td>Foundry account resource name.</td></tr>
+              <tr><td>FOUNDRY_PROJECT</td><td>Project receiving the connection.</td></tr>
+              <tr><td>APIM_TARGET</td><td>Gateway target, including <code>/inference-keycloak</code>.</td></tr>
+            </tbody>
+          </table>
+          <div class="code-wrap">
+            <div class="code-label">shell / operator values</div>
+            <button class="copy" type="button">copy</button>
+            <pre><code>export TENANT_ID="00000000-0000-0000-0000-000000000000"
+export SUBSCRIPTION_ID="00000000-0000-0000-0000-000000000000"
+export RESOURCE_GROUP="rg-foundry"
+export FOUNDRY_ACCOUNT="ai-foundry-example"
+export FOUNDRY_PROJECT="project-example"
+export CONNECTION_NAME="custom-oauth"
+export APIM_TARGET="https://your-apim.azure-api.net/inference-keycloak"
+
+export ARM_TOKEN="$(az account get-access-token \
+  --resource https://management.azure.com \
+  --query accessToken -o tsv)"
+
+export GRAPH_TOKEN="$(az account get-access-token \
+  --resource-type ms-graph \
+  --query accessToken -o tsv)"</code></pre>
+          </div>
+        </section>
+
+        <section id="entra">
+          <div class="step-head">
+            <span class="step-no">02</span>
+            <h2>Create the Entra application with Graph REST</h2>
+          </div>
+          <p>
+            The original operational setup created one application, exposed the
+            <code>AI.Gateway</code> permission, added a client secret, and used the
+            same application as the client requesting its own resource token.
+          </p>
+
+          <h3>2.1 Create the application object</h3>
+          <div class="code-wrap">
+            <div class="code-label">POST graph.microsoft.com/v1.0/applications</div>
+            <button class="copy" type="button">copy</button>
+            <pre><code>APP_RESPONSE="$(curl -fsS -X POST \
+  "https://graph.microsoft.com/v1.0/applications" \
+  -H "Authorization: Bearer $GRAPH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "displayName": "AI.Gateway",
+    "signInAudience": "AzureADMyOrg"
+  }')"
+
+export APP_OBJECT_ID="$(jq -r .id &lt;&lt;&lt;"$APP_RESPONSE")"
+export CLIENT_ID="$(jq -r .appId &lt;&lt;&lt;"$APP_RESPONSE")"
+export SCOPE_ID="$(uuidgen)"</code></pre>
+          </div>
+
+          <h3>2.2 Expose the identifier URI and scope</h3>
+          <div class="code-wrap">
+            <div class="code-label">PATCH application object</div>
+            <button class="copy" type="button">copy</button>
+            <pre><code>curl -fsS -X PATCH \
+  "https://graph.microsoft.com/v1.0/applications/$APP_OBJECT_ID" \
+  -H "Authorization: Bearer $GRAPH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -nc \
+    --arg clientId "$CLIENT_ID" \
+    --arg scopeId "$SCOPE_ID" '{
+      identifierUris: ["api://" + $clientId],
+      api: {
+        oauth2PermissionScopes: [{
+          id: $scopeId,
+          value: "AI.Gateway",
+          type: "Admin",
+          isEnabled: true,
+          adminConsentDisplayName: "Access AI Gateway",
+          adminConsentDescription: "Allows the application to call the AI Gateway."
+        }]
+      }
+    }')"</code></pre>
+          </div>
+
+          <h3>2.3 Create the service principal and client secret</h3>
+          <div class="code-wrap">
+            <div class="code-label">POST service principal + addPassword</div>
+            <button class="copy" type="button">copy</button>
+            <pre><code>curl -fsS -X POST \
+  "https://graph.microsoft.com/v1.0/servicePrincipals" \
+  -H "Authorization: Bearer $GRAPH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -nc --arg appId "$CLIENT_ID" '{appId:$appId}')" &gt;/dev/null
+
+SECRET_RESPONSE="$(curl -fsS -X POST \
+  "https://graph.microsoft.com/v1.0/applications/$APP_OBJECT_ID/addPassword" \
+  -H "Authorization: Bearer $GRAPH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "passwordCredential": {
+      "displayName": "Foundry ModelGateway"
+    }
+  }')"
+
+export CLIENT_SECRET="$(jq -r .secretText &lt;&lt;&lt;"$SECRET_RESPONSE")"
+export TOKEN_URL="https://login.microsoftonline.com/$TENANT_ID/oauth2/v2.0/token"
+export TOKEN_SCOPE="api://$CLIENT_ID/.default"</code></pre>
+          </div>
+          <div class="callout warning">
+            <strong>Secret boundary:</strong> Graph returns <code>secretText</code>
+            only once. Store it in a secure deployment variable or secret store.
+            Never put it in source control, Bicep outputs, command history, or logs.
+          </div>
+        </section>
+
+        <section id="connection">
+          <div class="step-head">
+            <span class="step-no">03</span>
+            <h2>Create the Foundry connection with ARM REST</h2>
+          </div>
+          <p>
+            The connection is a child resource of the Foundry project. The
+            <code>properties: any(...)</code> construct used by the Bicep module
+            emits this same preview resource shape.
+          </p>
+
+          <div class="code-wrap">
+            <div class="code-label">PUT project connection / 2025-04-01-preview</div>
+            <button class="copy" type="button">copy</button>
+            <pre><code>CONNECTION_URL="https://management.azure.com/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.CognitiveServices/accounts/$FOUNDRY_ACCOUNT/projects/$FOUNDRY_PROJECT/connections/$CONNECTION_NAME?api-version=2025-04-01-preview"
+
+MODELS='[
+  {
+    "name": "gpt-4o-mini",
+    "properties": {
+      "model": {
+        "name": "gpt-4o-mini",
+        "version": "2024-07-18",
+        "format": "OpenAI"
+      }
+    }
+  }
+]'
+
+curl -fsS -X PUT "$CONNECTION_URL" \
+  -H "Authorization: Bearer $ARM_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -nc \
+    --arg target "$APIM_TARGET" \
+    --arg clientId "$CLIENT_ID" \
+    --arg clientSecret "$CLIENT_SECRET" \
+    --arg tokenUrl "$TOKEN_URL" \
+    --arg scope "$TOKEN_SCOPE" \
+    --arg models "$MODELS" '{
+      properties: {
+        category: "ModelGateway",
+        target: $target,
+        authType: "OAuth2",
+        isSharedToAll: true,
+        credentials: {
+          clientId: $clientId,
+          clientSecret: $clientSecret
+        },
+        tokenUrl: $tokenUrl,
+        scopes: [$scope],
+        metadata: {
+          deploymentInPath: "true",
+          inferenceAPIVersion: "2024-10-21",
+          models: $models,
+          customHeaders: "{\"x-ms-foundry-models\":\"byom\"}"
+        }
+      }
+    }')"</code></pre>
+          </div>
+
+          <div class="callout">
+            <strong>Metadata values are strings.</strong> The model array is
+            serialized JSON inside <code>metadata.models</code>.
+            <code>deploymentInPath: "true"</code> matches APIM routes such as
+            <code>/openai/deployments/{model}/chat/completions</code>.
+          </div>
+
+          <h3>Read back the resource</h3>
+          <div class="code-wrap">
+            <div class="code-label">GET connection</div>
+            <button class="copy" type="button">copy</button>
+            <pre><code>curl -fsS "$CONNECTION_URL" \
+  -H "Authorization: Bearer $ARM_TOKEN" |
+  jq '{
+    name,
+    category: .properties.category,
+    authType: .properties.authType,
+    target: .properties.target,
+    tokenUrl: .properties.tokenUrl,
+    scopes: .properties.scopes
+  }'</code></pre>
+          </div>
+        </section>
+
+        <section id="apim">
+          <div class="step-head">
+            <span class="step-no">04</span>
+            <h2>Validate the OAuth token in APIM</h2>
+          </div>
+          <p>
+            APIM must validate the exact issuer and audience carried by the
+            access token. The first Entra test revealed that the token's
+            <code>aud</code> was the raw application ID, not the
+            <code>api://...</code> identifier URI. The policy was updated to
+            accept that observed value.
+          </p>
+          <div class="code-wrap">
+            <div class="code-label">APIM validate-jwt policy</div>
+            <button class="copy" type="button">copy</button>
+            <pre><code>&lt;validate-jwt
+    header-name="Authorization"
+    require-scheme="Bearer"
+    failed-validation-httpcode="401"
+    failed-validation-error-message="Invalid OAuth access token"&gt;
+  &lt;openid-config
+      url="https://login.microsoftonline.com/${tenant-id}/v2.0/.well-known/openid-configuration" /&gt;
+  &lt;audiences&gt;
+    &lt;audience&gt;${client-id}&lt;/audience&gt;
+  &lt;/audiences&gt;
+&lt;/validate-jwt&gt;</code></pre>
+          </div>
+          <p>
+            This sample isolates external-provider validation on the dedicated
+            <code>/inference-keycloak</code> API. Its API policy includes the
+            sample-owned <code>oidc-token-validation</code> fragment; the shared
+            <code>/inference</code> API remains unchanged.
+          </p>
+          <div class="code-wrap">
+            <div class="code-label">Dedicated API policy</div>
+            <button class="copy" type="button">copy</button>
+            <pre><code>var policyXml = replace(
+  loadTextContent('../modules/apim/policy-per-model.xml'),
+  '{JWT_VALIDATION}',
+  '&lt;include-fragment fragment-id="oidc-token-validation" /&gt;'
+)
+
+inferenceAPIName: 'inference-api-keycloak'
+inferenceAPIPath: 'inference-keycloak'</code></pre>
+          </div>
+        </section>
+
+        <section id="verify">
+          <div class="step-head">
+            <span class="step-no">05</span>
+            <h2>Prove the path before running an agent</h2>
+          </div>
+          <h3>5.1 Request the same token Foundry will request</h3>
+          <div class="code-wrap">
+            <div class="code-label">OAuth2 client credentials</div>
+            <button class="copy" type="button">copy</button>
+            <pre><code>ACCESS_TOKEN="$(curl -fsS \
+  --data-urlencode grant_type=client_credentials \
+  --data-urlencode "client_id=$CLIENT_ID" \
+  --data-urlencode "client_secret=$CLIENT_SECRET" \
+  --data-urlencode "scope=$TOKEN_SCOPE" \
+  "$TOKEN_URL" | jq -r .access_token)"
+
+test -n "$ACCESS_TOKEN"</code></pre>
+          </div>
+
+          <h3>5.2 Inspect issuer, audience, and client identity</h3>
+          <div class="code-wrap">
+            <div class="code-label">JWT payload inspection / diagnostic only</div>
+            <button class="copy" type="button">copy</button>
+            <pre><code>JWT_PAYLOAD="$(cut -d. -f2 &lt;&lt;&lt;"$ACCESS_TOKEN" | tr '_-' '/+')"
+printf '%s' "$JWT_PAYLOAD" |
+  awk '{ l=length($0)%4; if (l==2) print $0"=="; else if (l==3) print $0"="; else print $0 }' |
+  base64 -d 2&gt;/dev/null |
+  jq '{iss, aud, azp, appid, scp, roles, exp}'</code></pre>
+          </div>
+
+          <h3>5.3 Call APIM directly</h3>
+          <div class="code-wrap">
+            <div class="code-label">Gateway smoke test</div>
+            <button class="copy" type="button">copy</button>
+            <pre><code>curl -i -X POST \
+  "$APIM_TARGET/openai/deployments/gpt-4o-mini/chat/completions?api-version=2024-10-21" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {"role": "user", "content": "Reply with: OAuth gateway works"}
+    ]
+  }'</code></pre>
+          </div>
+          <ul class="checklist">
+            <li>Token endpoint returns an access token.</li>
+            <li>JWT <code>iss</code> matches the OIDC discovery issuer.</li>
+            <li>JWT <code>aud</code> matches the APIM policy audience.</li>
+            <li>Direct APIM request returns HTTP 200.</li>
+            <li>Foundry agent using <code>custom-oauth/{model}</code> completes.</li>
+          </ul>
+        </section>
+
+        <section id="keycloak">
+          <div class="step-head">
+            <span class="step-no">06</span>
+            <h2>Substitute Keycloak for Entra</h2>
+          </div>
+          <p>
+            The Foundry REST resource does not care which standards-compliant
+            OAuth2 provider issues the token. Keep the connection payload shape
+            and replace the provider-specific values.
+          </p>
+          <table class="vars">
+            <thead>
+              <tr><th>Field</th><th>Keycloak value</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>clientId</td><td><code>foundry-model-gateway</code></td></tr>
+              <tr><td>clientSecret</td><td>Confidential client secret generated before deployment.</td></tr>
+              <tr><td>tokenUrl</td><td><code>https://{host}/realms/ai-gateway/protocol/openid-connect/token</code></td></tr>
+              <tr><td>scopes</td><td><code>["AI.Gateway"]</code></td></tr>
+              <tr><td>audience</td><td><code>ai-gateway</code>, emitted by an audience mapper.</td></tr>
+              <tr><td>required claim</td><td><code>azp=foundry-model-gateway</code></td></tr>
+            </tbody>
+          </table>
+          <div class="code-wrap">
+            <div class="code-label">Keycloak policy fragment</div>
+            <button class="copy" type="button">copy</button>
+            <pre><code>&lt;validate-jwt header-name="Authorization" require-scheme="Bearer"&gt;
+  &lt;openid-config
+      url="${keycloakUrl}/realms/${keycloakRealm}/.well-known/openid-configuration" /&gt;
+  &lt;audiences&gt;&lt;audience&gt;ai-gateway&lt;/audience&gt;&lt;/audiences&gt;
+  &lt;required-claims&gt;
+    &lt;claim name="azp" match="all"&gt;
+      &lt;value&gt;foundry-model-gateway&lt;/value&gt;
+    &lt;/claim&gt;
+  &lt;/required-claims&gt;
+&lt;/validate-jwt&gt;</code></pre>
+          </div>
+        </section>
+
+        <section id="diagnostics">
+          <div class="step-head">
+            <span class="step-no">07</span>
+            <h2>Failure signatures</h2>
+          </div>
+          <table class="vars">
+            <thead>
+              <tr><th>Symptom</th><th>Most likely cause</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>invalid_client</td><td>Wrong client ID/secret, disabled client, or secret expired.</td></tr>
+              <tr><td>invalid_scope</td><td>Requested scope is not assigned or does not exist.</td></tr>
+              <tr><td>401 TokenInvalidAudience</td><td>APIM audience differs from the token's actual <code>aud</code> claim.</td></tr>
+              <tr><td>401 invalid issuer</td><td>External hostname or realm differs from OIDC metadata issuer.</td></tr>
+              <tr><td>403 from backend</td><td>APIM managed identity lacks Cognitive Services User on the model account.</td></tr>
+              <tr><td>404 from APIM</td><td><code>deploymentInPath</code>, target URL, API path, or model name is wrong.</td></tr>
+              <tr><td>Connection exists, agent fails</td><td>Test token acquisition and APIM directly to isolate provider vs gateway routing.</td></tr>
+            </tbody>
+          </table>
+          <div class="callout warning">
+            <strong>Do not diagnose from configuration alone.</strong> Decode one
+            real access token and compare its <code>iss</code>, <code>aud</code>,
+            and client claim with the deployed APIM policy.
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <footer>
+      <span>AI Gateway OAuth2 / REST field guide</span>
+      <span>No credentials embedded</span>
+    </footer>
+  </div>
+
+  <script>
+    const progress = document.getElementById("progress");
+    const updateProgress = () => {
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      progress.style.width = `${max > 0 ? (window.scrollY / max) * 100 : 0}%`;
+    };
+    window.addEventListener("scroll", updateProgress, { passive: true });
+    updateProgress();
+
+    document.querySelectorAll(".copy").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const code = button.parentElement.querySelector("code").textContent;
+        try {
+          await navigator.clipboard.writeText(code);
+        } catch {
+          const area = document.createElement("textarea");
+          area.value = code;
+          document.body.appendChild(area);
+          area.select();
+          document.execCommand("copy");
+          area.remove();
+        }
+        button.textContent = "copied";
+        button.classList.add("copied");
+        setTimeout(() => {
+          button.textContent = "copy";
+          button.classList.remove("copied");
+        }, 1400);
+      });
+    });
+  </script>
+</body>
+</html>

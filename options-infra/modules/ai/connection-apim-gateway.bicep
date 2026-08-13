@@ -46,7 +46,7 @@ type ModelType = {
   name: string
   properties: {
     model: {
-      format: 'OpenAI' | 'Anthropic' | 'OpenAI-OSS' | 'DeepSeek' | 'Cohere' // Extend with other formats as needed
+      format: 'OpenAI' | 'Anthropic' | 'OpenAI-OSS' | 'DeepSeek' | 'Cohere' | 'Black Forest Labs' // Extend with other formats as needed
       name: string
       version: string
     }
