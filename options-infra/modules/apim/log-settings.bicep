@@ -21,6 +21,7 @@ var requestHeaders array = [
   'x-ms-foundry-model-id'
   'x-ms-foundry-agent-id'
   // Distributed tracing / correlation
+  'trace-id'
   'traceparent'
   'tracestate'
   'Correlation-Context'
@@ -53,6 +54,7 @@ var responseHeaders array = [
   'x-ratelimit-limit-requests'
   'azureml-served-by-cluster'
   'apim-request-id'
+  'trace-id'
   // Caller echoes (so response logs can be filtered without joining)
   'x-caller-name'
   'x-caller-id'
