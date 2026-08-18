@@ -1,0 +1,14 @@
+[project]
+name = "agents-v2-toolbox-oauth"
+version = "0.1.0"
+description = "Hosted Foundry agent for testing private MCP OAuth pass-through through Toolbox"
+requires-python = ">=3.13"
+dependencies = [
+    "agent-framework-foundry",
+    "agent-framework-foundry-hosting>=1.0.0a260630",
+    "azure-identity>=1.25.0",
+]
+
+[tool.uv]
+package = false
+prerelease = "allow"
