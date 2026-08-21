@@ -847,3 +847,5 @@ agents_anthropic/.env
 # Compiled Bicep artifacts (output of `az bicep build`)
 options-infra/**/main.json
 options-infra/foundry-perf-testing/perf/results/*
+
+.playwright-mcp/
