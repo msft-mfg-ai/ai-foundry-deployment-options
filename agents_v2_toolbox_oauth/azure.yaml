@@ -1,0 +1,62 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+requiredVersions:
+  extensions:
+    azure.ai.agents: ">=1.0.0-beta.10"
+    azure.ai.connections: ">=1.0.0-beta.4"
+    azure.ai.toolboxes: ">=1.0.0-beta.5"
+name: agents-v2-toolbox-oauth
+services:
+  existing-project:
+    host: azure.ai.project
+    endpoint: https://foundry-from-portal.services.ai.azure.com/api/projects/project-with-caphost
+  oauth2-passthrough-tools-yaml:
+    host: azure.ai.toolbox
+    uses:
+      - existing-project
+    description: Private MCP with custom OAuth identity pass-through
+    tools:
+      - type: mcp
+        connection: private-oauth2-mcp-yaml
+        server_label: private-oauth2-mcp
+  toolbox-oauth-test:
+    host: azure.ai.agent
+    project: src/toolbox-agent
+    language: python
+    uses:
+      - existing-project
+      - oauth2-passthrough-tools-yaml
+    codeConfiguration:
+      dependencyResolution: remote_build
+      entryPoint: main.py
+      runtime: python_3_13
+    container:
+      resources:
+        cpu: "0.5"
+        memory: 1Gi
+    toolboxes:
+      - oauth2-passthrough-tools-yaml
+    env:
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+      TOOLBOX_NAME: oauth2-passthrough-tools-yaml
+    kind: hosted
+    name: toolbox-oauth-test
+    description: Hosted agent for testing private MCP custom OAuth pass-through.
+    protocols:
+      - protocol: responses
+        version: 2.0.0
+infra:
+  provider: microsoft.foundry
+
+hooks:
+  predeploy:
+    windows:
+      shell: pwsh
+      run: ./scripts/configure-oauth-connection.ps1
+      interactive: false
+      continueOnError: false
+    posix:
+      shell: sh
+      run: ./scripts/configure-oauth-connection.sh
+      interactive: false
+      continueOnError: false

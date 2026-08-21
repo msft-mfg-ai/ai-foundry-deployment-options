@@ -787,17 +787,7 @@ bind-dynamic
 server=168.63.129.16
 cache-size=1000
 EOF
-mkdir -p /etc/systemd/system/dnsmasq.service.d
-cat >/etc/systemd/system/dnsmasq.service.d/after-wg.conf <<EOF
-[Unit]
-After=network-online.target wg-quick@wg0.service
-Wants=network-online.target
-Requires=wg-quick@wg0.service
-
-[Service]
-Restart=on-failure
-RestartSec=5s
-EOF
+rm -f /etc/systemd/system/dnsmasq.service.d/after-wg.conf
 systemctl daemon-reload
 systemctl enable wg-quick@wg0 dnsmasq >/dev/null
 systemctl restart wg-quick@wg0
