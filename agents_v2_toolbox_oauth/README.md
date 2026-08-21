@@ -8,6 +8,9 @@ The agent authenticates to the Toolbox with its hosted-agent identity. Foundry
 manages per-user OAuth consent and forwards the delegated access token to the
 private MCP server.
 
+The sample also deploys a separate hosted agent using native Code Interpreter
+containers for runtime file uploads and generated-file downloads.
+
 ## Files
 
 - `azure.yaml` - hosted agent and Toolbox provisioning.
@@ -81,6 +84,10 @@ The Toolbox tools are defined directly on the `azure.ai.toolbox` service in
 `FoundryToolbox` derives the Toolbox consumer endpoint from that name and
 `FOUNDRY_PROJECT_ENDPOINT`.
 
+`toolbox-code-interpreter-test` uses the native Code Interpreter container and
+files APIs. The agent retains its original name for continuity with earlier
+tests, but it no longer consumes a Code Interpreter Toolbox.
+
 ## Deploy and test
 
 ```bash
@@ -100,3 +107,32 @@ to generate a fresh consent URL.
 
 After consent, repeat the invocation. The private MCP tool should execute with
 the signed-in user's delegated scope.
+
+To upload, process, and download a text or CSV file in one hosted session:
+
+```bash
+SESSION_ID=$(
+  azd ai agent sessions create toolbox-code-interpreter-test --output json |
+    jq -r '.agent_session_id'
+)
+
+azd ai agent files upload toolbox-code-interpreter-test ./input.csv \
+  --session-id "$SESSION_ID"
+
+azd ai agent invoke toolbox-code-interpreter-test \
+  --session-id "$SESSION_ID" \
+  "Read input.csv, use Code Interpreter to transform it, and save the result as output.csv."
+
+azd ai agent files download output.csv \
+  --agent-name toolbox-code-interpreter-test \
+  --session-id "$SESSION_ID" \
+  --target-path ./output.csv
+```
+
+Session uploads are mounted under `$HOME` in the hosted agent sandbox
+(`/home/session` in the current runtime). For each request,
+`process_session_file_with_code_interpreter` creates a native Code Interpreter
+container, uploads the selected session file directly into it, executes the
+requested task, copies cited artifacts back into the hosted session, and
+deletes the temporary container. `azd ai agent files download` retrieves those
+generated files from the same session.
