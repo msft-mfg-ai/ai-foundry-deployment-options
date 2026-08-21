@@ -847,3 +847,6 @@ agents_anthropic/.env
 # Compiled Bicep artifacts (output of `az bicep build`)
 options-infra/**/main.json
 options-infra/foundry-perf-testing/perf/results/*
+options-infra/hosted-agent-repro/
+.github/workflows/bicep-hosted-agent-repro.yml
+.playwright-mcp/
