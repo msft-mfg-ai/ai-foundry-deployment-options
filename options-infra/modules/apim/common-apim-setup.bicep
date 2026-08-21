@@ -30,6 +30,9 @@ param acceptedTenantIds string[] = []
 @description('Existing Foundry/AI Services instances to register as backends.')
 param foundryInstances foundryInstanceType[]
 
+@description('Optional Foundry account names to expose as account-specific APIM APIs for Foundry AI Gateway project association.')
+param foundryAccountApiNames string[] = []
+
 @description('When true, create a dedicated {model}-ptu-pool for every model with at least one PTU backend and route priority==1 callers there. When false (default), all backends (PTU + PAYG) live in a single {model}-pool with PTU at low priority (200) acting as overflow capacity.')
 param priorityRouting bool = false
 
@@ -196,6 +199,35 @@ module inferenceApi 'v2/inference-api.bicep' = {
     appInsightsId: appInsightsResourceId
   }
 }
+
+// Foundry correlates a project product to its parent account through an
+// account-named API. The portal creates these APIs with subscriptionRequired
+// enabled; runtime project connections still target the canonical inference
+// API and use managed identity. These APIs reuse the canonical routing policy,
+// backend pools, and quota counter keys.
+@batchSize(1)
+module foundryAccountApis 'v2/inference-api.bicep' = [
+  for (apiName, i) in foundryAccountApiNames: {
+    name: 'foundry-account-api-${i}'
+    dependsOn: [inferenceApi]
+    params: {
+      policyXml: policyPerModelXml
+      apiManagementName: apimName
+      apimLoggerId: apimLoggerId
+      aiServicesConfig: []
+      inferenceAPIType: 'Other'
+      inferenceAPIPath: toLower(apiName)
+      inferenceAPIName: toLower(apiName)
+      inferenceAPIDisplayName: 'Foundry AI Gateway - ${apiName}'
+      inferenceAPIDescription: 'Account-specific AI Gateway API for ${apiName}.'
+      configureCircuitBreaker: false
+      enableModelDiscovery: false
+      requireSubscriptionKey: true
+      appInsightsInstrumentationKey: appInsightsInstrumentationKey
+      appInsightsId: appInsightsResourceId
+    }
+  }
+]
 
 // ============================================================================
 // -- Inference API #2 — Spec-backed AzureOpenAI (test console + per-op def)
@@ -380,6 +412,20 @@ module specApiDiscovery 'static-discovery-operations.bicep' = {
     resourceSuffix: 'spec'
   }
 }
+
+module foundryAccountApiDiscovery 'static-discovery-operations.bicep' = [
+  for (apiName, i) in foundryAccountApiNames: {
+    name: 'foundry-account-discovery-${i}'
+    dependsOn: [foundryAccountApis[i]]
+    params: {
+      apimServiceName: apimName
+      apiName: toLower(apiName)
+      listDeploymentsPolicyXml: listDeploymentsPolicyXml
+      getDeploymentPolicyXml: getDeploymentPolicyXml
+      resourceSuffix: 'foundry-${i}'
+    }
+  }
+]
 
 output backendNames array = foundryBackends.outputs.backendNames
 output poolNames array = foundryBackends.outputs.poolNames
