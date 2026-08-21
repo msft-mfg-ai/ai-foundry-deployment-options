@@ -1,0 +1,33 @@
+# deploying using AZD because https://github.com/Azure/azure-cli/pull/31990
+name: ai-gateway-keycloack
+
+infra:
+  provider: bicep
+  path: .
+  module: main
+
+hooks:
+  # Preprovision: discover model deployments on the existing Foundry
+  # instance(s) (EXISTING_FOUNDRY_RESOURCE_IDS / EXISTING_FOUNDRY_RESOURCE_ID
+  # / OPENAI_RESOURCE_ID fallback) and write them to FOUNDRY_INSTANCES_JSON in
+  # the foundryInstanceType[] shape main.bicepparam consumes. If no inputs are
+  # set, the POSIX hook interactively discovers accessible Foundry accounts.
+  preprovision:
+    windows:
+      shell: pwsh
+      run: |
+        & './scripts/preprovision-keycloak-secrets.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & '../scripts/preprovision-list-foundry-models.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      interactive: false
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        set -e
+        sh ./scripts/preprovision-keycloak-secrets.sh
+        sh ../scripts/preprovision-select-foundry-instances.sh
+        sh ../scripts/preprovision-list-foundry-models.sh
+      interactive: true
+      continueOnError: false
