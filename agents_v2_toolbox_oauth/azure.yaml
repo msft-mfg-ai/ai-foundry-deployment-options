@@ -45,6 +45,29 @@ services:
     protocols:
       - protocol: responses
         version: 2.0.0
+  toolbox-code-interpreter-test:
+    host: azure.ai.agent
+    project: src/toolbox-agent
+    language: python
+    uses:
+      - existing-project
+    codeConfiguration:
+      dependencyResolution: remote_build
+      entryPoint: main.py
+      runtime: python_3_13
+    container:
+      resources:
+        cpu: "0.5"
+        memory: 1Gi
+    env:
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+      CODE_INTERPRETER_MODE: native
+    kind: hosted
+    name: toolbox-code-interpreter-test
+    description: Hosted agent for testing native Code Interpreter files.
+    protocols:
+      - protocol: responses
+        version: 2.0.0
 infra:
   provider: microsoft.foundry
 

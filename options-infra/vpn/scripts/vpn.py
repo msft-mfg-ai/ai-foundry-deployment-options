@@ -774,6 +774,7 @@ cat >/etc/wireguard/wg0.conf <<EOF
 Address = {azure_address}
 ListenPort = 51820
 PrivateKey = $private_key
+PostUp = systemctl restart dnsmasq
 
 [Peer]
 PublicKey = {client_public_key}
