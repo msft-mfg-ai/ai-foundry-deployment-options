@@ -1,0 +1,52 @@
+<set-variable name="diagnostic-trace-id" value="@{
+    var explicitTraceId = context.Request.Headers.GetValueOrDefault(&quot;trace-id&quot;, &quot;&quot;);
+    if (!string.IsNullOrEmpty(explicitTraceId)) {
+        return explicitTraceId;
+    }
+
+    var traceparent = context.Request.Headers.GetValueOrDefault(&quot;traceparent&quot;, &quot;&quot;);
+    var traceparentParts = traceparent.Split('-');
+    return traceparentParts.Length == 4
+        ? traceparentParts[1]
+        : context.RequestId.ToString(&quot;N&quot;);
+}" />
+<choose>
+    <when condition="@(context.Request.OriginalUrl.Path.EndsWith(&quot;/inference-keycloak/oauth2/token&quot;, StringComparison.OrdinalIgnoreCase))">
+        <send-request mode="new" response-variable-name="keycloak-token-response" timeout="20" ignore-error="false">
+            <set-url>{keycloak-token-url}</set-url>
+            <set-method>POST</set-method>
+            <set-header name="Content-Type" exists-action="override">
+                <value>application/x-www-form-urlencoded</value>
+            </set-header>
+            <set-header name="Authorization" exists-action="override">
+                <value>@(context.Request.Headers.GetValueOrDefault("Authorization", ""))</value>
+            </set-header>
+            <set-body>@(context.Request.Body.As&lt;string&gt;(preserveContent: true))</set-body>
+        </send-request>
+        <return-response response-variable-name="keycloak-token-response">
+            <set-header name="apim-request-id" exists-action="override">
+                <value>@(context.RequestId.ToString())</value>
+            </set-header>
+            <set-header name="trace-id" exists-action="override">
+                <value>@((string)context.Variables[&quot;diagnostic-trace-id&quot;])</value>
+            </set-header>
+        </return-response>
+    </when>
+    <when condition="@(context.Request.OriginalUrl.Path.EndsWith(&quot;/inference-keycloak/oauth2/.well-known/openid-configuration&quot;, StringComparison.OrdinalIgnoreCase))">
+        <send-request mode="new" response-variable-name="keycloak-openid-response" timeout="20" ignore-error="false">
+            <set-url>{keycloak-openid-configuration-url}</set-url>
+            <set-method>GET</set-method>
+        </send-request>
+        <return-response response-variable-name="keycloak-openid-response">
+            <set-header name="apim-request-id" exists-action="override">
+                <value>@(context.RequestId.ToString())</value>
+            </set-header>
+            <set-header name="trace-id" exists-action="override">
+                <value>@((string)context.Variables[&quot;diagnostic-trace-id&quot;])</value>
+            </set-header>
+        </return-response>
+    </when>
+    <otherwise>
+        <include-fragment fragment-id="oidc-token-validation" />
+    </otherwise>
+</choose>
