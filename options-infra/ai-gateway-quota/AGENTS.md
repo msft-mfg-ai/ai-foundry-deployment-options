@@ -81,6 +81,8 @@ Before each `azd up`, `options-infra/scripts/preprovision-list-foundry-models.sh
 json(readEnvironmentVariable('FOUNDRY_INSTANCES_JSON', '[]'))
 ```
 
+The quota gateway uses this deploy-time data to publish a static, deduplicated `/deployments` catalog. Do not enable the legacy runtime ARM discovery in `v2/inference-api.bicep`: that mode assumes one direct Cognitive Services resource in `aiServicesConfig`, while this sample fronts multiple Foundry accounts and chained APIM gateways. Re-run `azd up` to refresh the static catalog.
+
 ## Captured Headers
 
 `log-settings.bicep` captures these key headers in APIM diagnostics: `x-caller-name`, `x-caller-id`, `x-caller-priority`, `x-caller-identity`, `x-caller-foundry`, `x-caller-project`, `x-backend-id`, `x-backend-pool`, `x-backend-retry-count`, `x-backend-attempt-trail`, `x-inference-failover`, `x-requested-model`, `x-tokens-consumed`, `x-ratelimit-remaining-tokens`, `x-quota-tokens-consumed`, `x-quota-remaining-tokens`, `x-quota-limit-tokens`, `x-ratelimit-limit-tokens`, `x-ptu-limit`, `x-foundry-agent-id`, `x-foundry-project-name`, `x-foundry-project-id`.

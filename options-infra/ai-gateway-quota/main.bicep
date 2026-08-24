@@ -26,6 +26,12 @@ param accessContracts accessContractType[]
 @description('Store contracts in Azure Blob Storage. Advanced config update endpoints require blob storage; false is no longer supported.')
 param useStorageAccount bool = true
 
+@description('Optional user principal ID that uploads the initial contracts blob from the azd postprovision hook.')
+param contractUploaderPrincipalId string = ''
+
+@description('Upload contracts with an Azure deployment script instead of the azd postprovision hook.')
+param useDeploymentScriptForContractUpload bool = false
+
 @description('Optional: deploy a self-contained Foundry account in this resource group with these model deployments, and auto-register it as a PAYG backend. Empty means BYO via foundryInstances.')
 param createFoundryDeployments aiModelTDeploymentType[] = []
 
@@ -141,6 +147,8 @@ module aiGateway '../modules/apim/ai-gateway-advanced.bicep' = {
     eventHubNamespaceName: eventHub.outputs.namespaceName
     eventHubName: eventHub.outputs.eventHubName
     useStorageAccount: useStorageAccount
+    contractUploaderPrincipalId: contractUploaderPrincipalId
+    useDeploymentScriptForContractUpload: useDeploymentScriptForContractUpload
     priorityRouting: priorityRouting
   }
 }
@@ -150,8 +158,8 @@ module aiGateway '../modules/apim/ai-gateway-advanced.bicep' = {
 // ============================================================================
 @batchSize(1)
 module apimRoleAssignments '../modules/iam/role-assignment-cognitiveServices.bicep' = [
-  for (instance, i) in foundryInstances: {
-    name: 'apim-role-${instance.name}-${resourceToken}'
+  for instance in foundryInstances: if (!(instance.?isApim ?? false)) {
+    name: 'apim-role-${take(instance.name, 32)}-${uniqueString(instance.resourceId)}'
     scope: resourceGroup(split(instance.resourceId, '/')[2], split(instance.resourceId, '/')[4])
     params: {
       accountName: last(split(instance.resourceId, '/'))
@@ -197,6 +205,9 @@ output GATEWAY_APP_ID string = entraApps.outputs.gatewayAppId
 output GATEWAY_AUDIENCE string = entraApps.outputs.gatewayAudience
 output TENANT_ID string = entraApps.outputs.tenantId
 output CONTRACTS_BLOB_URL string = aiGateway.outputs.contractsBlobUrl
+output CONTRACTS_STORAGE_ACCOUNT string = aiGateway.outputs.contractsStorageAccountName
+output CONTRACT_MAP_JSON string = aiGateway.outputs.contractMapJson
+output CONTRACTS_UPLOAD_MODE string = aiGateway.outputs.contractsUploadMode
 output CONTRACTS_STORAGE_MODE string = 'blob'
 output POOL_NAMES array = aiGateway.outputs.poolNames
 output HAS_PTU_DEPLOYMENTS bool = aiGateway.outputs.hasPtuDeployments
@@ -204,3 +215,4 @@ output CONFIG_VALIDATION_RESULT bool = validConfig
 output CREATED_APP_IDS array = entraApps.outputs.createdAppIds
 output EVENTHUB_NAMESPACE string = eventHub.outputs.namespaceName
 output EVENTHUB_NAME string = eventHub.outputs.eventHubName
+output LOG_ANALYTICS_WORKSPACE_RESOURCE_ID string = logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID

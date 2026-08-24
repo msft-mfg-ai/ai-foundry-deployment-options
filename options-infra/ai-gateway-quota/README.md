@@ -6,6 +6,7 @@ This deployment creates the unified **Azure API Management (APIM)** AI Gateway a
 
 - **JWT Bearer Token Auth** — `validate-azure-ad-token` against Entra ID (no APIM subscription keys)
 - **Single Policy Stack** — `policy-per-model.xml` is the canonical policy for all inference API surfaces and static discovery operations
+- **Deployment-Time Model Catalog** — azd discovers Foundry and chained-APIM deployments before provisioning; Bicep publishes a static, deduplicated `/deployments` catalog
 - **Access Contracts** — Per-team configuration (models, TPM limits, PTU allocations, monthly budgets) stored in blob storage and loaded by the `caller-identity` fragment
 - **2-Tier Priority Routing** — `per-model-routing` sends P1 Production to mixed PTU+PAYG pools and P2/other callers to PAYG-only pools
 - **Circuit Breaker Failover** — PTU backends have circuit breaker rules; when tripped (429/503), APIM automatically routes to PAYG backends in the same pool
@@ -83,6 +84,18 @@ Two fragments keep the policy reusable:
 
 - `caller-identity` sets observability defaults in open mode. When `caller-identity-fragment.bicep` receives `contractsBlobUrl`, `{contracts-load-section}` injects JWT validation, blob lookup, identity matching, and per-model authorization. Without contracts, neutral defaults flow through and `<llm-token-limit>` blocks short-circuit because they are wrapped in `<choose when="model-tpm > 0">`.
 - `per-model-routing` extracts the requested model and routes `priority == 1` callers to `{model}-ptu-pool` (PTU pri 1 + PAYG fallback) when a PTU pool exists for that model; all other callers (and `priority == 1` callers for models without PTU) go to the default `{model}-pool` (PAYG only). PAYG backends are region-aware: in-region priority 50, out-of-region priority 100.
+
+## Model Discovery: Dynamic vs. Static
+
+The shared `v2/inference-api.bicep` module documents an optional **dynamic discovery** mode. With `enableModelDiscovery=true`, APIM proxies `GET /deployments` requests to Azure Resource Manager at runtime. This mode is suitable only when the API fronts one directly addressable Cognitive Services account supplied through `aiServicesConfig`; it also requires APIM's managed identity to have the necessary ARM access.
+
+The quota sample deliberately does **not** use runtime dynamic discovery. It fronts multiple Foundry accounts and can chain other APIM gateways, so there is no single ARM resource that represents its complete model catalog. Instead:
+
+1. The azd preprovision hook queries every configured Foundry account and chained APIM.
+2. It writes the discovered instances and deployments to `FOUNDRY_INSTANCES_JSON`.
+3. Bicep deduplicates those deployments and compiles them into static `GET /deployments` and `GET /deployments/{name}` APIM policies.
+
+This static catalog has no runtime ARM dependency, works across subscriptions and chained gateways, and matches the backend pools created by the same deployment. Run `azd up` again to refresh the catalog after models are added or removed.
 
 ## Priority Tiers
 

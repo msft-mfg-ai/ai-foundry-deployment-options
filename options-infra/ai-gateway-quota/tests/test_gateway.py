@@ -22,6 +22,9 @@ a passing run shows you *what* was actually exercised, not just dots.
 from __future__ import annotations
 
 import asyncio
+import json
+import subprocess
+import time
 
 import pytest
 import requests
@@ -35,6 +38,7 @@ from gateway import (
     DISCOVERY_API_URL,
     API_VERSION,
     GATEWAY_URL,
+    LOG_ANALYTICS_WORKSPACE_RESOURCE_ID,
     get_config_json,
     post_config_update,
     send_chat_at_path,
@@ -64,6 +68,68 @@ def _summary(r) -> str:
     if r.streamed_chunks:
         bits.append(f'chunks={r.streamed_chunks}')
     return '  '.join(bits)
+
+
+def _workspace_customer_id() -> str:
+    assert LOG_ANALYTICS_WORKSPACE_RESOURCE_ID, (
+        'LOG_ANALYTICS_WORKSPACE_RESOURCE_ID is not set'
+    )
+    result = subprocess.run(
+        [
+            'az', 'monitor', 'log-analytics', 'workspace', 'show',
+            '--ids', LOG_ANALYTICS_WORKSPACE_RESOURCE_ID,
+            '--query', 'customerId', '--output', 'tsv',
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def _wait_for_usage_logs(
+    apim_request_ids: set[str],
+    timeout_seconds: int = 240,
+) -> dict[str, dict]:
+    quoted_ids = ', '.join(f'"{request_id}"' for request_id in sorted(apim_request_ids))
+    query = f'''
+let gateway = ApiManagementGatewayLogs
+| where TimeGenerated > ago(30m)
+| extend Headers = parse_json(ResponseHeaders)
+| extend ApimRequestId = tostring(Headers["apim-request-id"])
+| where ApimRequestId in ({quoted_ids})
+| project CorrelationId, ApimRequestId, LoggedResponseHeaders = ResponseHeaders;
+gateway
+| join kind=inner (
+    ApiManagementGatewayLlmLog
+    | where TimeGenerated > ago(30m)
+    | where tolong(TotalTokens) > 0
+    | project CorrelationId, ModelName, PromptTokens, CompletionTokens, TotalTokens
+) on CorrelationId
+| project ApimRequestId, LoggedResponseHeaders, ModelName,
+          PromptTokens, CompletionTokens, TotalTokens
+'''
+    deadline = time.monotonic() + timeout_seconds
+    workspace_id = _workspace_customer_id()
+    while time.monotonic() < deadline:
+        result = subprocess.run(
+            [
+                'az', 'monitor', 'log-analytics', 'query',
+                '--workspace', workspace_id,
+                '--analytics-query', query,
+                '--output', 'json',
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        rows = json.loads(result.stdout)
+        by_request_id = {row['ApimRequestId']: row for row in rows}
+        if apim_request_ids <= by_request_id.keys():
+            return by_request_id
+        time.sleep(10)
+
+    pytest.fail(f'APIM usage logs were not ingested within {timeout_seconds}s')
 
 
 
@@ -532,45 +598,80 @@ def test_openai_v1_surface(access_token, model):
 # 12a. Anthropic / Claude family — only when an Anthropic model is deployed.
 # ---------------------------------------------------------------------------
 
-def test_chat_anthropic_model(access_token, anthropic_model, expected_contract):
-    """WHAT: Send a chat completion to a deployed Anthropic (Claude) model
-           using the Anthropic-native /v1/messages surface.
-    HOW:   Auto-discovered via /inference/deployments (skipped when no
-           deployment has properties.model.format == 'Anthropic'). Calls
-           POST /inference/v1/messages with the Anthropic request shape.
-    WHY:   Foundry serves Anthropic models ONLY via the Anthropic-native
-           Messages API; the OpenAI /chat/completions deployment surface is
-           not supported for claude-* models. This test exercises the
-           JWT/contract pipeline through that distinct API surface.
-    """
-    url = f'{GATEWAY_URL}/inference/v1/messages'
-    r = requests.post(
-        url,
-        headers=_headers(
-            Authorization=f'Bearer {access_token}',
-            **{'Content-Type': 'application/json', 'anthropic-version': '2023-06-01'},
-        ),
-        json={
-            'model': anthropic_model,
-            'max_tokens': 16,
-            'messages': [{'role': 'user', 'content': 'hi'}],
-        },
-        timeout=30,
-    )
-    caller = r.headers.get('x-caller-name')
-    print(f'│  → POST {url}')
-    print(f'│  ← status={r.status_code}  caller={caller!r}  model={anthropic_model}')
-    assert r.status_code in (200, 429), (
-        f'Anthropic chat ({anthropic_model}) failed: {r.status_code} {r.text[:300]}'
-    )
-    assert caller == expected_contract, (
-        f'Caller mismatch on Anthropic surface: {caller!r}'
-    )
-    if r.status_code == 200:
-        body = r.json()
-        assert body.get('type') == 'message' and body.get('content'), (
-            f'Anthropic response missing content: {r.text[:300]}'
+@pytest.mark.observability
+def test_anthropic_usage_matches_apim_and_logs(access_token, expected_contract):
+    """Compare all Claude provider usage with APIM policy and diagnostic totals."""
+    models = ('claude-opus-4-6', 'claude-opus-4-8', 'claude-haiku-4-5')
+    url = f'{API_URL}/v1/messages'
+    observations: dict[str, dict] = {}
+    failures: dict[str, str] = {}
+
+    for model_name in models:
+        r = requests.post(
+            url,
+            headers=_headers(
+                Authorization=f'Bearer {access_token}',
+                **{
+                    'Content-Type': 'application/json',
+                    'anthropic-version': '2023-06-01',
+                },
+            ),
+            json={
+                'model': model_name,
+                'max_tokens': 8,
+                'messages': [{'role': 'user', 'content': 'Reply with OK.'}],
+            },
+            timeout=60,
         )
+        if r.status_code != 200:
+            failures[model_name] = f'{r.status_code} {r.text[:500]}'
+            print(f'│  {model_name}: FAILED {failures[model_name]}')
+            continue
+        assert r.headers.get('x-caller-name') == expected_contract
+
+        body = r.json()
+        usage = body.get('usage', {})
+        prompt_tokens = int(usage['input_tokens'])
+        completion_tokens = int(usage['output_tokens'])
+        total_tokens = prompt_tokens + completion_tokens
+        apim_request_id = r.headers.get('apim-request-id')
+        assert apim_request_id, f'Missing apim-request-id for {model_name}'
+
+        policy_tokens = int(r.headers['x-tokens-consumed'])
+        quota_tokens = int(r.headers['x-quota-tokens-consumed'])
+        assert policy_tokens == total_tokens
+        assert quota_tokens == total_tokens
+
+        observations[apim_request_id] = {
+            'model': model_name,
+            'provider_model': body.get('model', model_name),
+            'provider_usage': usage,
+            'prompt_tokens': prompt_tokens,
+            'completion_tokens': completion_tokens,
+            'total_tokens': total_tokens,
+            'response_headers': dict(r.headers),
+        }
+        print(
+            f'│  {model_name}: provider={usage} '
+            f'policy={policy_tokens} quota={quota_tokens}'
+        )
+
+    assert observations, f'No Anthropic model call succeeded: {failures}'
+    logged = _wait_for_usage_logs(set(observations))
+    for request_id, observed in observations.items():
+        log_row = logged[request_id]
+        logged_headers = json.loads(log_row['LoggedResponseHeaders'])
+        assert log_row['ModelName'] == observed['provider_model']
+        assert int(log_row['PromptTokens']) == observed['prompt_tokens']
+        assert int(log_row['CompletionTokens']) == observed['completion_tokens']
+        assert int(log_row['TotalTokens']) == observed['total_tokens']
+        assert int(logged_headers['x-tokens-consumed']) == observed['total_tokens']
+        assert int(logged_headers['x-quota-tokens-consumed']) == observed['total_tokens']
+
+    assert not failures, (
+        'Models advertised by discovery but unavailable from the upstream gateway: '
+        + '; '.join(f'{model}: {error}' for model, error in failures.items())
+    )
 
 
 # ---------------------------------------------------------------------------

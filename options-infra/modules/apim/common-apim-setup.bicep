@@ -176,10 +176,10 @@ module foundryBackends 'advanced/multi-foundry-backends.bicep' = {
 // inferenceAPIType='Other' loads the PassThrough OpenAPI spec (single `/*`
 // path with all 8 HTTP verbs) — Foundry / clients hit the API transparently
 // and our policy routes to the per-model pool based on the URL segment.
-// API path is `inference`; the inbound `/openai/...` or `/anthropic/...`
+// API path is `inference`; the inbound `/openai/...` or `/v1/messages`
 // segment is carried through to the backend so a single API surfaces both
 // AzureOpenAI (`/inference/openai/deployments/{m}/...`) and Anthropic
-// (`/inference/anthropic/v1/messages`) shapes — backwards compatible with
+// (`/inference/v1/messages`) shapes — backwards compatible with
 // the legacy `…/inference/openai/...` URL contract.
 module inferenceApi 'v2/inference-api.bicep' = {
   name: 'inference-api-deployment'

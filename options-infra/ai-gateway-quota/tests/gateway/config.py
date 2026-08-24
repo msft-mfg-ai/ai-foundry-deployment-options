@@ -52,19 +52,21 @@ APIM_SUBSCRIPTION_KEY: str = _first('APIM_SUBSCRIPTION_KEY', 'APIM_API_KEY')
 # surface needs 100+ API operations, which only StandardV2 and Premium
 # support). Leave empty to attempt every test regardless of tier.
 APIM_SKU: str = _optional('APIM_SKU')
+LOG_ANALYTICS_WORKSPACE_RESOURCE_ID: str = _optional('LOG_ANALYTICS_WORKSPACE_RESOURCE_ID')
 
 # Optional explicit bearer token. When set, the suite skips Azure credentials.
 TEST_ACCESS_TOKEN: str = _optional('TEST_ACCESS_TOKEN')
 
-# This repo's passthrough API path carries the Azure OpenAI `/openai` segment.
-API_URL: str = f'{GATEWAY_URL}/inference/openai' if GATEWAY_URL else ''
-
-# Static deployment discovery operations are attached at `/inference` and
-# `/azure/openai`, not under the passthrough `/inference/openai` catch-all.
-DISCOVERY_API_URL: str = f'{GATEWAY_URL}/inference' if GATEWAY_URL else ''
+# Discovery and config operations are attached to the deployed inference API,
+# whose path may include the Azure OpenAI `/openai` segment.
+API_URL: str = _optional(
+    'APIM_API_URL',
+    f'{GATEWAY_URL}/inference/openai' if GATEWAY_URL else '',
+).rstrip('/')
+DISCOVERY_API_URL: str = API_URL
 AZURE_OPENAI_API_URL: str = f'{GATEWAY_URL}/azure/openai' if GATEWAY_URL else ''
-CONFIG_JSON_URL: str = f'{GATEWAY_URL}/ai-gateway/config.json' if GATEWAY_URL else ''
-CONFIG_UPDATE_URL: str = f'{GATEWAY_URL}/ai-gateway/config/update' if GATEWAY_URL else ''
+CONFIG_JSON_URL: str = f'{API_URL}/ai-gateway/config.json' if API_URL else ''
+CONFIG_UPDATE_URL: str = f'{API_URL}/ai-gateway/config/update' if API_URL else ''
 
 # Azure OpenAI / cognitive-services audience for token acquisition.
 AUDIENCE: str = _optional('AUDIENCE', 'https://cognitiveservices.azure.com')
