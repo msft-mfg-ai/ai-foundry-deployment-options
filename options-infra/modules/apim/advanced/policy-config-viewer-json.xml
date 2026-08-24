@@ -14,8 +14,6 @@
 -->
 <policies>
     <inbound>
-        <base />
-
         <!-- Injected by Bicep: blob fetch or named value read -->
         {contracts-load-section}
 

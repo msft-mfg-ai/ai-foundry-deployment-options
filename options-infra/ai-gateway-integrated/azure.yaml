@@ -1,0 +1,40 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: ai-gateway-integrated
+
+infra:
+  provider: bicep
+  path: .
+  module: main
+
+hooks:
+  preprovision:
+    windows:
+      shell: pwsh
+      run: |
+        & '../scripts/preprovision-list-foundry-models.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      interactive: false
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        sh ../scripts/preprovision-select-foundry-instances.sh
+        sh ../scripts/preprovision-list-foundry-models.sh
+      interactive: true
+      continueOnError: false
+
+  postprovision:
+    windows:
+      shell: pwsh
+      run: |
+        & '../scripts/postprovision-register-foundry-gateway.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      interactive: true
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        sh ../scripts/postprovision-register-foundry-gateway.sh
+      interactive: true
+      continueOnError: false

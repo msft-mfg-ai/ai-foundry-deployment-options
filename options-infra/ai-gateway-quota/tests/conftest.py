@@ -27,6 +27,7 @@ import pytest
 from gateway import (
     APIM_SKU,
     APIM_SUBSCRIPTION_KEY,
+    CONFIG_JSON_URL,
     DEFAULT_CONTRACT_NAME,
     DEFAULT_MODEL,
     FAILOVER_MODEL,
@@ -75,8 +76,8 @@ def pytest_report_header(config) -> list[str]:
 def _probe_gateway_mode() -> str:
     """Detect whether the gateway is in quota mode or open mode.
 
-    quota mode: contracts are wired, /ai-gateway/config.json returns 200.
-    open mode:  no contracts, /ai-gateway/config.json returns 404 (endpoint
+    quota mode: contracts are wired, CONFIG_JSON_URL returns 200.
+    open mode:  no contracts, CONFIG_JSON_URL returns 404 (endpoint
                 isn't deployed).
 
     Returns 'quota' or 'open'. We probe ANONYMOUSLY because the config.json
@@ -85,7 +86,7 @@ def _probe_gateway_mode() -> str:
     """
     import requests
     try:
-        r = requests.get(f'{GATEWAY_URL}/ai-gateway/config.json', timeout=10)
+        r = requests.get(CONFIG_JSON_URL, timeout=10)
     except Exception:
         return 'open'
     # 200 → endpoint is wired (quota mode). 401/403 → endpoint exists but

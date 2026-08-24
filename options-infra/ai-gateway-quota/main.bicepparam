@@ -72,6 +72,8 @@ var currentUser = readEnvironmentVariable('CURRENT_USER_OBJECT_ID', '') != ''
   ? [{ value: readEnvironmentVariable('CURRENT_USER_OBJECT_ID', ''), displayName: 'Current User', claimName: 'oid' }]
   : []
 
+param contractUploaderPrincipalId = readEnvironmentVariable('CURRENT_USER_OBJECT_ID', '')
+
 // BYO mode: 3 teams with mixed PTU/PAYG models.
 var byoContracts = [
   {
@@ -82,6 +84,9 @@ var byoContracts = [
       { name: 'gpt-4.1', tpm: 5000, ptuTpm: 2000 }
       { name: 'gpt-4.1-mini', tpm: 5000, ptuTpm: 500 }
       { name: 'gpt-oss-120b', tpm: 100 }
+      { name: 'claude-opus-4-6', tpm: 5000 }
+      { name: 'claude-opus-4-8', tpm: 5000 }
+      { name: 'claude-haiku-4-5', tpm: 5000 }
     ]
     monthlyQuota: 500000
     environment: 'PROD'
@@ -93,6 +98,9 @@ var byoContracts = [
     models: [
       { name: 'gpt-4.1-mini', tpm: 400, ptuTpm: 200 }
       { name: 'gpt-5.1-chat', tpm: 400 }
+      { name: 'claude-opus-4-6', tpm: 400 }
+      { name: 'claude-opus-4-8', tpm: 400 }
+      { name: 'claude-haiku-4-5', tpm: 400 }
     ]
     monthlyQuota: 3000
     environment: 'DEV'
@@ -104,6 +112,9 @@ var byoContracts = [
     models: [
       { name: 'gpt-4.1-mini', tpm: 300 }
       { name: 'gpt-4.1', tpm: 100 }
+      { name: 'claude-opus-4-6', tpm: 300 }
+      { name: 'claude-opus-4-8', tpm: 300 }
+      { name: 'claude-haiku-4-5', tpm: 300 }
     ]
     monthlyQuota: 1000
     environment: 'PROD'
@@ -141,4 +152,3 @@ param accessContracts = hasBYO ? byoContracts : selfContainedContracts
 // contract semantics, so this is on by default. Set to false to collapse
 // every model into a single {model}-pool (PTU at low priority as overflow).
 param priorityRouting = true
-

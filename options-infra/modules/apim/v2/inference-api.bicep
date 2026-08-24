@@ -56,7 +56,7 @@ param inferenceAPIPath string = 'inference' // Path to the inference API in the 
 @description('Whether to configure the circuit breaker for the inference backend')
 param configureCircuitBreaker bool = false
 
-@description('Enable dynamic model discovery via ARM API. When true, adds /deployments operations for Foundry Agents.')
+@description('Enable runtime model discovery through the ARM API. Use only for a single direct Cognitive Services resource supplied in aiServicesConfig. Multi-resource gateways should keep this false and deploy static-discovery-operations.bicep from their deploy-time catalog.')
 param enableModelDiscovery bool = false
 
 @description('API key to include as a static backend credential header. Use for cross-tenant endpoints where managed identity is not available. Leave empty to use managed identity only.')
@@ -177,6 +177,28 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-06-01-pre
   properties: {
     format: 'rawxml'
     value: updatedPolicyXml
+  }
+}
+
+resource anthropicMessagesOperation 'Microsoft.ApiManagement/service/apis/operations@2024-06-01-preview' = {
+  name: 'anthropic-messages-create'
+  parent: api
+  properties: {
+    displayName: 'Create Anthropic Message'
+    method: 'POST'
+    urlTemplate: '/v1/messages'
+    description: 'Creates a message using the Anthropic-native Messages API.'
+    responses: [
+      {
+        statusCode: 200
+        description: 'OK'
+        representations: [
+          {
+            contentType: 'application/json'
+          }
+        ]
+      }
+    ]
   }
 }
 
