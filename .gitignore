@@ -757,6 +757,7 @@ terraform.rc
 
 # Docker
 .dockerignore
+!hosted-agents/perf-support-agent/.dockerignore
 
 # Kubernetes
 *.kubeconfig
@@ -768,6 +769,7 @@ terraform.rc
 
 # AI/ML specific
 *.pkl
+
 *.pickle
 *.h5
 *.hdf5

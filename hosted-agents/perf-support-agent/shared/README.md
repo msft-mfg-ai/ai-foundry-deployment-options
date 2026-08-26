@@ -15,4 +15,4 @@ model-call routing path — which is exactly what the perf comparison is
 measuring.
 
 No standalone `.csproj` here. The file is linked into each entrypoint's
-`.csproj` via `<Compile Include="..\support-agent-shared\**\*.cs" />`.
+`.csproj` via `<Compile Include="..\shared\**\*.cs" />`.

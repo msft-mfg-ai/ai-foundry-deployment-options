@@ -21,7 +21,7 @@ services:
         server_label: private-oauth2-mcp
   toolbox-oauth-test:
     host: azure.ai.agent
-    project: src/toolbox-agent
+    project: .
     language: python
     uses:
       - existing-project
@@ -47,7 +47,7 @@ services:
         version: 2.0.0
   toolbox-code-interpreter-test:
     host: azure.ai.agent
-    project: src/toolbox-agent
+    project: .
     language: python
     uses:
       - existing-project
