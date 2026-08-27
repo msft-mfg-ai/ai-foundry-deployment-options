@@ -136,6 +136,9 @@ the full three-flow auth model (inbound JWT, outbound FIC, admin OBO).
 - `publish-teams-agent.sh` — publishes agents via Foundry M365 publish
   API. Uses heredoc `<<'PY'` + env-var input (not `python3 -c`,
   because single-quoted shell strings can't contain `'`).
+  - Publishes with `appPublishScope: Tenant`; the shared
+    `foundry-agent.bicep` module therefore defaults to
+    `BotServiceTenant`. `BotServiceRbac` is only for `Shared` scope.
   - **Slash-command `commandLists`**: in the per-agent proxy manifest,
     `title` = human-friendly label, `description` = the literal
     `/cmd`. M365 Copilot reinterprets `bots[].commandLists` as

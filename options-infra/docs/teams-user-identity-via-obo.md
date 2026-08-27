@@ -120,8 +120,7 @@ param mcpServerUrl string
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
 
 // -----------------------------------------------------------------------
-// Foundry agent — created WITHOUT the activityprotocol PATCH (we don't
-// need BotServiceRbac because Bot Service won't be calling Foundry; the
+// Foundry agent — Bot Service won't be calling Foundry; the
 // App Service will, using a user-scoped Foundry token).
 // -----------------------------------------------------------------------
 module agent '../modules/ai/foundry-agent.bicep' = {
@@ -135,8 +134,8 @@ module agent '../modules/ai/foundry-agent.bicep' = {
     model: 'gpt-5.2'
     instructions: 'You are a helpful assistant.'
     resourceSuffix: resourceToken
-    // The PATCH still runs (it's additive and harmless) — the agent will
-    // accept BOTH `responses` and `activity` calls. Either is fine.
+    // The PATCH still runs (it's additive and harmless) — the agent accepts
+    // both `responses` and `activity` calls, with BotServiceTenant by default.
   }
 }
 
