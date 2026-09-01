@@ -45,7 +45,7 @@ One `azd up` provisions, in a customer VNet:
    cannot satisfy for N bots).
 4. **1 shared container app** running
    `ghcr.io/karpikpl/foundry-teams-bot-service-proxy:<version>`
-   (current: `0.9.1`, pinned in `main.bicep` `existingImage`).
+   (current: `0.12.7`, pinned in `main.bicep` `existingImage`).
 
 ## Two-phase deploy (Phase A then Phase B)
 

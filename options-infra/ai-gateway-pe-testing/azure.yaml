@@ -6,7 +6,7 @@ requiredVersions:
 name: foundry-byom-testing
 services:
     byom-canary:
-        project: services/hosted-agent
+        project: .hosted-agent-build/byom-canary
         host: azure.ai.agent
         language: python
         codeConfiguration:
@@ -36,7 +36,7 @@ services:
             - protocol: invocations
               version: 2.0.0
     copilot-canary:
-        project: services/copilot-canary
+        project: .hosted-agent-build/copilot-canary
         host: azure.ai.agent
         language: docker
         container:
@@ -68,6 +68,21 @@ infra:
     path: .
     module: main
 hooks:
+    prepackage:
+        windows:
+            shell: pwsh
+            run: |
+                & '../scripts/sync-hosted-agents.ps1' @(
+                  '../../hosted-agents/byom-canary=.hosted-agent-build/byom-canary',
+                  '../../hosted-agents/copilot-canary=.hosted-agent-build/copilot-canary'
+                )
+        posix:
+            shell: sh
+            run: |
+                set -eu
+                sh ../scripts/sync-hosted-agents.sh \
+                  ../../hosted-agents/byom-canary=.hosted-agent-build/byom-canary \
+                  ../../hosted-agents/copilot-canary=.hosted-agent-build/copilot-canary
     postprovision:
         windows:
             shell: pwsh

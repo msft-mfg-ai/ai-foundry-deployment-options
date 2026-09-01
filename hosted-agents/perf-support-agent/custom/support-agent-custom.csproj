@@ -25,7 +25,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\support-agent-shared\**\*.cs" LinkBase="Shared" />
+    <Compile Include="..\shared\**\*.cs" LinkBase="Shared" />
   </ItemGroup>
 
 </Project>

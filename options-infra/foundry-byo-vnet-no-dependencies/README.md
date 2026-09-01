@@ -15,6 +15,7 @@ This deployment validates the minimal Foundry + VNet injection scenario:
 
 No Cosmos DB, Storage Account, or AI Search resources are created or connected. The Agent Service runs with default (Microsoft-managed) state storage.
 The hosted agent uses Foundry source-code deployment, so this sample does not create or require Azure Container Registry.
+Its shared source package lives at [`../../hosted-agents/vnet-mcp-agent`](../../hosted-agents/vnet-mcp-agent).
 
 ## Deployment
 

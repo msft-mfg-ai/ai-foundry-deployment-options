@@ -6,7 +6,7 @@ requiredVersions:
 name: foundry-byo-vnet-no-dependencies
 services:
     hosted-agent-no-cap:
-        project: services/simple-hosted-agent
+        project: .hosted-agent-build/vnet-mcp-agent
         host: azure.ai.agent
         language: python
         codeConfiguration:
@@ -41,7 +41,7 @@ services:
             - protocol: responses
               version: 2.0.0
     hosted-agent-with-cap:
-        project: services/simple-hosted-agent
+        project: .hosted-agent-build/vnet-mcp-agent
         host: azure.ai.agent
         language: python
         codeConfiguration:
@@ -79,3 +79,17 @@ infra:
     provider: bicep
     path: .
     module: main
+hooks:
+    prepackage:
+        windows:
+            shell: pwsh
+            run: |
+                & '../scripts/sync-hosted-agents.ps1' @(
+                  '../../hosted-agents/vnet-mcp-agent=.hosted-agent-build/vnet-mcp-agent'
+                )
+        posix:
+            shell: sh
+            run: |
+                set -eu
+                sh ../scripts/sync-hosted-agents.sh \
+                  ../../hosted-agents/vnet-mcp-agent=.hosted-agent-build/vnet-mcp-agent

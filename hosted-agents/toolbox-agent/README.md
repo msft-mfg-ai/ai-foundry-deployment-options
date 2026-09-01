@@ -15,10 +15,10 @@ testing.
 
 - `azure.yaml` - hosted agent and Toolbox provisioning.
 - `scripts/configure-oauth-connection.*` - custom OAuth2 connection upsert.
-- `src/toolbox-agent/main.py` - Agent Framework agent with `FoundryToolbox`.
-- `src/toolbox-agent/skills/pptx/SKILL.md` - progressively loaded PowerPoint
-  generation guidance for native Code Interpreter.
-- `src/toolbox-agent/pyproject.toml` and `uv.lock` - Python dependencies
+- `main.py` - Agent Framework agent with `FoundryToolbox`.
+- `skills/pptx/SKILL.md` - progressively loaded PowerPoint generation guidance
+  for native Code Interpreter.
+- `pyproject.toml` and `uv.lock` - Python dependencies
   included in the hosted-agent build.
 
 ## Prerequisites
@@ -35,7 +35,7 @@ testing.
 Upgrade the extensions, then create an azd environment:
 
 ```bash
-cd agents_v2_toolbox_oauth
+cd hosted-agents/toolbox-agent
 azd extension upgrade azure.ai.agents
 azd extension upgrade azure.ai.connections
 azd extension upgrade azure.ai.toolboxes
@@ -51,9 +51,7 @@ environment substitution, so use the literal project endpoint rather than a
 Install the agent dependencies for local development:
 
 ```bash
-cd src/toolbox-agent
 uv sync
-cd ../..
 ```
 
 Configure the custom OAuth2 connection values. Keep the client secret outside

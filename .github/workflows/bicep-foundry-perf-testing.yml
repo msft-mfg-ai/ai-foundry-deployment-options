@@ -1,21 +1,19 @@
-name: 'Bicep: ai-gateway-pe-testing'
+name: 'Bicep: foundry-perf-testing'
 
 on:
   push:
     branches: [main]
     paths:
-      - 'options-infra/ai-gateway-pe-testing/**'
-      - 'hosted-agents/byom-canary/**'
-      - 'hosted-agents/copilot-canary/**'
+      - 'options-infra/foundry-perf-testing/**'
+      - 'hosted-agents/perf-support-agent/**'
       - 'options-infra/scripts/sync-hosted-agents.*'
       - 'options-infra/modules/**'
       - '.github/workflows/bicep-validate-reusable.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'options-infra/ai-gateway-pe-testing/**'
-      - 'hosted-agents/byom-canary/**'
-      - 'hosted-agents/copilot-canary/**'
+      - 'options-infra/foundry-perf-testing/**'
+      - 'hosted-agents/perf-support-agent/**'
       - 'options-infra/scripts/sync-hosted-agents.*'
       - 'options-infra/modules/**'
       - '.github/workflows/bicep-validate-reusable.yml'
@@ -25,4 +23,4 @@ jobs:
     uses: ./.github/workflows/bicep-validate-reusable.yml
     with:
       bicep-file: main.bicep
-      working-directory: options-infra/ai-gateway-pe-testing
+      working-directory: options-infra/foundry-perf-testing

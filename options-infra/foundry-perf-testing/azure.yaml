@@ -12,14 +12,14 @@ services:
         docker:
             path: Dockerfile
     support-agent-custom:
-        project: services/support-agent-custom
+        project: .hosted-agent-build/perf-support-agent/custom
         host: containerapp
         language: dotnet
         docker:
             path: Dockerfile
             context: ..
     support-agent-hosted-bypass-mock:
-        project: services/support-agent-hosted
+        project: .hosted-agent-build/perf-support-agent/hosted
         host: azure.ai.agent
         docker:
             path: Dockerfile
@@ -61,7 +61,7 @@ services:
             - protocol: responses
               version: 2.0.0
     support-agent-hosted-bypass-real:
-        project: services/support-agent-hosted
+        project: .hosted-agent-build/perf-support-agent/hosted
         host: azure.ai.agent
         docker:
             path: Dockerfile
@@ -103,7 +103,7 @@ services:
             - protocol: responses
               version: 2.0.0
     support-agent-hosted-mock:
-        project: services/support-agent-hosted
+        project: .hosted-agent-build/perf-support-agent/hosted
         host: azure.ai.agent
         docker:
             path: Dockerfile
@@ -138,7 +138,7 @@ services:
             - protocol: responses
               version: 2.0.0
     support-agent-hosted-real:
-        project: services/support-agent-hosted
+        project: .hosted-agent-build/perf-support-agent/hosted
         host: azure.ai.agent
         docker:
             path: Dockerfile
@@ -179,6 +179,23 @@ infra:
     path: .
     module: main
 hooks:
+    prepackage:
+        windows:
+            shell: pwsh
+            run: |
+                & '../scripts/sync-hosted-agents.ps1' @(
+                  '../../hosted-agents/perf-support-agent/custom=.hosted-agent-build/perf-support-agent/custom',
+                  '../../hosted-agents/perf-support-agent/hosted=.hosted-agent-build/perf-support-agent/hosted',
+                  '../../hosted-agents/perf-support-agent/shared=.hosted-agent-build/perf-support-agent/shared'
+                )
+        posix:
+            shell: sh
+            run: |
+                set -eu
+                sh ../scripts/sync-hosted-agents.sh \
+                  ../../hosted-agents/perf-support-agent/custom=.hosted-agent-build/perf-support-agent/custom \
+                  ../../hosted-agents/perf-support-agent/hosted=.hosted-agent-build/perf-support-agent/hosted \
+                  ../../hosted-agents/perf-support-agent/shared=.hosted-agent-build/perf-support-agent/shared
     postdeploy:
         windows:
             shell: pwsh
