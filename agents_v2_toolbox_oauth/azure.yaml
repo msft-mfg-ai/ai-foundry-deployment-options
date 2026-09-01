@@ -39,9 +39,11 @@ services:
     env:
       AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
       TOOLBOX_NAME: oauth2-passthrough-tools-yaml
+      ENABLE_CODE_INTERPRETER: "1"
+      ENABLE_PPTX_SKILL: "1"
     kind: hosted
     name: toolbox-oauth-test
-    description: Hosted agent for testing private MCP custom OAuth pass-through.
+    description: Hosted agent with OAuth Toolbox, Code Interpreter, and PowerPoint generation.
     protocols:
       - protocol: responses
         version: 2.0.0
@@ -61,10 +63,11 @@ services:
         memory: 1Gi
     env:
       AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
-      CODE_INTERPRETER_MODE: native
+      ENABLE_CODE_INTERPRETER: "1"
+      ENABLE_PPTX_SKILL: "1"
     kind: hosted
     name: toolbox-code-interpreter-test
-    description: Hosted agent for testing native Code Interpreter files.
+    description: Hosted agent for testing native Code Interpreter and PowerPoint generation.
     protocols:
       - protocol: responses
         version: 2.0.0

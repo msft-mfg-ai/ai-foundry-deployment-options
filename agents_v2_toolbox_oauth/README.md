@@ -1,21 +1,23 @@
 # Hosted Agent with Private OAuth Toolbox
 
-This sample deploys a Python Responses hosted agent that consumes a Foundry
-Toolbox containing a private MCP server protected by custom OAuth identity
-pass-through.
+This sample deploys a Python Responses hosted agent that combines a Foundry
+Toolbox, native Code Interpreter, and a bundled PowerPoint skill. The Toolbox
+contains a private MCP server protected by custom OAuth identity pass-through.
 
 The agent authenticates to the Toolbox with its hosted-agent identity. Foundry
 manages per-user OAuth consent and forwards the delegated access token to the
 private MCP server.
 
-The sample also deploys a separate hosted agent using native Code Interpreter
-containers for runtime file uploads and generated-file downloads.
+The sample also deploys a separate Code Interpreter-only agent for focused
+testing.
 
 ## Files
 
 - `azure.yaml` - hosted agent and Toolbox provisioning.
 - `scripts/configure-oauth-connection.*` - custom OAuth2 connection upsert.
 - `src/toolbox-agent/main.py` - Agent Framework agent with `FoundryToolbox`.
+- `src/toolbox-agent/skills/pptx/SKILL.md` - progressively loaded PowerPoint
+  generation guidance for native Code Interpreter.
 - `src/toolbox-agent/pyproject.toml` and `uv.lock` - Python dependencies
   included in the hosted-agent build.
 
@@ -84,9 +86,12 @@ The Toolbox tools are defined directly on the `azure.ai.toolbox` service in
 `FoundryToolbox` derives the Toolbox consumer endpoint from that name and
 `FOUNDRY_PROJECT_ENDPOINT`.
 
-`toolbox-code-interpreter-test` uses the native Code Interpreter container and
-files APIs. The agent retains its original name for continuity with earlier
-tests, but it no longer consumes a Code Interpreter Toolbox.
+Both agents create one native Code Interpreter container for each hosted
+session. `toolbox-oauth-test` also connects to the OAuth Toolbox. The native
+tool remains part of the outer Responses request, so text and inline Code
+Interpreter outputs continue to stream. The PowerPoint skill is discovered
+from the packaged `skills` directory and loaded only when a presentation
+request needs it.
 
 ## Deploy and test
 
@@ -108,31 +113,54 @@ to generate a fresh consent URL.
 After consent, repeat the invocation. The private MCP tool should execute with
 the signed-in user's delegated scope.
 
-To upload, process, and download a text or CSV file in one hosted session:
+To generate a presentation with the bundled skill:
 
 ```bash
-SESSION_ID=$(
-  azd ai agent sessions create toolbox-code-interpreter-test --output json |
-    jq -r '.agent_session_id'
-)
-
-azd ai agent files upload toolbox-code-interpreter-test ./input.csv \
-  --session-id "$SESSION_ID"
-
-azd ai agent invoke toolbox-code-interpreter-test \
-  --session-id "$SESSION_ID" \
-  "Read input.csv, use Code Interpreter to transform it, and save the result as output.csv."
-
-azd ai agent files download output.csv \
-  --agent-name toolbox-code-interpreter-test \
-  --session-id "$SESSION_ID" \
-  --target-path ./output.csv
+azd ai agent invoke toolbox-oauth-test \
+  --new-session \
+  "Create a five-slide PowerPoint deck explaining our OAuth Toolbox architecture."
 ```
 
-Session uploads are mounted under `$HOME` in the hosted agent sandbox
-(`/home/session` in the current runtime). For each request,
-`process_session_file_with_code_interpreter` creates a native Code Interpreter
-container, uploads the selected session file directly into it, executes the
-requested task, copies cited artifacts back into the hosted session, and
-deletes the temporary container. `azd ai agent files download` retrieves those
-generated files from the same session.
+The agent uses native Code Interpreter and returns the `.pptx` as a Foundry
+container-file citation. Code Interpreter outputs are included in the streamed
+Responses events.
+
+## Per-user session isolation
+
+The agents use Responses protocol `2.0.0`. Foundry automatically isolates
+sessions, conversations, and each session's `$HOME` filesystem by the caller's
+Microsoft Entra identity.
+
+When a trusted middle-tier service represents users from its own identity
+provider, send a stable user identifier on every agent, session, monitor, and
+file operation:
+
+```bash
+USER_ID="tenant-42:user-123"
+
+azd ai agent invoke toolbox-oauth-test \
+  --user-identity "$USER_ID" \
+  --new-session \
+  "Create a three-slide project status presentation."
+```
+
+For REST or SDK clients, send the same value in the
+`x-ms-user-identity` header. Derive it from the authenticated server-side user;
+never accept an arbitrary header value from the browser. Values must be 1-256
+characters and contain only letters, digits, `.`, `_`, `:`, `-`, or `@`.
+
+The middle-tier managed identity needs a custom role containing:
+
+```text
+Microsoft.CognitiveServices/accounts/AIServices/agents/endpoints/UserIdentityImpersonation/action
+```
+
+No built-in role currently grants this data action. Requests that send
+`x-ms-user-identity` without it fail with HTTP 403. Always assign a distinct
+session ID to each delegated user; the header does not make it safe to route
+different users to the same session ID.
+
+Code Interpreter artifacts are returned as container-file citations. The
+hosting session filesystem and the Code Interpreter container are separate
+stores; use the citation returned by the Responses API to download a generated
+artifact.

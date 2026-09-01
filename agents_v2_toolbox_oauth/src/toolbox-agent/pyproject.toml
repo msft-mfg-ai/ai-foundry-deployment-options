@@ -1,7 +1,7 @@
 [project]
 name = "agents-v2-toolbox-oauth"
 version = "0.1.0"
-description = "Hosted Foundry agent for testing private MCP OAuth pass-through through Toolbox"
+description = "Hosted Foundry agent with OAuth Toolbox, Code Interpreter, and PowerPoint generation"
 requires-python = ">=3.13"
 dependencies = [
     "agent-framework-foundry",
