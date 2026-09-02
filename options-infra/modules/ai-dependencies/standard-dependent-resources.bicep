@@ -4,6 +4,12 @@ import * as types from '../types/types.bicep'
 @description('Azure region of the deployment')
 param location string
 
+@description('Azure region for a newly created AI Search service.')
+param aiSearchLocation string = location
+
+@description('Azure region for a newly created Storage account.')
+param azureStorageLocation string = location
+
 param tags object = {}
 var defaultTags = union(tags, {
   deployedBy: 'ai-foundry-infra'
@@ -31,6 +37,15 @@ param aiSearchResourceId string?
   'standard'
 ])
 param semanticSearch string = 'disabled'
+
+@description('SKU for a newly created AI Search service.')
+@allowed([
+  'basic'
+  'standard'
+  'standard2'
+  'standard3'
+])
+param aiSearchSku string = 'basic'
 
 @description('The AI Storage Account full ARM Resource ID. This is an optional field, and if not provided, the resource will be created.')
 param azureStorageAccountResourceId string?
@@ -111,7 +126,7 @@ resource existingSearchService 'Microsoft.Search/searchServices@2024-06-01-previ
 
 resource aiSearch 'Microsoft.Search/searchServices@2024-06-01-preview' = if(!aiSearchExists) {
   name: aiSearchName
-  location: location
+  location: aiSearchLocation
   tags: defaultTags
   identity: {
     type: 'SystemAssigned'
@@ -133,7 +148,7 @@ resource aiSearch 'Microsoft.Search/searchServices@2024-06-01-preview' = if(!aiS
     }
   }
   sku: {
-    name: 'basic'
+    name: aiSearchSku
   }
 }
 
@@ -155,7 +170,7 @@ param sku object = contains(noZRSRegions, location) ? { name: 'Standard_GRS' } :
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = if(!azureStorageExists) {
   name: azureStorageName
-  location: location
+  location: azureStorageLocation
   tags: defaultTags
   kind: 'StorageV2'
   sku: sku

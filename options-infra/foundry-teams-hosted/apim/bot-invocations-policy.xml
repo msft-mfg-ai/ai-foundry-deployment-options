@@ -1,0 +1,157 @@
+<policies>
+  <inbound>
+    <base />
+    <set-variable name="agent-name"
+                  value="@(context.Request.MatchedParameters.GetValueOrDefault(&quot;agent-name&quot;, &quot;&quot;))" />
+    <set-variable name="bot-app-id" value="@{
+      var json = System.Text.Encoding.UTF8.GetString(
+        System.Convert.FromBase64String(&quot;{{teams-agent-bot-ids}}&quot;));
+      var map = Newtonsoft.Json.Linq.JObject.Parse(json);
+      var agentName = (string)context.Variables[&quot;agent-name&quot;];
+      return map[agentName]?.ToString() ?? string.Empty;
+    }" />
+    <set-variable name="agent-version" value="@{
+      var json = System.Text.Encoding.UTF8.GetString(
+        System.Convert.FromBase64String(&quot;{{teams-agent-versions}}&quot;));
+      var map = Newtonsoft.Json.Linq.JObject.Parse(json);
+      var agentName = (string)context.Variables[&quot;agent-name&quot;];
+      return map[agentName]?.ToString() ?? string.Empty;
+    }" />
+    <choose>
+      <when condition="@(
+        string.IsNullOrEmpty((string)context.Variables[&quot;bot-app-id&quot;])
+        || string.IsNullOrEmpty((string)context.Variables[&quot;agent-version&quot;]))">
+        <return-response>
+          <set-status code="404" reason="Unknown hosted agent" />
+          <set-body>@{
+            return new Newtonsoft.Json.Linq.JObject(
+              new Newtonsoft.Json.Linq.JProperty(&quot;error&quot;, &quot;Unknown hosted agent route.&quot;),
+              new Newtonsoft.Json.Linq.JProperty(&quot;agent&quot;, (string)context.Variables[&quot;agent-name&quot;])
+            ).ToString();
+          }</set-body>
+        </return-response>
+      </when>
+    </choose>
+    <validate-jwt header-name="Authorization"
+                  require-scheme="Bearer"
+                  failed-validation-httpcode="401"
+                  failed-validation-error-message="Invalid Bot Framework token.">
+      <openid-config url="https://login.botframework.com/v1/.well-known/openidconfiguration" />
+      <audiences>
+        <audience>@((string)context.Variables["bot-app-id"])</audience>
+      </audiences>
+    </validate-jwt>
+    <set-header name="x-client-bot-authorization" exists-action="override">
+      <value>@(context.Request.Headers.GetValueOrDefault("Authorization", ""))</value>
+    </set-header>
+    <set-header name="x-client-agent-name" exists-action="override">
+      <value>@((string)context.Variables["agent-name"])</value>
+    </set-header>
+    <set-header name="x-client-agent-version" exists-action="override">
+      <value>@((string)context.Variables["agent-version"])</value>
+    </set-header>
+    <authentication-managed-identity resource="https://ai.azure.com"
+                                     output-token-variable-name="foundry-token"
+                                     ignore-error="false" />
+    <set-variable name="session-cache-key"
+                  value="@(&quot;teams-hosted-session:&quot; + (string)context.Variables[&quot;agent-name&quot;] + &quot;:&quot; + (string)context.Variables[&quot;agent-version&quot;])" />
+    <cache-lookup-value key="@((string)context.Variables[&quot;session-cache-key&quot;])"
+                        variable-name="agent-session-id"
+                        caching-type="internal" />
+    <choose>
+      <when condition="@(!context.Variables.ContainsKey(&quot;agent-session-id&quot;))">
+        <send-request mode="new"
+                      response-variable-name="session-response"
+                      timeout="180"
+                      ignore-error="true">
+          <set-url>@(&quot;{{teams-foundry-project-endpoint}}/agents/&quot; + (string)context.Variables[&quot;agent-name&quot;] + &quot;/endpoint/sessions?api-version=v1&quot;)</set-url>
+          <set-method>POST</set-method>
+          <set-header name="Authorization" exists-action="override">
+            <value>@("Bearer " + (string)context.Variables["foundry-token"])</value>
+          </set-header>
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-body>@{
+            return new Newtonsoft.Json.Linq.JObject(
+              new Newtonsoft.Json.Linq.JProperty(
+                &quot;version&quot;,
+                (string)context.Variables[&quot;agent-version&quot;])
+            ).ToString(Newtonsoft.Json.Formatting.None);
+          }</set-body>
+        </send-request>
+        <choose>
+          <when condition="@(
+            !context.Variables.ContainsKey(&quot;session-response&quot;)
+            || ((IResponse)context.Variables[&quot;session-response&quot;]).StatusCode != 201)">
+            <return-response>
+              <set-status code="502" reason="Foundry session creation failed" />
+              <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+              </set-header>
+              <set-body>@{
+                var response = context.Variables.GetValueOrDefault&lt;IResponse&gt;(&quot;session-response&quot;, null);
+                return new Newtonsoft.Json.Linq.JObject(
+                  new Newtonsoft.Json.Linq.JProperty(&quot;error&quot;, &quot;Foundry session creation failed.&quot;),
+                  new Newtonsoft.Json.Linq.JProperty(&quot;agent&quot;, (string)context.Variables[&quot;agent-name&quot;]),
+                  new Newtonsoft.Json.Linq.JProperty(&quot;version&quot;, (string)context.Variables[&quot;agent-version&quot;]),
+                  new Newtonsoft.Json.Linq.JProperty(&quot;foundryStatus&quot;, response?.StatusCode),
+                  new Newtonsoft.Json.Linq.JProperty(
+                    &quot;details&quot;,
+                    response?.Body?.As&lt;string&gt;(preserveContent: true) ?? &quot;No response from Foundry.&quot;)
+                ).ToString(Newtonsoft.Json.Formatting.None);
+              }</set-body>
+            </return-response>
+          </when>
+        </choose>
+        <set-variable name="agent-session-id" value="@{
+          var response = (IResponse)context.Variables[&quot;session-response&quot;];
+          var body = response.Body.As&lt;Newtonsoft.Json.Linq.JObject&gt;(preserveContent: true);
+          return body[&quot;agent_session_id&quot;]?.ToString() ?? string.Empty;
+        }" />
+        <choose>
+          <when condition="@(string.IsNullOrEmpty((string)context.Variables[&quot;agent-session-id&quot;]))">
+            <return-response>
+              <set-status code="502" reason="Invalid Foundry session response" />
+              <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+              </set-header>
+              <set-body>@{
+                return new Newtonsoft.Json.Linq.JObject(
+                  new Newtonsoft.Json.Linq.JProperty(&quot;error&quot;, &quot;Foundry did not return agent_session_id.&quot;),
+                  new Newtonsoft.Json.Linq.JProperty(&quot;agent&quot;, (string)context.Variables[&quot;agent-name&quot;]),
+                  new Newtonsoft.Json.Linq.JProperty(&quot;version&quot;, (string)context.Variables[&quot;agent-version&quot;])
+                ).ToString(Newtonsoft.Json.Formatting.None);
+              }</set-body>
+            </return-response>
+          </when>
+        </choose>
+        <cache-store-value key="@((string)context.Variables[&quot;session-cache-key&quot;])"
+                           value="@((string)context.Variables[&quot;agent-session-id&quot;])"
+                           duration="3600"
+                           caching-type="internal" />
+      </when>
+    </choose>
+    <set-header name="Authorization" exists-action="override">
+      <value>@("Bearer " + (string)context.Variables["foundry-token"])</value>
+    </set-header>
+    <set-query-parameter name="api-version" exists-action="override">
+      <value>v1</value>
+    </set-query-parameter>
+    <set-query-parameter name="agent_session_id" exists-action="override">
+      <value>@((string)context.Variables["agent-session-id"])</value>
+    </set-query-parameter>
+    <set-backend-service backend-id="teams-hosted-agent-invocations" />
+    <rewrite-uri template="@(&quot;/agents/&quot; + (string)context.Variables[&quot;agent-name&quot;] + &quot;/endpoint/protocols/invocations&quot;)"
+                 copy-unmatched-params="true" />
+  </inbound>
+  <backend>
+    <forward-request timeout="600" />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>

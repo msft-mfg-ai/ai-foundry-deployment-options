@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Foundry Agent Bot</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 720px; margin: 60px auto; padding: 0 24px; color: #1f2328; line-height: 1.6; }
+  h1 { margin: 0 0 8px; }
+  p  { color: #57606a; }
+  ul { padding-left: 20px; }
+  a  { color: #0969da; }
+  code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1>🤖 Foundry Agent Bot</h1>
+  <p>Bot Framework wrapper around Microsoft Foundry agents — chat in Teams or Web Chat.</p>
+  <h2>Endpoints</h2>
+  <ul>
+    <li><a href="/health">/health</a> — liveness check</li>
+    <li><a href="/admin">/admin</a> — admin landing page for browser chat and manifest generation</li>
+    <li><a href="/admin/chat">/admin/chat</a> — 🧪 test chat with an agent in your browser</li>
+    <li><a href="/admin/manifest">/admin/manifest</a> — generate &amp; download Teams app manifest for the configured default project</li>
+    <li><a href="/admin/agents">/admin/agents</a> — list Foundry agents (JSON)</li>
+    <li><code>POST /api/messages</code> — Bot Framework messaging endpoint</li>
+    <li><code>POST /api/notify</code> — proactive message push</li>
+  </ul>
+  <h2>How to use</h2>
+  <ol>
+    <li>Open <a href="/admin/manifest">/admin/manifest</a> and download an agent's zip.</li>
+    <li>Sideload it in Teams (Apps → Manage your apps → Upload a custom app).</li>
+    <li>Open a 1:1 chat with the bot. Try <code>/help</code> to see commands.</li>
+  </ol>
+</body>
+</html>

@@ -1,0 +1,20 @@
+{
+  "type": "message",
+  "id": "activity-invocation-002",
+  "timestamp": "2026-08-27T12:00:00Z",
+  "serviceUrl": "https://smba.trafficmanager.net/amer/",
+  "channelId": "msteams",
+  "from": {
+    "id": "invocation-user",
+    "aadObjectId": "00000000-0000-0000-0000-000000000001"
+  },
+  "conversation": {
+    "id": "csharp-invocation-diagnostic-002",
+    "conversationType": "personal",
+    "tenantId": "00000000-0000-0000-0000-000000000002"
+  },
+  "recipient": {
+    "id": "invocation-bot"
+  },
+  "text": "Reply with a short confirmation that the C# hosted agent reached Alice."
+}

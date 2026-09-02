@@ -121,23 +121,25 @@ async def main() -> None:
         model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=credential,
     )
+    toolbox = FoundryToolbox(credential)
+    instructions = (
+        "You are a concise hosted agent. Use the Foundry Toolbox for connected "
+        "MCP and web tools, and state which external tool you used."
+    )
+    tools: list[Any] = [toolbox]
     if os.environ.get("CODE_INTERPRETER_MODE") == "native":
-        instructions = (
-            "You are a concise file-analysis agent. Use list_session_files to "
-            "discover uploads, then use process_session_file_with_code_interpreter "
-            "for all analysis, transformations, and generated artifacts. State the "
-            "exact downloadable session paths returned by the tool."
+        instructions += (
+            " Use list_session_files to discover uploads, then use "
+            "process_session_file_with_code_interpreter for file analysis, "
+            "transformations, and generated artifacts. State the exact "
+            "downloadable session paths returned by the tool."
         )
-        tools = [
-            list_session_files,
-            process_session_file_with_code_interpreter,
-        ]
-    else:
-        instructions = (
-            "You are a concise toolbox diagnostic agent. Always use the OAuth "
-            "pass-through MCP tools when requested, and state which tool you used."
+        tools.extend(
+            [
+                list_session_files,
+                process_session_file_with_code_interpreter,
+            ]
         )
-        tools = FoundryToolbox(credential)
 
     agent = Agent(
         client=client,

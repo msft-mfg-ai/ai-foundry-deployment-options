@@ -1,0 +1,89 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "00000000-0000-0000-0000-000000000000",
+  "developer": {
+    "name": "Foundry POC",
+    "websiteUrl": "https://www.example.com",
+    "privacyUrl": "https://www.example.com/privacy",
+    "termsOfUseUrl": "https://www.example.com/terms"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "name": {
+    "short": "Teams Hosted Agent",
+    "full": "Teams Hosted Agent"
+  },
+  "description": {
+    "short": "Self-contained Microsoft Foundry hosted agent for Teams.",
+    "full": "Self-contained Microsoft Foundry hosted agent for Teams using the Invocations protocol."
+  },
+  "accentColor": "#5B67D1",
+  "bots": [
+    {
+      "botId": "00000000-0000-0000-0000-000000000000",
+      "scopes": [
+        "personal",
+        "team",
+        "groupChat"
+      ],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": [
+            "personal",
+            "team",
+            "groupChat"
+          ],
+          "commands": [
+            {
+              "title": "/agents",
+              "description": "Pick a Foundry agent"
+            },
+            {
+              "title": "/agent",
+              "description": "Show active agent + project info"
+            },
+            {
+              "title": "/new",
+              "description": "Start a fresh thread (alias: /reset)"
+            },
+            {
+              "title": "/tokens",
+              "description": "Show token usage for this conversation"
+            },
+            {
+              "title": "/tools",
+              "description": "Show or hide tool-call cards (on/off)"
+            },
+            {
+              "title": "/thinking",
+              "description": "Show or hide live thinking status (on/off)"
+            },
+            {
+              "title": "/debug",
+              "description": "Show redacted runtime and request diagnostics"
+            },
+            {
+              "title": "/stop",
+              "description": "Cancel the running turn"
+            },
+            {
+              "title": "/signout",
+              "description": "Sign out (clears cached Teams SSO token)"
+            },
+            {
+              "title": "/help",
+              "description": "List commands"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "validDomains": []
+}

@@ -758,6 +758,7 @@ terraform.rc
 # Docker
 .dockerignore
 !hosted-agents/perf-support-agent/.dockerignore
+!hosted-agents/teams-agent/.dockerignore
 
 # Kubernetes
 *.kubeconfig

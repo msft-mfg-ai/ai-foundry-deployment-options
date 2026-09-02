@@ -26,6 +26,7 @@ param azureStorageName string = ''
 param azureStorageSubscriptionId string = ''
 param azureStorageResourceGroupName string = ''
 param createAccountCapabilityHost bool = false
+param createProjectCapabilityHost bool = false
 
 param appInsightsResourceId string?
 
@@ -237,6 +238,19 @@ resource project_connection_azureai_search 'Microsoft.CognitiveServices/accounts
       ResourceId: searchService.id
       location: searchService!.location
     }
+  }
+}
+
+// This module creates the capability host for the project and account
+module addProjectCapabilityHost 'add-project-capability-host.bicep' = if (createProjectCapabilityHost) {
+  name: take('capabilityHost-configuration-deployment-${project_name}', 64)
+  params: {
+    accountName: foundry_name
+    projectName: foundry_project.name
+    cosmosDBConnection: project_connection_cosmosdb_account.?name
+    azureStorageConnection: project_connection_azure_storage.?name
+    aiSearchConnection: project_connection_azureai_search.?name
+    aiFoundryConnectionName: byoAoaiConnectionFoundry.?name ?? byoAoaiConnection.?name
   }
 }
 

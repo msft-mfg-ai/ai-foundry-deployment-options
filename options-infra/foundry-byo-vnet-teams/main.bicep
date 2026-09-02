@@ -57,6 +57,9 @@ param teamsAppBackendId string = ''
 @description('Client secret of the Teams App backend AAD app. Stored as a Container App secret (no Key Vault).')
 param teamsAppBackendSecret string = ''
 
+@description('Container image for the Teams proxy and web-tab host.')
+param teamsProxyImage string = 'ghcr.io/karpikpl/foundry-teams-bot-service-proxy:0.12.9'
+
 var deployBots = !empty(agentNames) && !empty(teamsAppBackendId)
 // Each per-bot OAuth connection uses the same connection name. The connection
 // is parented on each bot resource so they're distinct objects despite the
@@ -98,6 +101,9 @@ var tags = {
 }
 
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
+var teamsProxyName = 'teams-proxy-${resourceToken}'
+var teamsProxyHost = '${teamsProxyName}.${managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN}'
+var teamsProxyPublicOrigin = 'https://${teamsProxyHost}'
 
 // ---------------------------------------------------------------------------
 // VNet + Log Analytics (always deployed)
@@ -359,7 +365,7 @@ module teamsProxy '../modules/aca/container-app.bicep' = if (deployBots) {
   params: {
     location: location
     tags: tags
-    name: 'teams-proxy-${resourceToken}'
+    name: teamsProxyName
     workloadProfileName: managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
     applicationInsightsConnectionString: logAnalytics.outputs.APPLICATION_INSIGHTS_CONNECTION_STRING
     definition: {
@@ -403,6 +409,11 @@ module teamsProxy '../modules/aca/container-app.bicep' = if (deployBots) {
           secretValue: teamsAppBackendSecret
         }
         { name: 'AZURE_TENANT_ID',          value: tenant().tenantId }
+        // Independent tab-only Teams app. Teams JS obtains a delegated token
+        // for the shared backend app; this container validates it and performs
+        // OBO to Foundry. Azure Bot Service is not involved in this path.
+        { name: 'TeamsTab__Enabled',      value: 'true' }
+        { name: 'TeamsTab__PublicOrigin', value: teamsProxyPublicOrigin }
         // Container Apps ingress terminates TLS and forwards as plain HTTP
         // on :8080. Without this, ASP.NET Core sees scheme=http and OIDC
         // builds the redirect URI as `http://<fqdn>/signin-oidc`, which
@@ -414,7 +425,7 @@ module teamsProxy '../modules/aca/container-app.bicep' = if (deployBots) {
       ]
     }
     ingressTargetPort: 8080
-    existingImage: 'ghcr.io/karpikpl/foundry-teams-bot-service-proxy:0.12.9'
+    existingImage: teamsProxyImage
     userAssignedManagedIdentityClientId: teamsProxyIdentity.outputs.MANAGED_IDENTITY_CLIENT_ID
     userAssignedManagedIdentityResourceId: teamsProxyIdentity.outputs.MANAGED_IDENTITY_RESOURCE_ID
     ingressExternal: true
@@ -504,6 +515,7 @@ output DEPLOY_BOTS bool = deployBots
 output TEAMS_APP_BACKEND_ID string = teamsAppBackendId
 output TEAMS_APP_IDENTIFIER_URI string = teamsAppIdentifierUri
 output SSO_CONNECTION_NAME string = ssoConnectionName
+output TEAMS_PROXY_IMAGE string = teamsProxyImage
 
 // UAMI principalId — postprovision uses this as the FIC subject when
 // creating federated credentials on each agent app reg.
@@ -613,6 +625,46 @@ output TEAMS_MANIFESTS array = [for (agentName, i) in agentNames: {
         }
       ]
     }
+  }
+  tab: {
+    '$schema': 'https://developer.microsoft.com/json-schemas/teams/v1.22/MicrosoftTeams.schema.json'
+    manifestVersion: '1.22'
+    version: '1.0.0'
+    id: guid(resourceGroup().id, 'foundry-web-tab', agentName)
+    developer: {
+      name: 'AI Foundry'
+      websiteUrl: 'https://learn.microsoft.com/azure/ai-foundry/'
+      privacyUrl: 'https://learn.microsoft.com/azure/ai-foundry/'
+      termsOfUseUrl: 'https://learn.microsoft.com/azure/ai-foundry/'
+    }
+    name: {
+      short: '${agentName}-web'
+      full: '${agentName} (Foundry web chat)'
+    }
+    description: {
+      short: 'AI Foundry agent in a Teams web tab.'
+      full: 'Web chat for the AI Foundry agent "${agentName}". Uses Teams SSO and the shared backend app; Azure Bot Service is not used.'
+    }
+    icons: {
+      color: 'default-color-icon.png'
+      outline: 'default-outline-icon.png'
+    }
+    accentColor: '#0078D4'
+    validDomains: [teamsProxyHost]
+    permissions: ['identity']
+    webApplicationInfo: {
+      id: teamsAppBackendId
+      resource: teamsAppIdentifierUri
+    }
+    staticTabs: [
+      {
+        entityId: 'foundry-agent-chat'
+        name: 'Chat'
+        contentUrl: '${teamsProxyPublicOrigin}/chat/${foundry.outputs.FOUNDRY_NAME}/${projectNames[0]}/${uriComponent(agentName)}/ui'
+        websiteUrl: '${teamsProxyPublicOrigin}/chat/${foundry.outputs.FOUNDRY_NAME}/${projectNames[0]}/${uriComponent(agentName)}/ui'
+        scopes: ['personal']
+      }
+    ]
   }
 }]
 

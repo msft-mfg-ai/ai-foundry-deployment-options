@@ -32,6 +32,7 @@ param agentAppRegs    = json(agentAppRegsRaw)
 param agentAppSecrets = json(agentAppSecretsRaw)
 param teamsAppBackendId     = readEnvironmentVariable('TEAMS_APP_BACKEND_ID', '')
 param teamsAppBackendSecret = readEnvironmentVariable('TEAMS_APP_BACKEND_SECRET', '')
+param teamsProxyImage       = readEnvironmentVariable('TEAMS_PROXY_IMAGE', 'ghcr.io/karpikpl/foundry-teams-bot-service-proxy:0.12.9')
 
 param apiServices = [
   {

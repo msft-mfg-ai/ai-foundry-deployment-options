@@ -1,0 +1,7 @@
+src/bin/
+src/obj/
+src/ClientApp/
+src/wwwroot/teams-chat/
+tests/
+**/*.user
+**/*.suo

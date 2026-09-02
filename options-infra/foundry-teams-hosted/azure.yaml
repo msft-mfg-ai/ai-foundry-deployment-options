@@ -1,0 +1,190 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+requiredVersions:
+  extensions:
+    azure.ai.agents: ">=1.0.0-beta.13"
+    azure.ai.connections: ">=1.0.0-beta.4"
+    azure.ai.toolboxes: ">=1.0.0-beta.5"
+
+name: foundry-teams-hosted
+
+infra:
+  provider: bicep
+  path: .
+  module: main
+
+services:
+  teams-hosted-agent:
+    host: azure.ai.agent
+    language: docker
+    project: .hosted-agent-build/teams-agent
+    uses:
+      - teams-project
+      - teams-tools
+    toolboxes:
+      - teams-tools
+    kind: hosted
+    name: teams-hosted-agent
+    displayName: Teams Hosted Agent
+    description: Self-contained C# Teams agent with direct Foundry inference and Toolbox tools.
+    container:
+      resources:
+        cpu: "1.0"
+        memory: 2Gi
+    sessionConfiguration:
+      idleTimeoutSeconds: 300
+    environmentVariables:
+      - name: HostedAgent__Enabled
+        value: "true"
+      - name: TeamsAgent__ProjectEndpoint
+        value: ${FOUNDRY_PROJECT_ENDPOINT}
+      - name: TeamsAgent__ProjectResourceId
+        value: ${FOUNDRY_PROJECT_ID}
+      - name: DirectAgent__Enabled
+        value: "true"
+      - name: DirectAgent__Name
+        value: teams-hosted-agent
+      - name: DirectAgent__Model
+        value: ${AI_GATEWAY_CONNECTION_DYNAMIC}/${CHAT_MODEL}
+      - name: DirectAgent__ToolboxName
+        value: teams-tools
+      - name: Cosmos__Endpoint
+        value: ${COSMOS_ENDPOINT}
+      - name: Cosmos__Database
+        value: ${COSMOS_DATABASE}
+      - name: Cosmos__Container
+        value: ${COSMOS_CONTAINER}
+      - name: MicrosoftAppTenantId
+        value: ${AZURE_TENANT_ID}
+      - name: TeamsApp__SsoConnectionName
+        value: ${TEAMS_SSO_CONNECTION_NAME=foundry-sso}
+      - name: JwtValidation__Enabled
+        value: "false"
+    protocols:
+      - protocol: invocations
+        version: 2.0.0
+      - protocol: responses
+        version: 2.0.0
+    agentEndpoint:
+      protocols:
+        - invocations
+        - responses
+      authorizationSchemes:
+        - type: Entra
+
+  teams-tools:
+    host: azure.ai.toolbox
+    uses:
+      - teams-project
+    description: Foundry Toolbox exposed to the Teams assistant.
+    tools:
+      - type: mcp
+        connection: teams-public-mcp
+        server_label: microsoft-learn
+
+  teams-project:
+    host: azure.ai.project
+    endpoint: ${FOUNDRY_PROJECT_ENDPOINT}
+
+hooks:
+  preprovision:
+    windows:
+      shell: pwsh
+      run: |
+        & '../scripts/preprovision-list-foundry-models.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        if (-not $env:CHAT_MODEL) {
+          $instancesJson = azd env get-value FOUNDRY_INSTANCES_JSON
+          if ($LASTEXITCODE -ne 0 -or -not $instancesJson) {
+            throw 'FOUNDRY_INSTANCES_JSON was not persisted by model discovery.'
+          }
+          $instances = $instancesJson | ConvertFrom-Json
+          $model = $instances[0].deployments[0].modelName
+          if (-not $model) { throw 'No model deployment was discovered for CHAT_MODEL.' }
+          azd env set CHAT_MODEL $model
+        }
+        if (-not $env:MY_IP) {
+          $ip = (Invoke-RestMethod https://api.ipify.org).Trim()
+          Write-Host "Auto-detected MY_IP=$ip for ACR image push"
+          azd env set MY_IP $ip
+        }
+      interactive: false
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        set -eu
+        sh ../scripts/preprovision-select-foundry-instances.sh
+        sh ../scripts/preprovision-list-foundry-models.sh
+        if [ -z "${CHAT_MODEL:-}" ]; then
+          instances_json=$(azd env get-value FOUNDRY_INSTANCES_JSON)
+          if [ -z "$instances_json" ]; then
+            echo "FOUNDRY_INSTANCES_JSON was not persisted by model discovery." >&2
+            exit 1
+          fi
+          model=$(printf '%s' "$instances_json" | jq -r '.[0].deployments[0].modelName // empty')
+          if [ -z "$model" ]; then
+            echo "No model deployment was discovered for CHAT_MODEL." >&2
+            exit 1
+          fi
+          azd env set CHAT_MODEL "$model"
+        fi
+        if [ -z "${MY_IP:-}" ]; then
+          ip=$(curl -sf https://api.ipify.org)
+          echo "Auto-detected MY_IP=${ip} for ACR image push"
+          azd env set MY_IP "$ip"
+        fi
+      interactive: true
+      continueOnError: false
+
+  prepackage:
+    windows:
+      shell: pwsh
+      run: |
+        & '../scripts/sync-hosted-agents.ps1' @(
+          '../../hosted-agents/teams-agent=.hosted-agent-build/teams-agent'
+        )
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    posix:
+      shell: sh
+      run: |
+        set -eu
+        sh ../scripts/sync-hosted-agents.sh \
+          ../../hosted-agents/teams-agent=.hosted-agent-build/teams-agent
+
+  predeploy:
+    windows:
+      shell: pwsh
+      run: |
+        azd ai connection create teams-public-mcp `
+          --project-endpoint $env:FOUNDRY_PROJECT_ENDPOINT `
+          --kind remote-tool `
+          --target https://learn.microsoft.com/api/mcp `
+          --auth-type none `
+          --force
+      interactive: false
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        set -eu
+        azd ai connection create teams-public-mcp \
+          --project-endpoint "${FOUNDRY_PROJECT_ENDPOINT}" \
+          --kind remote-tool \
+          --target https://learn.microsoft.com/api/mcp \
+          --auth-type none \
+          --force
+      interactive: false
+      continueOnError: false
+
+  postdeploy:
+    windows:
+      shell: pwsh
+      run: ./configure-teams-hosted.ps1
+      interactive: false
+      continueOnError: false
+    posix:
+      shell: sh
+      run: sh ./configure-teams-hosted.sh
+      interactive: false
+      continueOnError: false
