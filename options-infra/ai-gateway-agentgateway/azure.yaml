@@ -1,0 +1,60 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+name: ai-gateway-agentgateway
+
+services:
+  mcp-server:
+    project: services/mcp-server
+    host: containerapp
+    language: python
+    docker:
+      path: Dockerfile
+  a2a-agent:
+    project: services/a2a-agent
+    host: containerapp
+    language: python
+    docker:
+      path: Dockerfile
+
+infra:
+  provider: bicep
+  path: .
+  module: main
+
+hooks:
+  preprovision:
+    windows:
+      shell: pwsh
+      run: |
+        & '../scripts/preprovision-list-foundry-models.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & './scripts/preprovision-entra-apps.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      interactive: true
+    posix:
+      shell: sh
+      run: |
+        set -eu
+        sh ../scripts/preprovision-select-foundry-instances.sh
+        sh ../scripts/preprovision-list-foundry-models.sh
+        sh ./scripts/preprovision-entra-apps.sh
+      interactive: true
+  postprovision:
+    windows:
+      shell: pwsh
+      run: ./scripts/postprovision-entra-apps.ps1
+      interactive: true
+    posix:
+      shell: sh
+      run: ./scripts/postprovision-entra-apps.sh
+      interactive: true
+  postup:
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host "agentgateway UI: $env:AGENTGATEWAY_UI_URL"
+        Write-Host "Foundry project: $env:FOUNDRY_PROJECT_NAME"
+    posix:
+      shell: sh
+      run: |
+        echo "agentgateway UI: ${AGENTGATEWAY_UI_URL}"
+        echo "Foundry project: ${FOUNDRY_PROJECT_NAME}"
