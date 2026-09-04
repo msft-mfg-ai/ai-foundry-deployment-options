@@ -1,0 +1,90 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+config:
+  readinessAddr: 0.0.0.0:19001
+  statsAddr: 0.0.0.0:19002
+  storage:
+    mode: hybrid
+  database:
+    url: ${DATABASE_URL}
+  logging:
+    format: json
+
+gateways:
+  default:
+    port: 4000
+
+frontendPolicies:
+  accessLog:
+    add:
+      user.id: jwt.sub
+      user.app_id: jwt.azp
+
+llm:
+  policies:
+    jwtAuth:
+      mode: strict
+      issuer: ${ENTRA_V2_ISSUER}
+      audiences:
+      - ${GATEWAY_AUDIENCE}
+      - ${GATEWAY_API_CLIENT_ID}
+      jwks:
+        url: https://login.microsoftonline.com/${ENTRA_TENANT_ID}/discovery/v2.0/keys
+__LLM_CONFIG__
+
+mcp:
+  policies:
+    cors:
+      allowOrigins: ["*"]
+      allowHeaders: ["*"]
+      exposeHeaders: ["Mcp-Session-Id"]
+    mcpAuthentication:
+      mode: strict
+      issuer: ${ENTRA_V2_ISSUER}
+      audiences:
+      - ${GATEWAY_AUDIENCE}
+      - ${GATEWAY_API_CLIENT_ID}
+      provider:
+        entra: {}
+      clientId: ${GATEWAY_API_CLIENT_ID}
+      resourceMetadata:
+        resource: ${MCP_RESOURCE_URL}
+        scopesSupported:
+        - ${GATEWAY_AUDIENCE}/mcp_access
+        bearerMethodsSupported:
+        - header
+  targets:
+  - name: sample-tools
+    mcp:
+      host: ${MCP_TARGET_URL}
+
+routes:
+- name: sample-a2a
+  matches:
+  - path:
+      pathPrefix: /a2a
+  policies:
+    jwtAuth:
+      mode: strict
+      issuer: ${ENTRA_V2_ISSUER}
+      audiences:
+      - ${GATEWAY_AUDIENCE}
+      - ${GATEWAY_API_CLIENT_ID}
+      jwks:
+        url: https://login.microsoftonline.com/${ENTRA_TENANT_ID}/discovery/v2.0/keys
+    a2a: {}
+  backends:
+  - host: ${A2A_TARGET_URL}
+    policies:
+      backendTLS: {}
+
+ui:
+  gateways: [default]
+  policies:
+    oidc:
+      issuer: ${ENTRA_V2_ISSUER}
+      clientId: ${UI_CLIENT_ID}
+      clientSecret: ${UI_CLIENT_SECRET}
+      redirectURI: ${UI_REDIRECT_URI}
+      scopes:
+      - profile
+      - email

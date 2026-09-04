@@ -1,0 +1,2 @@
+"""Sample MCP service package."""
+

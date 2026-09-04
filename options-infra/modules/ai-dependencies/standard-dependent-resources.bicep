@@ -4,6 +4,9 @@ import * as types from '../types/types.bicep'
 @description('Azure region of the deployment')
 param location string
 
+@description('Azure region for a newly created AI Search service. Defaults to the deployment location.')
+param aiSearchLocation string = location
+
 param tags object = {}
 var defaultTags = union(tags, {
   deployedBy: 'ai-foundry-infra'
@@ -111,7 +114,7 @@ resource existingSearchService 'Microsoft.Search/searchServices@2024-06-01-previ
 
 resource aiSearch 'Microsoft.Search/searchServices@2024-06-01-preview' = if(!aiSearchExists) {
   name: aiSearchName
-  location: location
+  location: aiSearchLocation
   tags: defaultTags
   identity: {
     type: 'SystemAssigned'
