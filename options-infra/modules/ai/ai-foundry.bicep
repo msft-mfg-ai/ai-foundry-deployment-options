@@ -45,7 +45,7 @@ type aiModelTDeploymentType = {
       name: string
       @description('The version of the model, e.g. "2024-11-20" or "0125"')
       version: string
-      @description('Provider format returned by the Foundry model catalog, for example OpenAI, Anthropic, Cohere, or Black Forest Labs.')
+      @description('Provider format returned by the Foundry model catalog, for example OpenAI, Anthropic, Cohere, MoonshotAI, or Black Forest Labs.')
       format: string
     }
     @description('Required for Anthropic models: customer attestation forwarded to Anthropic on every request. See https://learn.microsoft.com/azure/developer/ai/how-to/deploy-claude-foundry')
@@ -81,8 +81,17 @@ resource existingAccount 'Microsoft.CognitiveServices/accounts@2025-04-01-previe
   name: existing_Foundry_Name
 }
 
+module raiPolicy 'rai-policy.bicep' = if (!useExistingService) {
+  name: 'rai-policy'
+  params: {
+    accountName: account.name
+    raiPolicyName: 'Custom-Guardrail'
+    tags: tags
+  }
+}
+
 // --------------------------------------------------------------------------------------------------------------
-resource account 'Microsoft.CognitiveServices/accounts@2025-12-01' = if (!useExistingService) {
+resource account 'Microsoft.CognitiveServices/accounts@2026-01-15-preview' = if (!useExistingService) {
   name: name
   location: location
   tags: tags
@@ -102,6 +111,11 @@ resource account 'Microsoft.CognitiveServices/accounts@2025-12-01' = if (!useExi
     allowProjectManagement: true
     publicNetworkAccess: publicNetworkAccess
     disableLocalAuth: disableLocalAuth
+    instant: {
+      raiPolicyName: 'Microsoft.DefaultV2'
+      // disable instant access models: https://learn.microsoft.com/en-us/azure/foundry/concepts/instant-models?tabs=python%2Cbicep#enterprise-controls
+      modelAllowList: []
+    }
     networkAcls: {
       bypass: 'AzureServices'
       defaultAction: 'Allow'
@@ -136,6 +150,9 @@ resource deployment 'Microsoft.CognitiveServices/accounts/deployments@2025-10-01
     properties: deployment.properties
     // use the sku in the deployment if it exists, otherwise default to standard
     sku: deployment.?sku ?? { name: 'Standard', capacity: 20 }
+    dependsOn: [
+      raiPolicy
+    ]
   }
 ]
 
@@ -179,7 +196,9 @@ module kvRoleAssignment '../kv/kv-role-assignment.bicep' = if (addKeyVault && !u
   name: 'kv-role-assignment-${name}'
   params: {
     keyVaultName: keyVaultName!
-    principalId: empty(managedIdentityResourceId) ? account.?identity.principalId ?? '' : identity.properties.principalId
+    principalId: empty(managedIdentityResourceId)
+      ? account.?identity.principalId ?? ''
+      : identity.properties.principalId
   }
 }
 // --------------------------------------------------------------------------------------------------------------
@@ -188,7 +207,9 @@ module kvRoleAssignment '../kv/kv-role-assignment.bicep' = if (addKeyVault && !u
 output FOUNDRY_RESOURCE_ID string = useExistingService ? existingAccount.id : account.id
 @description('The name of the Foundry Account')
 output FOUNDRY_NAME string = useExistingService ? existingAccount.name : account.name
-output FOUNDRY_ENDPOINT string = useExistingService ? existingAccount!.properties.endpoint : account!.properties.endpoint
+output FOUNDRY_ENDPOINT string = useExistingService
+  ? existingAccount!.properties.endpoint
+  : account!.properties.endpoint
 output FOUNDRY_RESOURCE_GROUP_NAME string = useExistingService ? existing_Foundry_RG_Name : resourceGroup().name
 output FOUNDRY_SUBSCRIPTION_ID string = useExistingService ? existing_Foundry_SubId : subscription().subscriptionId
 output FOUNDRY_PRINCIPAL_ID string = empty(managedIdentityResourceId)

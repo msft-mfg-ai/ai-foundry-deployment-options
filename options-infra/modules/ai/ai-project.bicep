@@ -177,6 +177,8 @@ resource byoAoaiConnection 'Microsoft.CognitiveServices/accounts/projects/connec
   }
 }
 
+var subnetArmId = !empty(foundry.properties.networkInjections) ? foundry.properties.?networkInjections[0].subnetArmId : null
+
 // For VNET INJECTED FOUNDRY - Account Capability Host for Agents is created automatically
 // https://github.com/azure-ai-foundry/foundry-samples/blob/main/samples/microsoft/infrastructure-setup/15-private-network-standard-agent-setup/README.md
 @onlyIfNotExists()
@@ -185,6 +187,7 @@ resource accountCapabilityHost 'Microsoft.CognitiveServices/accounts/capabilityH
   parent: foundry
   properties: {
     capabilityHostKind: 'Agents'
+    customerSubnet: subnetArmId
   }
   dependsOn: [
     foundry_project
