@@ -59,6 +59,12 @@ var cosmosDatabaseName = 'botstate'
 var cosmosContainerName = 'conversations'
 var cosmosDataContributorRoleId = '00000000-0000-0000-0000-000000000002'
 var acrName = 'acr${resourceToken}'
+var apimName = 'apim-ai-${resourceToken}'
+var foundryUserIdentityImpersonationRoleName = 'Foundry Agent User Identity Impersonation'
+var foundryUserIdentityImpersonationRoleId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  guid(subscription().id, foundryUserIdentityImpersonationRoleName)
+)
 
 module cosmosDnsZone 'br/public:avm/res/network/private-dns-zone:0.8.1' = {
   name: 'cosmos-private-dns-zone'
@@ -284,7 +290,7 @@ var subscriptions subscriptionType[] = connectionPerProject
 module ai_gateway '../modules/apim/v2/apim.bicep' = {
   name: 'apim-deployment'
   params: {
-    apiManagementName: 'apim-ai-${resourceToken}'
+    apiManagementName: apimName
     location: location
     tags: tags
     apimSku: 'Basicv2'
@@ -294,6 +300,32 @@ module ai_gateway '../modules/apim/v2/apim.bicep' = {
     apimSubscriptionsConfig: gatewayAuthenticationType == 'ApiKey' ? subscriptions : []
     #disable-next-line BCP036
   }
+}
+
+module foundryUserIdentityImpersonationRole '../modules/iam/foundry-user-identity-impersonation-role.bicep' = {
+  name: 'foundry-user-identity-impersonation-role'
+  scope: subscription()
+  params: {
+    foundryAccountResourceId: foundry.outputs.FOUNDRY_RESOURCE_ID
+    roleName: foundryUserIdentityImpersonationRoleName
+  }
+}
+
+resource apimUserIdentityImpersonation 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: projectForAcr[0]
+  name: guid(
+    resourceId('Microsoft.ApiManagement/service', apimName),
+    foundryUserIdentityImpersonationRoleId,
+    projectForAcr[0].id
+  )
+  properties: {
+    principalId: ai_gateway.outputs.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: foundryUserIdentityImpersonationRoleId
+  }
+  dependsOn: [
+    foundryUserIdentityImpersonationRole
+  ]
 }
 
 module common_ai_gateway_setup '../modules/apim/common-apim-setup.bicep' = {

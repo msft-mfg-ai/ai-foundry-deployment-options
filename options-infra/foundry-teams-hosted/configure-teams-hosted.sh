@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$script_dir"
+
 agent_name="${HOSTED_TEAMS_AGENT_NAME:-teams-hosted-agent}"
 runtime_template="teams-hosted-runtime.bicep"
 
@@ -76,6 +79,25 @@ az deployment group create \
     gatewayCosmosRoleAssignmentName="$gateway_cosmos_assignment" \
   --output none
 
+session_admin_endpoint="${APIM_GATEWAY_URL%/}/teams-admin/${agent_name}/sessions/current"
+session_admin_subscription="teams-hosted-agent-sessions"
+session_admin_secrets_url="https://management.azure.com/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${AZURE_RESOURCE_GROUP}/providers/Microsoft.ApiManagement/service/${APIM_NAME}/subscriptions/${session_admin_subscription}/listSecrets?api-version=2024-06-01-preview"
+if session_admin_key=$(az rest \
+    --method post \
+    --url "$session_admin_secrets_url" \
+    --query primaryKey \
+    --output tsv 2>/dev/null) \
+  && [ -n "$session_admin_key" ] \
+  && curl --fail --silent --show-error \
+    --request DELETE \
+    --url "$session_admin_endpoint" \
+    --header "Ocp-Apim-Subscription-Key: $session_admin_key" \
+    --output /dev/null; then
+  echo "Cleared cached hosted session for ${agent_name} version ${agent_version}."
+else
+  echo "Warning: could not clear the cached hosted session; continuing deployment." >&2
+fi
+
 output_dir="teams-app/build/${agent_name}"
 package_dir="${output_dir}/package"
 display_name="${TEAMS_APP_DISPLAY_NAME:-Teams Hosted Agent}"
@@ -99,6 +121,8 @@ zip -q -j "${output_dir}/appPackage.zip" \
 azd env set HOSTED_TEAMS_BOT_NAME "$bot_name"
 azd env set HOSTED_TEAMS_BOT_APP_ID "$bot_app_id"
 azd env set HOSTED_TEAMS_MESSAGING_ENDPOINT "$messaging_endpoint"
+azd env set HOSTED_TEAMS_SESSION_ADMIN_ENDPOINT "$session_admin_endpoint"
+azd env set HOSTED_TEAMS_SESSION_ADMIN_SUBSCRIPTION "$session_admin_subscription"
 
 echo "Teams package: ${output_dir}/appPackage.zip"
 echo "Messaging endpoint: ${messaging_endpoint}"

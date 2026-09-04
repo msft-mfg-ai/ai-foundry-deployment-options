@@ -13,11 +13,9 @@ public sealed class ActivityInvocationHandler(
     IAgent bot,
     IAgentHttpAdapter httpAdapter,
     IHttpContextAccessor httpContextAccessor,
+    InvocationContextStore invocationContexts,
     ILogger<ActivityInvocationHandler> logger) : InvocationHandler
 {
-    public const string InvocationIdItemKey = "Foundry.InvocationId";
-    public const string SessionIdItemKey = "Foundry.SessionId";
-
     private const string ForwardedBotAuthorizationHeader = "x-client-bot-authorization";
 
     public override async Task HandleAsync(
@@ -26,8 +24,13 @@ public sealed class ActivityInvocationHandler(
         InvocationContext context,
         CancellationToken cancellationToken)
     {
-        request.HttpContext.Items[InvocationIdItemKey] = context.InvocationId;
-        request.HttpContext.Items[SessionIdItemKey] = context.SessionId;
+        logger.LogInformation(
+            "Invocation {InvocationId} platform context: user ID present={HasUserId}, call ID present={HasCallId}, delegated Teams identity marker={HasDelegatedIdentityMarker}.",
+            context.InvocationId,
+            !string.IsNullOrWhiteSpace(context.PlatformContext.UserIdKey),
+            !string.IsNullOrWhiteSpace(context.PlatformContext.CallId),
+            context.ClientHeaders.ContainsKey(
+                "x-client-teams-user-identity"));
 
         if (request.Headers.TryGetValue(ForwardedBotAuthorizationHeader, out var forwardedAuthorization))
         {
@@ -53,6 +56,7 @@ public sealed class ActivityInvocationHandler(
                 context,
                 httpAdapter,
                 bot,
+                invocationContexts,
                 cancellationToken);
             return;
         }
@@ -130,6 +134,7 @@ public sealed class ActivityInvocationHandler(
         InvocationContext context,
         IAgentHttpAdapter httpAdapter,
         IAgent bot,
+        InvocationContextStore invocationContexts,
         CancellationToken cancellationToken)
     {
         using var reader = new StreamReader(
@@ -154,13 +159,19 @@ public sealed class ActivityInvocationHandler(
 
         var channelData = activity["channelData"] as JObject ?? new JObject();
         activity["channelData"] = channelData;
-        channelData["_foundryInvocation"] = new JObject
-        {
-            ["agentName"] = request.Headers["x-client-agent-name"].FirstOrDefault(),
-            ["agentVersion"] = request.Headers["x-client-agent-version"].FirstOrDefault(),
-            ["sessionId"] = context.SessionId,
-            ["invocationId"] = context.InvocationId,
-        };
+        invocationContexts.Add(
+            activity,
+            new HostedInvocationContext(
+                request.Headers["x-client-agent-name"].FirstOrDefault(),
+                request.Headers["x-client-agent-version"].FirstOrDefault(),
+                context.SessionId,
+                context.InvocationId,
+                context.PlatformContext.UserIdKey
+                    ?? throw new InvalidOperationException(
+                        "Foundry did not provide a protocol user ID."),
+                context.PlatformContext.CallId
+                    ?? throw new InvalidOperationException(
+                        "Foundry did not provide a protocol call ID.")));
         channelData["_debugHeaders"] = JObject.FromObject(
             request.Headers
                 .OrderBy(header => header.Key, StringComparer.OrdinalIgnoreCase)

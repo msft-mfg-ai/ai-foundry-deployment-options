@@ -4,6 +4,7 @@ requiredVersions:
   extensions:
     azure.ai.agents: ">=1.0.0-beta.13"
     azure.ai.connections: ">=1.0.0-beta.4"
+    azure.ai.skills: ">=1.0.0-beta.4"
     azure.ai.toolboxes: ">=1.0.0-beta.5"
 
 name: foundry-teams-hosted
@@ -48,6 +49,8 @@ services:
         value: ${AI_GATEWAY_CONNECTION_DYNAMIC}/${CHAT_MODEL}
       - name: DirectAgent__ToolboxName
         value: teams-tools
+      - name: DirectAgent__ToolboxEndpoint
+        value: ${TOOLBOX_TEAMS_TOOLS_MCP_ENDPOINT}
       - name: Cosmos__Endpoint
         value: ${COSMOS_ENDPOINT}
       - name: Cosmos__Database
@@ -56,8 +59,6 @@ services:
         value: ${COSMOS_CONTAINER}
       - name: MicrosoftAppTenantId
         value: ${AZURE_TENANT_ID}
-      - name: TeamsApp__SsoConnectionName
-        value: ${TEAMS_SSO_CONNECTION_NAME=foundry-sso}
       - name: JwtValidation__Enabled
         value: "false"
     protocols:
@@ -71,16 +72,138 @@ services:
         - responses
       authorizationSchemes:
         - type: Entra
+    hooks:
+      prebuild:
+        windows:
+          shell: pwsh
+          dir: ../..
+          run: |
+            & '../scripts/sync-hosted-agents.ps1' @(
+              '../../hosted-agents/teams-agent=.hosted-agent-build/teams-agent'
+            )
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        posix:
+          shell: sh
+          dir: ../..
+          run: |
+            set -eu
+            sh ../scripts/sync-hosted-agents.sh \
+              ../../hosted-agents/teams-agent=.hosted-agent-build/teams-agent
+      postdeploy:
+        windows:
+          shell: pwsh
+          run: ../../configure-teams-hosted.ps1
+          interactive: false
+          continueOnError: false
+        posix:
+          shell: sh
+          run: sh ../../configure-teams-hosted.sh
+          interactive: false
+          continueOnError: false
 
   teams-tools:
     host: azure.ai.toolbox
     uses:
       - teams-project
-    description: Foundry Toolbox exposed to the Teams assistant.
+      - powerpoint
+    description: Foundry Toolbox exposed to the Teams assistant for research and presentation generation.
+    skills:
+      - name: powerpoint
     tools:
       - type: mcp
         connection: teams-public-mcp
         server_label: microsoft-learn
+      - type: web_search
+        name: web
+      - type: code_interpreter
+        name: code
+        container:
+          type: auto
+    hooks:
+      postdeploy:
+        windows:
+          shell: pwsh
+          run: |
+            $endpoint = azd env get-value TOOLBOX_TEAMS_TOOLS_MCP_ENDPOINT 2>$null
+            if ($LASTEXITCODE -ne 0 -or $endpoint -notmatch '/versions/([^/]+)/mcp') {
+              throw 'Could not resolve the deployed teams-tools version.'
+            }
+            $version = $Matches[1]
+            $details = azd ai toolbox show teams-tools --version $version --output json | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if (-not ($details.version.skills | Where-Object { $_.name -eq 'powerpoint' })) {
+              $skillVersion = azd env get-value SKILL_POWERPOINT_VERSION 2>$null
+              if ($LASTEXITCODE -ne 0 -or -not $skillVersion) {
+                throw 'Could not resolve the deployed powerpoint skill version.'
+              }
+              $attached = azd ai toolbox skill add teams-tools "powerpoint@$skillVersion" `
+                --from-version $version `
+                --output json | ConvertFrom-Json
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $version = $attached.version
+            }
+            azd ai toolbox publish teams-tools $version
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $publishedEndpoint = $endpoint -replace '/versions/[^/]+/mcp', "/versions/$version/mcp"
+            azd env set TOOLBOX_TEAMS_TOOLS_MCP_ENDPOINT $publishedEndpoint
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          interactive: false
+          continueOnError: false
+        posix:
+          shell: sh
+          run: |
+            set -eu
+            endpoint=$(azd env get-value TOOLBOX_TEAMS_TOOLS_MCP_ENDPOINT 2>/dev/null) || endpoint=""
+            version=$(printf '%s' "$endpoint" | sed -n 's#^.*/versions/\([^/]*\)/mcp.*$#\1#p')
+            if [ -z "$version" ]; then
+              echo "Could not resolve the deployed teams-tools version." >&2
+              exit 1
+            fi
+            details=$(azd ai toolbox show teams-tools --version "$version" --output json)
+            if ! printf '%s' "$details" | jq -e '.version.skills[]? | select(.name == "powerpoint")' >/dev/null; then
+              skill_version=$(azd env get-value SKILL_POWERPOINT_VERSION 2>/dev/null) || skill_version=""
+              if [ -z "$skill_version" ]; then
+                echo "Could not resolve the deployed powerpoint skill version." >&2
+                exit 1
+              fi
+              attached=$(azd ai toolbox skill add teams-tools "powerpoint@$skill_version" \
+                --from-version "$version" \
+                --output json)
+              version=$(printf '%s' "$attached" | jq -r '.version // empty')
+              if [ -z "$version" ]; then
+                echo "Could not resolve the Toolbox version created by skill attachment." >&2
+                exit 1
+              fi
+            fi
+            azd ai toolbox publish teams-tools "$version"
+            published_endpoint=$(printf '%s' "$endpoint" | sed "s#/versions/[^/]*/mcp#/versions/$version/mcp#")
+            azd env set TOOLBOX_TEAMS_TOOLS_MCP_ENDPOINT "$published_endpoint"
+          interactive: false
+          continueOnError: false
+
+  powerpoint:
+    host: azure.ai.skill
+    project: .hosted-agent-build/powerpoint-skill
+    uses:
+      - teams-project
+    archive: .
+    hooks:
+      prepackage:
+        windows:
+          shell: pwsh
+          dir: ../..
+          run: |
+            & '../scripts/sync-hosted-agents.ps1' @(
+              '../../hosted-agents/teams-agent/skills/powerpoint=.hosted-agent-build/powerpoint-skill'
+            )
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        posix:
+          shell: sh
+          dir: ../..
+          run: |
+            set -eu
+            sh ../scripts/sync-hosted-agents.sh \
+              ../../hosted-agents/teams-agent/skills/powerpoint=.hosted-agent-build/powerpoint-skill
 
   teams-project:
     host: azure.ai.project
@@ -137,21 +260,6 @@ hooks:
       interactive: true
       continueOnError: false
 
-  prepackage:
-    windows:
-      shell: pwsh
-      run: |
-        & '../scripts/sync-hosted-agents.ps1' @(
-          '../../hosted-agents/teams-agent=.hosted-agent-build/teams-agent'
-        )
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    posix:
-      shell: sh
-      run: |
-        set -eu
-        sh ../scripts/sync-hosted-agents.sh \
-          ../../hosted-agents/teams-agent=.hosted-agent-build/teams-agent
-
   predeploy:
     windows:
       shell: pwsh
@@ -174,17 +282,5 @@ hooks:
           --target https://learn.microsoft.com/api/mcp \
           --auth-type none \
           --force
-      interactive: false
-      continueOnError: false
-
-  postdeploy:
-    windows:
-      shell: pwsh
-      run: ./configure-teams-hosted.ps1
-      interactive: false
-      continueOnError: false
-    posix:
-      shell: sh
-      run: sh ./configure-teams-hosted.sh
       interactive: false
       continueOnError: false

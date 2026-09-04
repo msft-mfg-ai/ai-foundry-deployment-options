@@ -30,7 +30,7 @@
         "team",
         "groupChat"
       ],
-      "supportsFiles": false,
+      "supportsFiles": true,
       "isNotificationOnly": false,
       "commandLists": [
         {
@@ -41,10 +41,6 @@
           ],
           "commands": [
             {
-              "title": "/agents",
-              "description": "Pick a Foundry agent"
-            },
-            {
               "title": "/agent",
               "description": "Show active agent + project info"
             },
@@ -53,28 +49,8 @@
               "description": "Start a fresh thread (alias: /reset)"
             },
             {
-              "title": "/tokens",
-              "description": "Show token usage for this conversation"
-            },
-            {
-              "title": "/tools",
-              "description": "Show or hide tool-call cards (on/off)"
-            },
-            {
-              "title": "/thinking",
-              "description": "Show or hide live thinking status (on/off)"
-            },
-            {
               "title": "/debug",
               "description": "Show redacted runtime and request diagnostics"
-            },
-            {
-              "title": "/stop",
-              "description": "Cancel the running turn"
-            },
-            {
-              "title": "/signout",
-              "description": "Sign out (clears cached Teams SSO token)"
             },
             {
               "title": "/help",

@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+Set-Location $PSScriptRoot
 
 $agentName = if ($env:HOSTED_TEAMS_AGENT_NAME) { $env:HOSTED_TEAMS_AGENT_NAME } else { 'teams-hosted-agent' }
 $runtimeTemplate = 'teams-hosted-runtime.bicep'
@@ -72,6 +73,28 @@ az deployment group create `
     gatewayCosmosRoleAssignmentName=$gatewayCosmosAssignment `
   --output none
 
+$sessionAdminEndpoint = "$($env:APIM_GATEWAY_URL.TrimEnd('/'))/teams-admin/$agentName/sessions/current"
+$sessionAdminSubscription = 'teams-hosted-agent-sessions'
+$sessionAdminSecretsUrl = "https://management.azure.com/subscriptions/$($env:AZURE_SUBSCRIPTION_ID)/resourceGroups/$($env:AZURE_RESOURCE_GROUP)/providers/Microsoft.ApiManagement/service/$($env:APIM_NAME)/subscriptions/$sessionAdminSubscription/listSecrets?api-version=2024-06-01-preview"
+try {
+  $sessionAdminKey = az rest `
+    --method post `
+    --url $sessionAdminSecretsUrl `
+    --query primaryKey `
+    --output tsv
+  if ($LASTEXITCODE -ne 0 -or -not $sessionAdminKey) {
+    throw 'Could not obtain the session administration subscription key.'
+  }
+  Invoke-WebRequest `
+    -Method Delete `
+    -Uri $sessionAdminEndpoint `
+    -Headers @{ 'Ocp-Apim-Subscription-Key' = $sessionAdminKey } `
+    -UseBasicParsing | Out-Null
+  Write-Host "Cleared cached hosted session for $agentName version $agentVersion."
+} catch {
+  Write-Warning 'Could not clear the cached hosted session; continuing deployment.'
+}
+
 $outputDir = "teams-app/build/$agentName"
 $packageDir = Join-Path $outputDir 'package'
 New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
@@ -91,6 +114,8 @@ Compress-Archive -Path (Join-Path $packageDir '*') -DestinationPath $appPackage
 azd env set HOSTED_TEAMS_BOT_NAME $botName
 azd env set HOSTED_TEAMS_BOT_APP_ID $botAppId
 azd env set HOSTED_TEAMS_MESSAGING_ENDPOINT $messagingEndpoint
+azd env set HOSTED_TEAMS_SESSION_ADMIN_ENDPOINT $sessionAdminEndpoint
+azd env set HOSTED_TEAMS_SESSION_ADMIN_SUBSCRIPTION $sessionAdminSubscription
 
 Write-Host "Teams package: $outputDir/appPackage.zip"
 Write-Host "Messaging endpoint: $messagingEndpoint"

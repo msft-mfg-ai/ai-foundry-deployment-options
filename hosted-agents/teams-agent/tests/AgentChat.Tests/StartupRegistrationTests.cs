@@ -35,8 +35,15 @@ public class StartupRegistrationTests
         program.Should().Contain("MapInvocationsServer");
         program.Should().Contain("MapFoundryResponses");
         program.Should().Contain("GetRequiredService<DirectHostedAgent>()");
+        program.Should().NotContain("AdminChat");
+        program.Should().NotContain("TeamsTab");
+        program.Should().NotContain("ActivityProtocolPassthrough");
+        program.Should().NotContain("IRouteRepository");
+        program.Should().NotContain("AgentService");
         manifest.Should().Contain("- protocol: invocations");
         manifest.Should().Contain("- protocol: responses");
+        manifest.Should().NotContain("- protocol: activity");
+        manifest.Should().NotContain("BotServiceRbac");
     }
 
     // Regression: v0.12.0-rc.1 shipped with a missing AdapterOptions

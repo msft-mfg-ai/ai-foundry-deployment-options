@@ -4,8 +4,11 @@ WORKDIR /src
 COPY src/AgentChat.csproj src/
 RUN dotnet restore src/AgentChat.csproj
 
+COPY skills/ skills/
 COPY src/ src/
-RUN dotnet publish src/AgentChat.csproj \
+RUN dotnet clean src/AgentChat.csproj --configuration Release \
+    && dotnet restore src/AgentChat.csproj \
+    && dotnet publish src/AgentChat.csproj \
     --configuration Release \
     --output /app/publish \
     --no-restore \

@@ -18,10 +18,16 @@ Teams
      - forwards it as x-client-bot-authorization
      - authenticates to Foundry with APIM managed identity
      - creates a hosted session on the first request for an agent version
-     - caches and reuses the session ID for one hour
+     - caches and reuses the session ID for one hour across Teams users
+     - sends `from.aadObjectId` as `x-ms-user-identity`
+     - replaces a cached session automatically when Foundry reports it inaccessible
   -> Docker-hosted C# Teams agent
      - direct Agent Framework inference through the AI Gateway model connection
-     - Foundry Toolbox: Microsoft Learn MCP
+     - Foundry Toolbox: Microsoft Learn MCP, Web Search, and Code Interpreter
+     - Toolbox PowerPoint skill with the packaged OTIS template
+     - protocol 2.0 user and call context for multiplexed user isolation
+     - authenticated Code Interpreter container-file download
+     - native Teams file consent and OneDrive/SharePoint upload
      - Teams transport and replies
 ```
 
@@ -38,7 +44,9 @@ The same `AIAgent` is exposed through both hosted protocols:
 - **Responses 2.0** exposes the standard OpenAI-compatible Responses endpoint
   for direct agent callers.
 
-Both handlers use the same model instructions and Toolbox MCP tools. Teams
+Both handlers use the same model instructions and Toolbox MCP tools. The C#
+agent also uses the Agent Framework MCP skills provider so Toolbox skills and
+their packaged resources are advertised and loaded progressively. Teams
 conversation state remains in Cosmos, while Responses conversations use the
 Foundry Responses session semantics.
 
@@ -77,13 +85,17 @@ azd performs the following additional steps:
 2. Creates a Premium ACR with a private endpoint, grants the project identity
    `AcrPull`, creates the project `ContainerRegistry` connection, and allows
    the deploying machine's detected `MY_IP` to push images.
-3. Creates the public Microsoft Learn MCP project connection and Toolbox.
-4. Deploys the Toolbox and the self-contained Docker C# Teams agent.
+3. Creates the public Microsoft Learn MCP project connection and uploads the
+   versioned PowerPoint skill with its packaged template.
+4. Deploys the Toolbox with Microsoft Learn MCP, Web Search, Code Interpreter,
+   and the PowerPoint skill, then deploys the self-contained Docker C# Teams
+   agent.
 5. Deploys `teams-hosted-runtime.bicep` with the generated gateway identity and
    version. This template owns the APIM API, backend, policy, named values,
    diagnostics, APIM Foundry RBAC, Cosmos data-plane RBAC, Azure Bot, and Teams
    channel.
-6. Configures APIM to create a Foundry session lazily and cache it for one hour.
+6. Configures APIM to create a Foundry session lazily, cache it for one hour,
+   and retry once with a replacement if the cached session becomes inaccessible.
 7. Writes
    `teams-app/build/teams-hosted-agent/appPackage.zip`.
 
@@ -91,16 +103,25 @@ Sideload that package in Teams to test the agent.
 
 ## Important authentication boundaries
 
-Three separate tokens are expected:
+Four authentication boundaries are expected:
 
 1. Azure Bot sends a Bot Framework JWT to APIM.
 2. APIM uses its managed identity to invoke Foundry.
-3. The hosted C# agent uses its hosted instance identity for its own implicit
-   Foundry runtime access, Toolbox calls, and the Bot Connector.
+3. APIM sends the verified Teams user's Entra object ID to Foundry as
+   `x-ms-user-identity`. Foundry converts it into trusted protocol
+   `x-agent-user-id` and `x-agent-foundry-call-id` context.
+4. The hosted C# agent uses its hosted instance identity for its own implicit
+   Foundry runtime access, Toolbox calls, and the Bot Connector. Its Foundry
+   clients forward the call ID so Toolbox can resolve the current user.
 
 APIM preserves the first token in `x-client-bot-authorization`; the C# handler
 restores it only for the Bot Framework adapter. Do not reuse that token for
 Foundry or outbound Connector calls.
+
+APIM receives a custom role containing
+`Microsoft.CognitiveServices/accounts/AIServices/agents/endpoints/UserIdentityImpersonation/action`.
+The role permits only the user-identity delegation required by
+`x-ms-user-identity`; it does not grant general Foundry access.
 
 ## Configuration
 
@@ -108,11 +129,9 @@ Foundry or outbound Connector calls.
 |---|---|---|
 | `CHAT_MODEL` | First discovered deployment | Model used through the AI Gateway connection |
 | `TEAMS_APP_DISPLAY_NAME` | `Teams Hosted Agent` | Generated Teams app name |
-| `TEAMS_APP_SCOPE` | `personal` | `personal`, `shared`, or `tenant` package scope |
-| `TEAMS_SSO_CONNECTION_NAME` | `foundry-sso` | Bot OAuth connection used by SSO commands |
 
 The sample creates one Teams-facing hosted agent. To add another, declare
-another Activity/Invocations/Responses service and extend the runtime Bicep agent maps.
+another Invocations/Responses service and extend the runtime Bicep agent maps.
 Each Teams-facing hosted agent owns its model and tools and needs its own
 azd-created Bot identity, version map entry, APIM path, and manifest.
 
@@ -123,5 +142,27 @@ The hook saves these values in the azd environment:
 - `HOSTED_TEAMS_BOT_NAME`
 - `HOSTED_TEAMS_BOT_APP_ID`
 - `HOSTED_TEAMS_MESSAGING_ENDPOINT`
+- `HOSTED_TEAMS_SESSION_ADMIN_ENDPOINT`
+- `HOSTED_TEAMS_SESSION_ADMIN_SUBSCRIPTION`
 
 Generated packages and staged hosted-agent sources are ignored by git.
+
+When Code Interpreter cites a generated `.pptx`, `.pdf`, `.png`, or JPEG file,
+the Teams agent downloads it through the Foundry container-file API using the
+current protocol call ID. The adapter rejects path traversal, unsupported
+types, invalid signatures, files larger than 20 MiB, and more than five files
+per run.
+
+In a personal Teams chat, the bot caches the validated bytes temporarily and
+sends a native `FileConsentCard`. On acceptance, it uploads the bytes to the
+preauthenticated Teams upload session with the required `Content-Range`, then
+sends a `FileInfoCard` referencing the uploaded OneDrive or SharePoint item.
+Consent tokens expire after 30 minutes and are bound to the trusted Foundry
+user ID and Teams conversation ID. Group chats and channels do not support
+this native file-consent flow.
+
+The session administration endpoint is protected by its dedicated APIM
+subscription. `GET` returns the session cached for the active agent version;
+`DELETE` removes it so the next Teams activity creates a replacement. The
+postdeploy hook calls `DELETE` as a best-effort cache cleanup and continues if
+the operation is unavailable.

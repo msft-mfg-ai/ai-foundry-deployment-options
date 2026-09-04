@@ -38,6 +38,8 @@ param gatewayCosmosRoleAssignmentName string = ''
 
 var apiId = 'teams-hosted-agents'
 var backendId = 'teams-hosted-agent-invocations'
+var sessionAdminApiId = 'teams-hosted-agent-sessions'
+var sessionAdminSubscriptionName = 'teams-hosted-agent-sessions'
 var foundryUserRoleId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   '53ca6127-db72-4b80-b1b0-d745d6d5456d'
@@ -182,6 +184,85 @@ resource messagesPolicy 'Microsoft.ApiManagement/service/apis/operations/policie
   ]
 }
 
+resource sessionAdminApi 'Microsoft.ApiManagement/service/apis@2024-06-01-preview' = {
+  parent: apim
+  name: sessionAdminApiId
+  properties: {
+    apiType: 'http'
+    displayName: 'Teams hosted-agent session administration'
+    description: 'Subscription-protected access to inspect or remove a version-bound hosted session.'
+    path: 'teams-admin'
+    protocols: [
+      'https'
+    ]
+    subscriptionRequired: true
+    type: 'http'
+  }
+}
+
+resource getSessionOperation 'Microsoft.ApiManagement/service/apis/operations@2024-06-01-preview' = {
+  parent: sessionAdminApi
+  name: 'get-session'
+  properties: {
+    displayName: 'Get current hosted session'
+    method: 'GET'
+    urlTemplate: '/{agent-name}/sessions/current'
+    templateParameters: [
+      {
+        name: 'agent-name'
+        type: 'string'
+        required: true
+        values: []
+      }
+    ]
+    responses: []
+  }
+}
+
+resource deleteSessionOperation 'Microsoft.ApiManagement/service/apis/operations@2024-06-01-preview' = {
+  parent: sessionAdminApi
+  name: 'delete-session'
+  properties: {
+    displayName: 'Delete current hosted session'
+    method: 'DELETE'
+    urlTemplate: '/{agent-name}/sessions/current'
+    templateParameters: [
+      {
+        name: 'agent-name'
+        type: 'string'
+        required: true
+        values: []
+      }
+    ]
+    responses: []
+  }
+}
+
+resource sessionAdminPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-06-01-preview' = {
+  parent: sessionAdminApi
+  name: 'policy'
+  properties: {
+    format: 'rawxml'
+    value: loadTextContent('apim/session-admin-policy.xml')
+  }
+  dependsOn: [
+    agentVersions
+  ]
+}
+
+resource sessionAdminSubscription 'Microsoft.ApiManagement/service/subscriptions@2024-06-01-preview' = {
+  parent: apim
+  name: sessionAdminSubscriptionName
+  properties: {
+    displayName: 'Teams hosted-agent session administration'
+    scope: '/apis/${sessionAdminApiId}'
+    state: 'active'
+  }
+  dependsOn: [
+    sessionAdminApi
+  ]
+}
+
 resource apiDiagnostics 'Microsoft.ApiManagement/service/apis/diagnostics@2022-08-01' = {
   parent: api
   name: 'applicationinsights'
@@ -268,6 +349,16 @@ resource apimAgentConsumer 'Microsoft.Authorization/roleAssignments@2022-04-01' 
   }
 }
 
+resource hostedAgentFoundryUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: foundryProject
+  name: guid(agentPrincipalId, foundryUserRoleId, foundryProject.id)
+  properties: {
+    principalId: agentPrincipalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: foundryUserRoleId
+  }
+}
+
 var cosmosDataContributorRoleId = resourceId(
   'Microsoft.DocumentDB/databaseAccounts/sqlRoleDefinitions',
   cosmosAccountName,
@@ -291,3 +382,5 @@ output backendResourceId string = backend.id
 output botName string = teamsBot.outputs.botName
 output botAppId string = botAppId
 output messagingEndpoint string = messagingEndpoint
+output sessionAdminEndpoint string = '${apim.properties.gatewayUrl}/teams-admin/${agentName}/sessions/current'
+output sessionAdminSubscriptionResourceName string = sessionAdminSubscription.name
