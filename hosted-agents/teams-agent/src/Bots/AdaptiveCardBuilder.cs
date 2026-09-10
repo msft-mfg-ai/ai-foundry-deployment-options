@@ -107,6 +107,46 @@ public static class AdaptiveCardBuilder
         return AsAttachment(new AdaptiveCard(Schema) { Body = body });
     }
 
+    public static Attachment BuildOAuthConsentCard(
+        string toolboxName,
+        string consentUrl)
+    {
+        var card = new AdaptiveCard(Schema)
+        {
+            Body =
+            {
+                Header("Sign-in required"),
+                new AdaptiveTextBlock
+                {
+                    Text =
+                        $"Foundry needs your permission before `{toolboxName}` can be used. Open the sign-in page, complete authentication, then return here.",
+                    Wrap = true,
+                },
+            },
+            Actions =
+            {
+                new AdaptiveOpenUrlAction
+                {
+                    Title = "Open sign-in page",
+                    Url = new Uri(consentUrl),
+                },
+                new AdaptiveSubmitAction
+                {
+                    Title = "I've signed in",
+                    Data = new { action = "oauth_consent_continue" },
+                    Style = "positive",
+                },
+                new AdaptiveSubmitAction
+                {
+                    Title = "Cancel",
+                    Data = new { action = "oauth_consent_cancel" },
+                },
+            },
+        };
+
+        return AsAttachment(card);
+    }
+
     private static AdaptiveTextBlock Header(string text) => new()
     {
         Text = text,

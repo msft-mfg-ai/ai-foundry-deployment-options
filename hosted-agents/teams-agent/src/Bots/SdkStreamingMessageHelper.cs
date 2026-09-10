@@ -6,18 +6,15 @@ namespace AgentChat.Bots;
 
 public sealed class SdkStreamingMessageHelper
 {
-    private static readonly string[] HeartbeatStatuses =
-    [
-        "Thinking...",
-        "Working with the configured tools...",
-        "Preparing the response...",
-    ];
-
     private readonly ITurnContext _turnContext;
     private readonly bool _streamingEnabled;
     private readonly StringBuilder _buffer = new();
+    private readonly SemaphoreSlim _informativeUpdateLock = new(1, 1);
     private CancellationTokenSource? _heartbeatCancellation;
     private Task? _heartbeatTask;
+    private string _currentStatus = "Thinking...";
+    private string? _lastReportedStatus;
+    private bool _informativeUpdatesFailed;
     private bool _textStarted;
 
     public SdkStreamingMessageHelper(ITurnContext turnContext)
@@ -56,6 +53,30 @@ public sealed class SdkStreamingMessageHelper
         _heartbeatTask = HeartbeatAsync(_heartbeatCancellation.Token);
     }
 
+    public async Task ReportProgressAsync(
+        string status,
+        CancellationToken cancellationToken)
+    {
+        if (!_streamingEnabled
+            || _textStarted
+            || _informativeUpdatesFailed
+            || string.IsNullOrWhiteSpace(status)
+            || string.Equals(
+                status,
+                _currentStatus,
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _currentStatus = status;
+        await TryQueueInformativeUpdateAsync(
+            status,
+            suppressDuplicate: true,
+            waitForLock: false,
+            cancellationToken);
+    }
+
     public async Task FinalizeAsync(CancellationToken cancellationToken)
     {
         await StopHeartbeatAsync();
@@ -78,13 +99,14 @@ public sealed class SdkStreamingMessageHelper
 
     private async Task HeartbeatAsync(CancellationToken cancellationToken)
     {
-        var index = 0;
         while (!cancellationToken.IsCancellationRequested && !_textStarted)
         {
             try
             {
-                await _turnContext.StreamingResponse.QueueInformativeUpdateAsync(
-                    HeartbeatStatuses[index++ % HeartbeatStatuses.Length],
+                await TryQueueInformativeUpdateAsync(
+                    _currentStatus,
+                    suppressDuplicate: false,
+                    waitForLock: true,
                     cancellationToken);
                 await Task.Delay(TimeSpan.FromSeconds(4), cancellationToken);
             }
@@ -96,6 +118,59 @@ public sealed class SdkStreamingMessageHelper
             {
                 return;
             }
+        }
+    }
+
+    private async Task TryQueueInformativeUpdateAsync(
+        string status,
+        bool suppressDuplicate,
+        bool waitForLock,
+        CancellationToken cancellationToken)
+    {
+        var lockAcquired = waitForLock
+            ? await _informativeUpdateLock.WaitAsync(
+                Timeout.InfiniteTimeSpan,
+                cancellationToken)
+            : await _informativeUpdateLock.WaitAsync(
+                TimeSpan.Zero,
+                cancellationToken);
+        if (!lockAcquired)
+        {
+            return;
+        }
+
+        try
+        {
+            if (_textStarted
+                || (suppressDuplicate
+                    && string.Equals(
+                        status,
+                        _lastReportedStatus,
+                        StringComparison.Ordinal)))
+            {
+                return;
+            }
+
+            try
+            {
+                await _turnContext.StreamingResponse.QueueInformativeUpdateAsync(
+                    status,
+                    cancellationToken);
+                _lastReportedStatus = status;
+            }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                _informativeUpdatesFailed = true;
+            }
+        }
+        finally
+        {
+            _informativeUpdateLock.Release();
         }
     }
 

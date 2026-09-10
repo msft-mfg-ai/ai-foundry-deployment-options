@@ -22,6 +22,9 @@ param acceptedTenantIds string[] = []
 @description('Public IPv4 or CIDR allowed to push Docker images to ACR. The preprovision hook sets this to the current machine IP when unset.')
 param myIpAddress string = ''
 
+@description('Resource ID of the private App Service hosting Cloud Helper MCP. Leave empty to disable Cloud Helper.')
+param cloudHelperMcpResourceId string = ''
+
 var tags = {
   'created-by': 'option-foundry-teams-hosted'
   'hidden-title': 'Foundry hosted agent for Microsoft Teams'
@@ -31,6 +34,7 @@ var tags = {
 var valid_config = empty(foundryInstances)
   ? fail('No Foundry instances configured. Set EXISTING_FOUNDRY_RESOURCE_IDS (or OPENAI_RESOURCE_ID) and run the `preprovision-list-foundry-models` hook so FOUNDRY_INSTANCES_JSON is populated.')
   : true
+var cloudHelperEnabled = !empty(cloudHelperMcpResourceId)
 
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
 var foundryName = 'ai-foundry-${resourceToken}'
@@ -273,6 +277,40 @@ resource acrConnections 'Microsoft.CognitiveServices/accounts/projects/connectio
     ]
   }
 ]
+
+module cloudHelperDnsZone 'br/public:avm/res/network/private-dns-zone:0.8.1' = if (cloudHelperEnabled) {
+  name: 'cloud-helper-private-dns-zone'
+  params: {
+    tags: tags
+    name: 'privatelink.azurewebsites.net'
+    location: 'global'
+    virtualNetworkLinks: [
+      {
+        virtualNetworkResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
+      }
+    ]
+  }
+}
+
+module cloudHelperPrivateEndpoint '../modules/networking/private-endpoint.bicep' = if (cloudHelperEnabled) {
+  name: 'cloud-helper-private-endpoint'
+  params: {
+    tags: tags
+    location: location
+    privateEndpointName: 'pe-cloud-helper-${resourceToken}'
+    subnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+    targetResourceId: cloudHelperMcpResourceId
+    groupIds: [
+      'sites'
+    ]
+    zoneConfigs: [
+      {
+        name: 'sites'
+        privateDnsZoneId: cloudHelperDnsZone!.outputs.resourceId
+      }
+    ]
+  }
+}
 
 var connectionPerProject = !empty(projectNames)
 var subscriptions subscriptionType[] = connectionPerProject

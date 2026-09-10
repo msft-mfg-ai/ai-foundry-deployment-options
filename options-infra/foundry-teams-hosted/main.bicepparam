@@ -18,3 +18,4 @@ var acceptedTenantIdsValue = readEnvironmentVariable('ACCEPTED_TENANT_IDS', '')
 param acceptedTenantIds = empty(acceptedTenantIdsValue) ? null : map(split(acceptedTenantIdsValue, ','), t => trim(t))
 
 param myIpAddress = readEnvironmentVariable('MY_IP', '')
+param cloudHelperMcpResourceId = readEnvironmentVariable('CLOUD_HELPER_MCP_RESOURCE_ID', '')

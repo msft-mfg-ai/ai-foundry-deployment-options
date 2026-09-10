@@ -3,9 +3,10 @@
 requiredVersions:
   extensions:
     azure.ai.agents: ">=1.0.0-beta.13"
-    azure.ai.connections: ">=1.0.0-beta.4"
-    azure.ai.skills: ">=1.0.0-beta.4"
-    azure.ai.toolboxes: ">=1.0.0-beta.5"
+    azure.ai.connections: ">=1.0.0-beta.6"
+    azure.ai.projects: ">=1.0.0-beta.9"
+    azure.ai.skills: ">=1.0.0-beta.5"
+    azure.ai.toolboxes: ">=1.0.0-beta.6"
 
 name: foundry-teams-hosted
 
@@ -22,8 +23,10 @@ services:
     uses:
       - teams-project
       - teams-tools
+      - teams-user-tools
     toolboxes:
       - teams-tools
+      - teams-user-tools
     kind: hosted
     name: teams-hosted-agent
     displayName: Teams Hosted Agent
@@ -51,6 +54,10 @@ services:
         value: teams-tools
       - name: DirectAgent__ToolboxEndpoint
         value: ${TOOLBOX_TEAMS_TOOLS_MCP_ENDPOINT}
+      - name: DirectAgent__UserToolboxName
+        value: teams-user-tools
+      - name: DirectAgent__UserToolboxEndpoint
+        value: ${TOOLBOX_TEAMS_USER_TOOLS_MCP_ENDPOINT}
       - name: Cosmos__Endpoint
         value: ${COSMOS_ENDPOINT}
       - name: Cosmos__Database
@@ -59,6 +66,12 @@ services:
         value: ${COSMOS_CONTAINER}
       - name: MicrosoftAppTenantId
         value: ${AZURE_TENANT_ID}
+      - name: TeamsSso__ConnectionName
+        value: teams-sso
+      - name: TeamsSso__AppId
+        value: ${SSO_APP_ID}
+      - name: TeamsSso__ClientSecret
+        value: ${SSO_APP_SECRET}
       - name: JwtValidation__Enabled
         value: "false"
     protocols:
@@ -181,6 +194,16 @@ services:
           interactive: false
           continueOnError: false
 
+  teams-user-tools:
+    host: azure.ai.toolbox
+    uses:
+      - teams-project
+    description: Per-invocation Toolbox for tools that require the delegated Foundry user context.
+    tools:
+      - type: mcp
+        project_connection_id: cloud-helper
+        server_label: cloud-helper
+
   powerpoint:
     host: azure.ai.skill
     project: .hosted-agent-build/powerpoint-skill
@@ -214,6 +237,10 @@ hooks:
     windows:
       shell: pwsh
       run: |
+        $env:SSO_DOWNSTREAM_CLIENT_ID = $env:CLOUD_HELPER_MCP_CLIENT_ID
+        $env:SSO_DOWNSTREAM_SCOPE = $env:CLOUD_HELPER_MCP_SCOPE
+        & '../scripts/preprovision-sso-app.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         & '../scripts/preprovision-list-foundry-models.ps1'
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         if (-not $env:CHAT_MODEL) {
@@ -237,6 +264,9 @@ hooks:
       shell: sh
       run: |
         set -eu
+        SSO_DOWNSTREAM_CLIENT_ID="${CLOUD_HELPER_MCP_CLIENT_ID:-}" \
+          SSO_DOWNSTREAM_SCOPE="${CLOUD_HELPER_MCP_SCOPE:-}" \
+          sh ../scripts/preprovision-sso-app.sh
         sh ../scripts/preprovision-select-foundry-instances.sh
         sh ../scripts/preprovision-list-foundry-models.sh
         if [ -z "${CHAT_MODEL:-}" ]; then

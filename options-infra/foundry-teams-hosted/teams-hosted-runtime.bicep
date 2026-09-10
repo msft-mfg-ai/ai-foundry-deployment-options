@@ -36,6 +36,22 @@ param apimAgentConsumerRoleAssignmentName string = ''
 @description('Existing gateway Cosmos SQL role assignment name, when migrating an existing environment.')
 param gatewayCosmosRoleAssignmentName string = ''
 
+@description('Azure Bot OAuth connection name used for Teams SSO.')
+param teamsSsoConnectionName string = ''
+
+@description('Client ID of the Entra application used by the Teams SSO OAuth connection.')
+param teamsSsoClientId string = ''
+
+@secure()
+@description('Client secret of the Entra application used by the Teams SSO OAuth connection.')
+param teamsSsoClientSecret string = ''
+
+@description('Space-delimited delegated scopes requested by the Teams SSO OAuth connection.')
+param teamsSsoScopes string = ''
+
+@description('Application ID URI used for Teams token exchange, for example api://botid-<app-id>.')
+param teamsSsoTokenExchangeUrl string = ''
+
 var apiId = 'teams-hosted-agents'
 var backendId = 'teams-hosted-agent-invocations'
 var sessionAdminApiId = 'teams-hosted-agent-sessions'
@@ -47,6 +63,10 @@ var foundryUserRoleId = subscriptionResourceId(
 var foundryAgentConsumerRoleId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   'eed3b665-ab3a-47b6-8f48-c9382fb1dad6'
+)
+var foundryUserIdentityImpersonationRoleId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  guid(subscription().id, 'Foundry Agent User Identity Impersonation')
 )
 var projectParts = split(foundryProjectId, '/')
 var foundryAccountName = projectParts[8]
@@ -92,6 +112,11 @@ module teamsBot '../modules/bot/bot-service.bicep' = {
     enableTeamsChannel: true
     enableDirectLineChannel: false
     disableLocalAuth: true
+    ssoConnectionName: teamsSsoConnectionName
+    ssoClientId: teamsSsoClientId
+    ssoClientSecret: teamsSsoClientSecret
+    ssoScopes: teamsSsoScopes
+    ssoTokenExchangeUrl: teamsSsoTokenExchangeUrl
   }
 }
 
@@ -356,6 +381,16 @@ resource hostedAgentFoundryUser 'Microsoft.Authorization/roleAssignments@2022-04
     principalId: agentPrincipalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: foundryUserRoleId
+  }
+}
+
+resource hostedAgentUserIdentityImpersonation 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: foundryProject
+  name: guid(agentPrincipalId, foundryUserIdentityImpersonationRoleId, foundryProject.id)
+  properties: {
+    principalId: agentPrincipalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: foundryUserIdentityImpersonationRoleId
   }
 }
 

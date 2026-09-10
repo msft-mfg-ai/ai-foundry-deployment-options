@@ -3,6 +3,8 @@ using AgentChat.Bots;
 using AgentChat.Hosted;
 using AgentChat.Services;
 using Azure.AI.AgentServer.Invocations;
+using Azure.Core;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Agents.Authentication;
@@ -25,8 +27,19 @@ if (!string.IsNullOrWhiteSpace(hostedProjectEndpoint))
 var port = Environment.GetEnvironmentVariable("PORT") ?? "8088";
 builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
+var foundryCredential = new DefaultAzureCredential(
+    new DefaultAzureCredentialOptions
+    {
+        ManagedIdentityClientId =
+            builder.Configuration["FOUNDRY_AGENT_INSTANCE_CLIENT_ID"]
+            ?? builder.Configuration["AZURE_CLIENT_ID"],
+        ExcludeInteractiveBrowserCredential = true,
+    });
+builder.Services.AddSingleton<TokenCredential>(foundryCredential);
+
 builder.Configuration["MicrosoftAppId"] ??=
-    builder.Configuration["FOUNDRY_AGENT_INSTANCE_CLIENT_ID"]
+    builder.Configuration["TeamsSso:AppId"]
+    ?? builder.Configuration["FOUNDRY_AGENT_INSTANCE_CLIENT_ID"]
     ?? builder.Configuration["AZURE_CLIENT_ID"];
 builder.Configuration["MicrosoftAppType"] ??= "UserAssignedMSI";
 builder.Configuration["MicrosoftAppTenantId"] ??= builder.Configuration["AZURE_TENANT_ID"];
@@ -53,6 +66,12 @@ builder.Services.AddSingleton<AIAgent>(sp =>
 builder.Services.AddKeyedSingleton<AIAgent>(
     builder.Configuration["DirectAgent:Name"] ?? "teams-hosted-agent",
     (sp, _) => sp.GetRequiredService<AIAgent>());
+var userToolboxName =
+    builder.Configuration["DirectAgent:UserToolboxName"]
+    ?? "teams-user-tools";
+builder.Services.AddFoundryToolboxes(
+    foundryCredential,
+    userToolboxName);
 builder.Services.AddFoundryResponses();
 
 builder.Services.AddSingleton<IStorage>(sp =>
@@ -60,19 +79,10 @@ builder.Services.AddSingleton<IStorage>(sp =>
     var config = sp.GetRequiredService<IConfiguration>();
     var endpoint = config["Cosmos:Endpoint"]
         ?? throw new InvalidOperationException("Cosmos:Endpoint not configured.");
-    var credential = new Azure.Identity.DefaultAzureCredential(
-        new Azure.Identity.DefaultAzureCredentialOptions
-        {
-            ManagedIdentityClientId =
-                config["FOUNDRY_AGENT_INSTANCE_CLIENT_ID"]
-                ?? config["AZURE_CLIENT_ID"],
-            ExcludeInteractiveBrowserCredential = true,
-        });
-
     return new CosmosDbPartitionedStorage(new CosmosDbPartitionedStorageOptions
     {
         CosmosDbEndpoint = endpoint,
-        TokenCredential = credential,
+        TokenCredential = sp.GetRequiredService<TokenCredential>(),
         DatabaseId = config["Cosmos:Database"] ?? "botstate",
         ContainerId = config["Cosmos:Container"] ?? "conversations",
         CompatibilityMode = false,
@@ -82,18 +92,29 @@ builder.Services.AddSingleton<ConversationStore>();
 builder.Services.AddSingleton<GeneratedFileStore>();
 builder.Services.AddSingleton<IHostedService, GeneratedFileCleanupService>();
 builder.Services.AddSingleton<ITeamsFileService, TeamsFileService>();
+builder.Services.AddSingleton<TeamsSsoService>();
+builder.Services.AddSingleton<TeamsSsoToolContext>();
 
 builder.Services.AddDefaultMsalAuth(builder.Configuration);
 builder.Services.AddSingleton<IConnections>(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
-    var clientId =
+    var managedIdentityClientId =
         config["FOUNDRY_AGENT_INSTANCE_CLIENT_ID"]
         ?? config["AZURE_CLIENT_ID"]
         ?? throw new InvalidOperationException(
             "FOUNDRY_AGENT_INSTANCE_CLIENT_ID is required.");
+    var botAppId = config["MicrosoftAppId"]
+        ?? throw new InvalidOperationException(
+            "MicrosoftAppId is required.");
+    var tenantId = config["MicrosoftAppTenantId"]
+        ?? throw new InvalidOperationException(
+            "MicrosoftAppTenantId is required.");
     return new HostedManagedIdentityConnections(
-        clientId,
+        managedIdentityClientId,
+        botAppId,
+        tenantId,
+        config["TeamsSso:ClientSecret"],
         sp.GetRequiredService<ILogger<HostedManagedIdentityConnections>>());
 });
 

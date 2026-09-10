@@ -245,10 +245,16 @@ Cosmos must not store:
 Authenticate the Teams user, make trusted identity attributes available to the
 agent, and enable allowlisted downstream delegated-token acquisition.
 
-This phase is deferred until after the initial Toolbox, skill, Code
-Interpreter, image, and generated-file capability proof. It is not required
-for Toolbox OAuth/OBO: Toolbox receives the Foundry call ID and owns its
-connection-specific consent and token lifecycle.
+**Status:** The diagnostic subset and SSO infrastructure automation are
+implemented. The azd preprovision hook creates the Teams SSO app registration,
+scope, Teams client preauthorizations, downstream delegated permission, and
+Bot OAuth credential. Postdeploy creates a FIC from the hosted instance
+identity to that bot app. The model-callable
+`inspect_teams_sso_token` tool retrieves a cached Bot Service token or starts
+the OAuth-card/token-exchange flow, handles `signin/tokenExchange` and
+`signin/verifyState`, and displays only an allowlist of decoded claims. It
+persists only a pending boolean. Automatic trusted-context injection,
+pending-message replay, deduplication, and `/signout` remain follow-up work.
 
 ### Application changes
 
@@ -333,35 +339,69 @@ Use Foundry Toolbox for a downstream MCP server that requires user consent.
 
 ### Provisioning
 
-Create an OTIS project connection for `cloud-helper` or its replacement. Do
-not reference the Medline project's connection by ID.
+Create an OTIS project connection for `cloud-helper` using `OAuth2`,
+`GenericProtocol`, and `useCustomConnector: false`. Use the Cloud Helper public
+client ID, tenant-specific v2 authorization/token endpoints, the delegated MCP
+scope, and `offline_access`. Register the exact
+`https://global.consent.azure-apim.net/redirect/...` URI returned by Foundry as
+a Web redirect URI on the Cloud Helper application. Do not reference the
+Medline project's connection by ID and do not add a client secret.
 
-Extend `teams-tools` to include:
+**Blocked:** The current Foundry ARM provisioning path routes this payload
+through Connector Gateway `DirectInvoke` and rejects it for lacking an OpenAPI
+v3 definition even when `useCustomConnector` is explicitly false. The failing
+automated hook has been removed so `azd up` remains usable. Keep the existing
+project connection or provision it manually until the service regression in
+`OAUTH-CONNECTION-ICM-README.md` is resolved.
+
+Keep `teams-tools` limited to tools that can be enumerated without an end-user
+context:
 
 - Microsoft Learn MCP;
-- the Entra-passthrough MCP connection.
+- Web Search;
+- Code Interpreter;
+- the PowerPoint skill.
 
-Foundry consent should remain the authority for the Toolbox connection. Teams
-SSO authenticates the user to the Teams bot; Foundry Toolbox consent
-authorizes the downstream MCP resource. These are separate workflows.
-The initial capability proof may use the trusted Teams `aadObjectId` delegated
-by APIM before the broader Teams SSO user experience is implemented.
+Publish the OAuth MCP connection in a separate `teams-user-tools` Toolbox.
+The Agent Framework hosting SDK treats a consent-gated `tools/list` as
+`ConsentRequired`, keeps readiness healthy, retries enumeration in the user
+request context, and emits the Foundry OAuth consent response instead of
+failing startup.
+
+Foundry must select the cached OAuth credential for the protocol user derived
+from the trusted Teams `aadObjectId`. Foundry, not the hosted agent or bot,
+stores and refreshes that credential.
 
 ### Runtime behavior
 
-The shared Toolbox client authenticates to Foundry with the hosted agent
-identity. `FoundryCallIdHandler` propagates the current protocol call ID on
-every request, and Toolbox resolves the user and performs OAuth/OBO from the
-project connection.
+The startup Toolbox client authenticates to Foundry with the hosted agent
+identity and contains no user-gated tools. For Responses 2.0, register
+`teams-user-tools` with `AddFoundryToolboxes`; the hosting SDK retries deferred
+enumeration under the current call context and converts both enumeration-time
+and tool-call consent into Foundry consent output.
+
+For Teams Invocations 2.0, create a short-lived `teams-user-tools` client and
+run `tools/list` before model execution. If Foundry returns
+`CONSENT_REQUIRED`, stop before any tool can run, persist only the original
+prompt, and send a Teams Adaptive Card with **Open sign-in page**, **I've
+signed in**, and **Cancel**. On continuation, clear the pending marker before
+retrying the original prompt. Foundry then resolves the same protocol user and
+uses its stored credential. A non-consent Toolbox error fails the turn rather
+than silently removing Cloud Helper.
+
+Assign the custom Foundry user-identity impersonation role to both APIM, which
+establishes the protocol user, and the hosted agent instance identity, which
+calls Toolbox for delegated tools.
 
 Do not add a user-token cache or pass a user bearer token into
 `DirectHostedAgent`.
 
 Handle:
 
-- consent-required responses;
-- consent continuation;
-- expired or revoked Toolbox credentials;
+- malformed or missing consent links;
+- stale and canceled consent cards;
+- repeated consent when the user has not completed sign-in;
+- expired or revoked user credentials;
 - safe Toolbox initialization failure;
 - normal error reporting after a tool execution has started.
 
@@ -385,8 +425,8 @@ Remove the generic retry behavior from `DirectHostedAgent`:
 
 - User A's `whoami` result identifies User A.
 - User B's `whoami` result identifies User B.
-- User A's consent does not authorize User B.
-- Revoking consent causes a new consent request.
+- User A's token is never reused for User B.
+- Revoking user access causes the downstream call to fail closed.
 - Initialization can reconnect without executing a tool.
 - A `401` or `invalid_token` during tool execution is surfaced without replay.
 - A request is not replayed automatically after a tool may have executed.
@@ -522,7 +562,18 @@ Create an adapter that:
 - Code Interpreter installs or imports the required Python packages.
 - The agent uses the OTIS template.
 - The resulting `.pptx` opens successfully.
-- A rendered preview has no obvious overflow or missing content.
+- The agent creates a storyboard and selects layouts from each slide's content
+  shape before building the deck.
+- Card grids are not used as the default composition for unrelated content.
+- The deck is rendered through a real presentation renderer and inspected at
+  full resolution.
+- At least one concrete visual issue is repaired and the affected slide is
+  rendered again before delivery.
+- The final rendered preview has no obvious overflow, collisions, missing
+  content, placeholder text, or distorted imagery.
+- Teams shows concise, deduplicated progress for skill loading, research,
+  visual preparation, presentation construction, rendering, and file
+  preparation without exposing tool arguments or internal identifiers.
 - The file is captured and downloaded as a real generated artifact.
 - Another user in the same hosted session cannot download the artifact.
 - The model cannot choose an arbitrary local template path.

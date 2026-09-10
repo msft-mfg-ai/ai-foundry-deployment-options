@@ -5,7 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>AgentChat</RootNamespace>
-    <Version>0.9.13</Version>
+    <Version>0.9.25</Version>
     <NoWarn>$(NoWarn);OPENAI001;MEAI001;MAAI001</NoWarn>
     <UserSecretsId>8a57129c-85e4-456e-9f62-2442aad32909</UserSecretsId>
   </PropertyGroup>

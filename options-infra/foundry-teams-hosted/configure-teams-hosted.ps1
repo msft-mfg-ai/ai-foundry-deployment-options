@@ -22,12 +22,20 @@ foreach ($name in $required) {
 
 $agent = azd ai agent show $agentName --output json | ConvertFrom-Json
 $agentVersion = $agent.version
-$botAppId = $agent.instance_identity.client_id
+$hostedIdentityClientId = $agent.instance_identity.client_id
 $agentPrincipalId = $agent.instance_identity.principal_id
-if (-not $agentVersion -or -not $botAppId -or -not $agentPrincipalId) {
+$ssoAppId = $env:SSO_APP_ID
+$ssoAppSecret = $env:SSO_APP_SECRET
+$ssoAppResource = $env:SSO_APP_RESOURCE
+$ssoScopes = $env:SSO_SCOPES
+if (-not $agentVersion -or -not $hostedIdentityClientId -or -not $agentPrincipalId) {
   throw "azd did not return version and instance identity metadata for $agentName."
 }
+if (-not $ssoAppId -or -not $ssoAppSecret -or -not $ssoAppResource -or -not $ssoScopes) {
+  throw 'SSO_APP_ID, SSO_APP_SECRET, SSO_APP_RESOURCE, and SSO_SCOPES are required.'
+}
 
+$botAppId = $ssoAppId
 $botIdentitySuffix = $botAppId.Replace('-', '').Substring(0, 8)
 $botName = "$agentName-bot-$botIdentitySuffix"
 $messagingEndpoint = "$($env:APIM_GATEWAY_URL.TrimEnd('/'))/teams/$agentName/api/messages"
@@ -71,6 +79,11 @@ az deployment group create `
     apimFoundryUserRoleAssignmentName=$apimFoundryUserAssignment `
     apimAgentConsumerRoleAssignmentName=$apimAgentConsumerAssignment `
     gatewayCosmosRoleAssignmentName=$gatewayCosmosAssignment `
+    teamsSsoConnectionName=teams-sso `
+    teamsSsoClientId=$ssoAppId `
+    teamsSsoClientSecret=$ssoAppSecret `
+    teamsSsoScopes=$ssoScopes `
+    teamsSsoTokenExchangeUrl=$ssoAppResource `
   --output none
 
 $sessionAdminEndpoint = "$($env:APIM_GATEWAY_URL.TrimEnd('/'))/teams-admin/$agentName/sessions/current"
@@ -99,11 +112,21 @@ $outputDir = "teams-app/build/$agentName"
 $packageDir = Join-Path $outputDir 'package'
 New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
 $displayName = if ($env:TEAMS_APP_DISPLAY_NAME) { $env:TEAMS_APP_DISPLAY_NAME } else { 'Teams Hosted Agent' }
+$ssoResource = $ssoAppResource
 $manifest = Get-Content 'teams-app/manifest.template.json' -Raw | ConvertFrom-Json
 $manifest.id = $botAppId
 $manifest.name.short = $displayName
 $manifest.name.full = $displayName
 $manifest.bots[0].botId = $botAppId
+if ($ssoAppId -and $ssoResource) {
+  $manifest | Add-Member `
+    -NotePropertyName webApplicationInfo `
+    -NotePropertyValue @{
+      id = $ssoAppId
+      resource = $ssoResource
+    } `
+    -Force
+}
 $manifest | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $packageDir 'manifest.json') -Encoding utf8
 Copy-Item '.hosted-agent-build/teams-agent/src/wwwroot/color.png' (Join-Path $packageDir 'color.png') -Force
 Copy-Item '.hosted-agent-build/teams-agent/src/wwwroot/outline.png' (Join-Path $packageDir 'outline.png') -Force

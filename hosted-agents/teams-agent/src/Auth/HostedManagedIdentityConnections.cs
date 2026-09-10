@@ -9,21 +9,37 @@ namespace AgentChat.Auth;
 
 /// <summary>
 /// Single-bot connection used inside a Foundry hosted Activity agent.
-/// The hosted instance identity is also the Azure Bot identity, so it can
-/// acquire Bot Connector tokens directly without the proxy deployment's FIC
-/// exchange and multi-bot route registry.
+/// Uses the hosted instance identity directly when it is also the Azure Bot
+/// identity. A dedicated Teams SSO app uses confidential-client credentials
+/// because Entra rejects nested federation from Foundry ServiceIdentity.
 /// </summary>
 public sealed class HostedManagedIdentityConnections : IConnections
 {
-    private readonly HostedManagedIdentityTokenProvider _provider;
+    private readonly IAccessTokenProvider _provider;
     private readonly ILogger<HostedManagedIdentityConnections> _logger;
 
     public HostedManagedIdentityConnections(
-        string clientId,
+        string managedIdentityClientId,
+        string botAppId,
+        string tenantId,
+        string? botClientSecret,
         ILogger<HostedManagedIdentityConnections> logger)
     {
         _logger = logger;
-        _provider = new HostedManagedIdentityTokenProvider(clientId, logger);
+        _provider = string.Equals(
+                managedIdentityClientId,
+                botAppId,
+                StringComparison.OrdinalIgnoreCase)
+            ? new HostedManagedIdentityTokenProvider(
+                managedIdentityClientId,
+                logger)
+            : new HostedClientSecretTokenProvider(
+                botAppId,
+                tenantId,
+                botClientSecret
+                    ?? throw new InvalidOperationException(
+                        "TeamsSso:ClientSecret is required when the bot app differs from the hosted identity."),
+                logger);
     }
 
     public IAccessTokenProvider GetConnection(string name)
@@ -173,5 +189,81 @@ public sealed class HostedManagedIdentityConnections : IConnections
         }
 
         private sealed class HostedConnectionSettings : ConnectionSettingsBase;
+    }
+
+    private sealed class HostedClientSecretTokenProvider :
+        IAccessTokenProvider
+    {
+        private const string BotConnectorScope =
+            "https://api.botframework.com/.default";
+        private readonly TokenCredential _credential;
+        private readonly ILogger _logger;
+        private readonly ImmutableConnectionSettings _settings;
+
+        public HostedClientSecretTokenProvider(
+            string botAppId,
+            string tenantId,
+            string botClientSecret,
+            ILogger logger)
+        {
+            _logger = logger;
+            _credential = new ClientSecretCredential(
+                tenantId,
+                botAppId,
+                botClientSecret);
+            _settings = new ImmutableConnectionSettings(
+                new HostedConnectionSettings
+                {
+                    ClientId = botAppId,
+                    TenantId = tenantId,
+                    Authority =
+                        $"https://login.microsoftonline.com/{tenantId}",
+                    Scopes = [BotConnectorScope],
+                });
+        }
+
+        public ImmutableConnectionSettings ConnectionSettings => _settings;
+
+        public async Task<string> GetAccessTokenAsync(
+            string resourceUrl,
+            IList<string> scopes,
+            bool forceRefresh = false)
+        {
+            var effectiveScope = ResolveScope(resourceUrl, scopes);
+            _logger.LogInformation(
+                "Hosted bot confidential client acquiring scope {Scope}.",
+                effectiveScope);
+            var token = await _credential.GetTokenAsync(
+                new TokenRequestContext([effectiveScope]),
+                CancellationToken.None);
+            return token.Token;
+        }
+
+        public TokenCredential GetTokenCredential()
+            => _credential;
+
+        private static string ResolveScope(
+            string? resourceUrl,
+            IList<string>? scopes)
+        {
+            if (scopes is { Count: > 0 })
+            {
+                return scopes[0];
+            }
+
+            if (!string.IsNullOrWhiteSpace(resourceUrl))
+            {
+                return resourceUrl.EndsWith(
+                        "/.default",
+                        StringComparison.OrdinalIgnoreCase)
+                    ? resourceUrl
+                    : resourceUrl.TrimEnd('/') + "/.default";
+            }
+
+            return BotConnectorScope;
+        }
+
+        private sealed class HostedConnectionSettings :
+            ConnectionSettingsBase;
     }
 }

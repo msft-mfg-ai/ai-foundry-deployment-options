@@ -29,14 +29,23 @@ done
 
 agent_json=$(azd ai agent show "$agent_name" --output json)
 agent_version=$(printf '%s' "$agent_json" | jq -r '.version // empty')
-bot_app_id=$(printf '%s' "$agent_json" | jq -r '.instance_identity.client_id // empty')
+hosted_identity_client_id=$(printf '%s' "$agent_json" | jq -r '.instance_identity.client_id // empty')
 agent_principal_id=$(printf '%s' "$agent_json" | jq -r '.instance_identity.principal_id // empty')
+sso_app_id="${SSO_APP_ID:-}"
+sso_app_secret="${SSO_APP_SECRET:-}"
+sso_app_resource="${SSO_APP_RESOURCE:-}"
+sso_scopes="${SSO_SCOPES:-}"
 
-if [ -z "$agent_version" ] || [ -z "$bot_app_id" ] || [ -z "$agent_principal_id" ]; then
+if [ -z "$agent_version" ] || [ -z "$hosted_identity_client_id" ] || [ -z "$agent_principal_id" ]; then
   echo "azd did not return version and instance identity metadata for $agent_name." >&2
   exit 1
 fi
+if [ -z "$sso_app_id" ] || [ -z "$sso_app_secret" ] || [ -z "$sso_app_resource" ] || [ -z "$sso_scopes" ]; then
+  echo "SSO_APP_ID, SSO_APP_SECRET, SSO_APP_RESOURCE, and SSO_SCOPES are required." >&2
+  exit 1
+fi
 
+bot_app_id="$sso_app_id"
 bot_identity_suffix=$(printf '%s' "$bot_app_id" | tr -d '-' | cut -c1-8)
 bot_name="${agent_name}-bot-${bot_identity_suffix}"
 messaging_endpoint="${APIM_GATEWAY_URL%/}/teams/${agent_name}/api/messages"
@@ -77,6 +86,11 @@ az deployment group create \
     apimFoundryUserRoleAssignmentName="$apim_foundry_user_assignment" \
     apimAgentConsumerRoleAssignmentName="$apim_agent_consumer_assignment" \
     gatewayCosmosRoleAssignmentName="$gateway_cosmos_assignment" \
+    teamsSsoConnectionName="teams-sso" \
+    teamsSsoClientId="$sso_app_id" \
+    teamsSsoClientSecret="$sso_app_secret" \
+    teamsSsoScopes="$sso_scopes" \
+    teamsSsoTokenExchangeUrl="$sso_app_resource" \
   --output none
 
 session_admin_endpoint="${APIM_GATEWAY_URL%/}/teams-admin/${agent_name}/sessions/current"
@@ -101,15 +115,33 @@ fi
 output_dir="teams-app/build/${agent_name}"
 package_dir="${output_dir}/package"
 display_name="${TEAMS_APP_DISPLAY_NAME:-Teams Hosted Agent}"
+sso_resource="$sso_app_resource"
 mkdir -p "$package_dir"
-jq \
-  --arg app_id "$bot_app_id" \
-  --arg display_name "$display_name" \
-  '.id = $app_id
-   | .name.short = $display_name
-   | .name.full = $display_name
-   | .bots[0].botId = $app_id' \
-  teams-app/manifest.template.json > "${package_dir}/manifest.json"
+if [ -n "$sso_app_id" ] && [ -n "$sso_resource" ]; then
+  jq \
+    --arg app_id "$bot_app_id" \
+    --arg display_name "$display_name" \
+    --arg sso_app_id "$sso_app_id" \
+    --arg sso_resource "$sso_resource" \
+    '.id = $app_id
+     | .name.short = $display_name
+     | .name.full = $display_name
+     | .bots[0].botId = $app_id
+     | .webApplicationInfo = {
+         id: $sso_app_id,
+         resource: $sso_resource
+       }' \
+    teams-app/manifest.template.json > "${package_dir}/manifest.json"
+else
+  jq \
+    --arg app_id "$bot_app_id" \
+    --arg display_name "$display_name" \
+    '.id = $app_id
+     | .name.short = $display_name
+     | .name.full = $display_name
+     | .bots[0].botId = $app_id' \
+    teams-app/manifest.template.json > "${package_dir}/manifest.json"
+fi
 cp .hosted-agent-build/teams-agent/src/wwwroot/color.png "${package_dir}/color.png"
 cp .hosted-agent-build/teams-agent/src/wwwroot/outline.png "${package_dir}/outline.png"
 rm -f "${output_dir}/appPackage.zip"

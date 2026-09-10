@@ -7,7 +7,9 @@
 #
 # Contract:
 #   inputs  : env AZURE_ENV_NAME (set by azd)
+#             optional SSO_DOWNSTREAM_CLIENT_ID + SSO_DOWNSTREAM_SCOPE
 #   outputs : azd env vars SSO_APP_ID, SSO_APP_SECRET
+#             SSO_APP_RESOURCE, SSO_SCOPES
 #             (consumed by main.bicepparam)
 #
 # Idempotency:
@@ -155,20 +157,47 @@ else
   echo "    oauth2PermissionScopes already configured"
 fi
 
+# Teams silent SSO requires both implicit issuance switches.
+implicit_flags=$(az ad app show --id "$app_id" \
+  --query "[web.implicitGrantSettings.enableIdTokenIssuance, web.implicitGrantSettings.enableAccessTokenIssuance]" \
+  -o tsv 2>/dev/null | tr '\n' ' ' || true)
+case "$implicit_flags" in
+  *"False"*|*"false"*|"")
+    implicit_file="$script_dir/.preprovision-sso-app-implicit-$$.json"
+    printf '%s' '{"web":{"implicitGrantSettings":{"enableIdTokenIssuance":true,"enableAccessTokenIssuance":true}}}' > "$implicit_file"
+    az rest --method PATCH \
+      --url "https://graph.microsoft.com/v1.0/applications(appId='$app_id')" \
+      --headers "Content-Type=application/json" \
+      --body "@$implicit_file" >/dev/null
+    rm -f "$implicit_file"
+    echo "    enabled implicit grant for Teams silent SSO"
+    ;;
+  *) echo "    implicit grant already enabled" ;;
+esac
+
 # Required delegated permissions + Teams SSO token typing. Preserve existing
 # permissions/claims and only patch when something is missing.
 echo "→ Ensuring optional claims and delegated API permissions are configured..."
 graph_resource_app_id="00000003-0000-0000-c000-000000000000"
 graph_user_read_scope_id="e1fe6dd8-ba31-4d61-89e7-88639da4683d"
-ai_resource_app_id=$(az ad sp list --filter "servicePrincipalNames/any(s:s eq 'https://ai.azure.com')" --query "[0].appId" -o tsv 2>/dev/null || true)
-ai_scope_id=""
-if [ -n "$ai_resource_app_id" ]; then
-  ai_scope_id=$(az ad sp show --id "$ai_resource_app_id" --query "oauth2PermissionScopes[?value=='user_impersonation'].id | [0]" -o tsv 2>/dev/null || true)
-  if [ -z "$ai_scope_id" ]; then
-    echo "    WARN: could not find 'user_impersonation' scope on Foundry SP — add it manually" >&2
+downstream_scope="${SSO_DOWNSTREAM_SCOPE:-https://ai.azure.com/user_impersonation}"
+downstream_scope_value="${downstream_scope##*/}"
+downstream_resource_app_id="${SSO_DOWNSTREAM_CLIENT_ID:-}"
+if [ -z "$downstream_resource_app_id" ]; then
+  downstream_resource_app_id=$(az ad sp list \
+    --filter "servicePrincipalNames/any(s:s eq 'https://ai.azure.com')" \
+    --query "[0].appId" -o tsv 2>/dev/null || true)
+fi
+downstream_scope_id=""
+if [ -n "$downstream_resource_app_id" ]; then
+  downstream_scope_id=$(az ad sp show --id "$downstream_resource_app_id" \
+    --query "oauth2PermissionScopes[?value=='${downstream_scope_value}'].id | [0]" \
+    -o tsv 2>/dev/null || true)
+  if [ -z "$downstream_scope_id" ]; then
+    echo "    WARN: could not find '$downstream_scope_value' on downstream service principal $downstream_resource_app_id" >&2
   fi
 else
-  echo "    WARN: Azure AI Foundry SP (https://ai.azure.com) not found in this tenant — grant consent manually" >&2
+  echo "    WARN: downstream service principal was not found — grant its delegated permission manually" >&2
 fi
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -181,7 +210,7 @@ az rest --method GET \
 
 APP_STATE_FILE="$app_state_file" PATCH_FILE="$patch_file" \
 GRAPH_RESOURCE_APP_ID="$graph_resource_app_id" GRAPH_USER_READ_SCOPE_ID="$graph_user_read_scope_id" \
-AI_RESOURCE_APP_ID="$ai_resource_app_id" AI_SCOPE_ID="$ai_scope_id" \
+DOWNSTREAM_RESOURCE_APP_ID="$downstream_resource_app_id" DOWNSTREAM_SCOPE_ID="$downstream_scope_id" \
 python3 - <<'PY'
 import json, os
 from pathlib import Path
@@ -214,7 +243,7 @@ def ensure_scope(resource_app_id, scope_id):
         changed = True
 
 ensure_scope(os.environ['GRAPH_RESOURCE_APP_ID'], os.environ['GRAPH_USER_READ_SCOPE_ID'])
-ensure_scope(os.environ.get('AI_RESOURCE_APP_ID', ''), os.environ.get('AI_SCOPE_ID', ''))
+ensure_scope(os.environ.get('DOWNSTREAM_RESOURCE_APP_ID', ''), os.environ.get('DOWNSTREAM_SCOPE_ID', ''))
 if changed:
     patch['requiredResourceAccess'] = required
     Path(os.environ['PATCH_FILE']).write_text(json.dumps(patch, separators=(',', ':')))
@@ -248,4 +277,6 @@ client_secret=$(az ad app credential reset \
 
 azd env set SSO_APP_ID "$app_id"
 azd env set SSO_APP_SECRET "$client_secret"
-echo "✓ SSO_APP_ID and SSO_APP_SECRET written to azd env"
+azd env set SSO_APP_RESOURCE "$identifier_uri"
+azd env set SSO_SCOPES "$downstream_scope offline_access"
+echo "✓ SSO app id, secret, resource, and delegated scopes written to azd env"

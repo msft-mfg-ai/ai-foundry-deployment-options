@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Text;
+using System.Text.Json;
 using AgentChat.Hosted;
 using AgentChat.Services;
 using Microsoft.Agents.Builder;
@@ -16,8 +17,92 @@ public class FoundryBot(
     DirectHostedAgent directAgent,
     ITeamsFileService teamsFiles,
     InvocationContextStore invocationContexts,
+    TeamsSsoService teamsSso,
+    TeamsSsoToolContext teamsSsoToolContext,
     ILogger<FoundryBot> logger) : TeamsActivityHandler
 {
+    protected override async Task<InvokeResponse> OnInvokeActivityAsync(
+        ITurnContext<IInvokeActivity> turnContext,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(
+                turnContext.Activity.Name,
+                "signin/tokenExchange",
+                StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(
+                turnContext.Activity.Name,
+                "signin/verifyState",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return await base.OnInvokeActivityAsync(
+                turnContext,
+                cancellationToken);
+        }
+
+        TokenExchangePayload payload;
+        try
+        {
+            payload = ReadTokenExchangePayload(
+                turnContext.Activity.Value);
+            if (!string.IsNullOrWhiteSpace(
+                    payload.ConnectionName)
+                && !string.Equals(
+                    payload.ConnectionName,
+                    teamsSso.ConnectionName,
+                    StringComparison.Ordinal))
+            {
+                return CreateTokenExchangeResponse(
+                    payload,
+                    StatusCodes.Status400BadRequest,
+                    "The OAuth connection name is not accepted.");
+            }
+
+            var token = string.Equals(
+                    turnContext.Activity.Name,
+                    "signin/tokenExchange",
+                    StringComparison.OrdinalIgnoreCase)
+                ? await teamsSso.ExchangeTokenAsync(
+                    turnContext,
+                    payload.Request
+                        ?? throw new InvalidOperationException(
+                            "The Teams token-exchange payload is invalid."),
+                    cancellationToken)
+                : await teamsSso.GetUserTokenAsync(
+                    turnContext,
+                    cancellationToken);
+
+            if (token is null || string.IsNullOrWhiteSpace(token.Token))
+            {
+                return CreateTokenExchangeResponse(
+                    payload,
+                    StatusCodes.Status412PreconditionFailed,
+                    "Token exchange did not return a user token.");
+            }
+
+            await CompleteSsoDiagnosticAsync(
+                turnContext,
+                token.Token,
+                cancellationToken);
+            return CreateTokenExchangeResponse(
+                payload,
+                StatusCodes.Status200OK,
+                failureDetail: null);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Teams SSO token exchange failed.");
+            return CreateTokenExchangeResponse(
+                new TokenExchangePayload(
+                    null,
+                    null,
+                    teamsSso.ConnectionName),
+                StatusCodes.Status412PreconditionFailed,
+                "Teams SSO token exchange failed.");
+        }
+    }
+
     protected override async Task OnInstallationUpdateAddAsync(
         ITurnContext<IInstallationUpdateActivity> turnContext,
         CancellationToken cancellationToken)
@@ -34,6 +119,17 @@ public class FoundryBot(
         if (turnContext.Activity.ChannelId == "msteams")
         {
             turnContext.Activity.RemoveRecipientMention();
+        }
+
+        if (TryReadCardAction(
+                turnContext.Activity.Value,
+                out var cardAction))
+        {
+            await HandleCardActionAsync(
+                turnContext,
+                cardAction,
+                cancellationToken);
+            return;
         }
 
         var text = (turnContext.Activity.Text ?? string.Empty).Trim();
@@ -146,6 +242,13 @@ public class FoundryBot(
     {
         var streaming = new SdkStreamingMessageHelper(turnContext);
         var generatedFiles = new List<GeneratedFileContent>();
+        OAuthConsentContent? oauthConsent = null;
+        using var ssoToolScope = teamsSsoToolContext.Push(
+            toolCancellationToken => RunSsoDiagnosticAsync(
+                turnContext,
+                conversationKey,
+                conversation,
+                toolCancellationToken));
         streaming.StartHeartbeat();
         try
         {
@@ -154,21 +257,45 @@ public class FoundryBot(
                 conversation,
                 invocationContext.UserId,
                 invocationContext.CallId,
+                DirectHostedAgent.NormalizeFirstName(
+                    turnContext.Activity.From?.Name),
                 cancellationToken))
             {
+                var progress = AgentProgressMapper.GetProgress(update);
+                if (progress is not null)
+                {
+                    await streaming.ReportProgressAsync(
+                        progress,
+                        cancellationToken);
+                }
                 if (!string.IsNullOrEmpty(update.Text))
                 {
                     streaming.AppendDelta(update.Text);
                 }
                 generatedFiles.AddRange(
                     update.Contents.OfType<GeneratedFileContent>());
+                oauthConsent ??=
+                    update.Contents.OfType<OAuthConsentContent>().FirstOrDefault();
             }
 
+            conversation.PendingConsentPrompt =
+                oauthConsent is null ? null : message;
             await state.SaveAsync(
                 conversationKey,
                 conversation,
                 cancellationToken);
             await streaming.FinalizeAsync(cancellationToken);
+            if (oauthConsent is not null)
+            {
+                await turnContext.SendActivityAsync(
+                    MessageFactory.Attachment(
+                        AdaptiveCardBuilder.BuildOAuthConsentCard(
+                            oauthConsent.ToolboxName,
+                            oauthConsent.ConsentUrl)),
+                    cancellationToken);
+                return;
+            }
+
             foreach (var file in generatedFiles)
             {
                 if (!teamsFiles.SupportsNativeFiles(turnContext.Activity))
@@ -200,6 +327,234 @@ public class FoundryBot(
             }
             throw;
         }
+    }
+
+    private async Task<string> RunSsoDiagnosticAsync(
+        ITurnContext turnContext,
+        UserConversationKey conversationKey,
+        ConversationState conversation,
+        CancellationToken cancellationToken)
+    {
+        if (!teamsSso.Enabled)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                authenticated = false,
+                reason =
+                    "Teams SSO is not configured. Set TeamsSso__ConnectionName and configure the matching Azure Bot OAuth connection.",
+            });
+        }
+
+        var token = await teamsSso.GetUserTokenAsync(
+            turnContext,
+            cancellationToken);
+        if (token is not null
+            && !string.IsNullOrWhiteSpace(token.Token))
+        {
+            return TokenClaimSummary.ToToolResult(token.Token);
+        }
+
+        var signIn = await teamsSso.GetSignInResourceAsync(
+            turnContext,
+            cancellationToken);
+        if (signIn is null)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                authenticated = false,
+                reason =
+                    "The Azure Bot OAuth connection did not return a sign-in resource.",
+            });
+        }
+
+        conversation.PendingSsoDiagnostic = true;
+        await state.SaveAsync(
+            conversationKey,
+            conversation,
+            cancellationToken);
+        var oauthCard = new OAuthCard
+        {
+            Text = "Sign in to inspect your Teams SSO token claims.",
+            ConnectionName = teamsSso.ConnectionName,
+            TokenExchangeResource = signIn.TokenExchangeResource,
+            Buttons =
+            [
+                new CardAction
+                {
+                    Title = "Sign in",
+                    Type = ActionTypes.Signin,
+                    Value = signIn.SignInLink,
+                },
+            ],
+        };
+        await turnContext.SendActivityAsync(
+            MessageFactory.Attachment(new Attachment
+            {
+                ContentType = OAuthCard.ContentType,
+                Content = oauthCard,
+            }),
+            cancellationToken);
+
+        return JsonSerializer.Serialize(new
+        {
+            authenticated = false,
+            pending = true,
+            tokenIncluded = false,
+            message =
+                "Teams silent SSO was requested. If silent exchange succeeds, the bot will display the safe token claims in a follow-up activity.",
+        });
+    }
+
+    private async Task CompleteSsoDiagnosticAsync(
+        ITurnContext<IInvokeActivity> turnContext,
+        string token,
+        CancellationToken cancellationToken)
+    {
+        var conversationKey =
+            UserConversationKey.FromActivity(turnContext.Activity);
+        var conversation = await state.GetOrCreateAsync(
+            conversationKey,
+            cancellationToken);
+        if (!conversation.PendingSsoDiagnostic)
+        {
+            return;
+        }
+
+        conversation.PendingSsoDiagnostic = false;
+        await state.SaveAsync(
+            conversationKey,
+            conversation,
+            cancellationToken);
+        var facts = TokenClaimSummary.Read(token)
+            .Select(claim => (claim.Key, claim.Value))
+            .Prepend(("Token included", "No"));
+        await turnContext.SendActivityAsync(
+            MessageFactory.Attachment(
+                AdaptiveCardBuilder.BuildInfoCard(
+                    "Teams SSO token claims",
+                    "SSO",
+                    facts)),
+            cancellationToken);
+    }
+
+    private static TokenExchangePayload ReadTokenExchangePayload(
+        object? value)
+    {
+        if (value is null)
+        {
+            return new TokenExchangePayload(null, null, null);
+        }
+
+        var data = value as JObject ?? JObject.FromObject(value);
+        return new TokenExchangePayload(
+            data.ToObject<TokenExchangeRequest>(),
+            data.Value<string>("id"),
+            data.Value<string>("connectionName"));
+    }
+
+    private static InvokeResponse CreateTokenExchangeResponse(
+        TokenExchangePayload payload,
+        int status,
+        string? failureDetail)
+        => new()
+        {
+            Status = status,
+            Body = new TokenExchangeInvokeResponse
+            {
+                Id = payload.Id,
+                ConnectionName = payload.ConnectionName,
+                FailureDetail = failureDetail,
+            },
+        };
+
+    private sealed record TokenExchangePayload(
+        TokenExchangeRequest? Request,
+        string? Id,
+        string? ConnectionName);
+
+    private async Task HandleCardActionAsync(
+        ITurnContext<IMessageActivity> turnContext,
+        string action,
+        CancellationToken cancellationToken)
+    {
+        var conversationKey =
+            UserConversationKey.FromActivity(turnContext.Activity);
+        var conversation = await state.GetOrCreateAsync(
+            conversationKey,
+            cancellationToken);
+        await state.TouchAsync(
+            conversationKey,
+            turnContext.Activity.GetConversationReference(),
+            cancellationToken);
+
+        if (action == "oauth_consent_cancel")
+        {
+            conversation.PendingConsentPrompt = null;
+            await state.SaveAsync(
+                conversationKey,
+                conversation,
+                cancellationToken);
+            await turnContext.SendActivityAsync(
+                MessageFactory.Text("Sign-in canceled."),
+                cancellationToken);
+            return;
+        }
+
+        if (action != "oauth_consent_continue")
+        {
+            logger.LogWarning(
+                "Ignoring unsupported card action {CardAction}.",
+                action);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(conversation.PendingConsentPrompt))
+        {
+            await turnContext.SendActivityAsync(
+                MessageFactory.Text(
+                    "There is no pending sign-in request for this conversation. Send your request again."),
+                cancellationToken);
+            return;
+        }
+
+        invocationContexts.TryGet(
+            turnContext.Activity,
+            out var invocationContext);
+        var pendingPrompt = conversation.PendingConsentPrompt;
+        conversation.PendingConsentPrompt = null;
+        await state.SaveAsync(
+            conversationKey,
+            conversation,
+            cancellationToken);
+        await turnContext.SendActivityAsync(
+            new Activity { Type = ActivityTypes.Typing },
+            cancellationToken);
+        await RunAgentAsync(
+            turnContext,
+            conversationKey,
+            conversation,
+            pendingPrompt,
+            invocationContext
+                ?? throw new InvalidOperationException(
+                    "Foundry invocation context is unavailable for this Teams activity."),
+            cancellationToken);
+    }
+
+    private static bool TryReadCardAction(
+        object? value,
+        out string action)
+    {
+        action = string.Empty;
+        if (value is null)
+        {
+            return false;
+        }
+
+        var data = value as JObject ?? JObject.FromObject(value);
+        action = data.Value<string>("action") ?? string.Empty;
+        return action.StartsWith(
+            "oauth_consent_",
+            StringComparison.Ordinal);
     }
 
     protected override async Task OnTeamsFileConsentAcceptAsync(

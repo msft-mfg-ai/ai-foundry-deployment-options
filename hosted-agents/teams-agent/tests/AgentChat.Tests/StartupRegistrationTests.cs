@@ -32,6 +32,7 @@ public class StartupRegistrationTests
 
         program.Should().Contain("AddInvocationsServer");
         program.Should().Contain("AddFoundryResponses");
+        program.Should().Contain("AddFoundryToolboxes");
         program.Should().Contain("MapInvocationsServer");
         program.Should().Contain("MapFoundryResponses");
         program.Should().Contain("GetRequiredService<DirectHostedAgent>()");
@@ -42,6 +43,9 @@ public class StartupRegistrationTests
         program.Should().NotContain("AgentService");
         manifest.Should().Contain("- protocol: invocations");
         manifest.Should().Contain("- protocol: responses");
+        manifest.Should().Contain("DirectAgent__UserToolboxEndpoint");
+        manifest.Should().Contain("teams-user-tools:");
+        manifest.Should().Contain("project_connection_id: cloud-helper");
         manifest.Should().NotContain("- protocol: activity");
         manifest.Should().NotContain("BotServiceRbac");
     }

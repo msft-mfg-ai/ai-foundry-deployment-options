@@ -24,6 +24,39 @@ public class DirectHostedAgentTests
             .Should().BeFalse();
 
     [Theory]
+    [InlineData("User identity authentication for this tool is not supported for this caller.")]
+    [InlineData("ARA OBO token request failed with status BadRequest.")]
+    [InlineData("Audience for incoming token is incorrect.")]
+    [InlineData("Failed to fetch access token.")]
+    public void Delegated_user_tool_authentication_failures_are_isolated(
+        string message)
+        => DirectHostedAgent.IsDelegatedUserToolAuthenticationFailure(
+                new InvalidOperationException(message))
+            .Should().BeTrue();
+
+    [Theory]
+    [InlineData(
+        "OAuth consent required. Please visit: https://login.example.test/authorize?state=abc",
+        "https://login.example.test/authorize?state=abc")]
+    [InlineData(
+        "tools/list failed {\"errors\":[{\"name\":\"whoami\",\"error\":{\"code\":\"CONSENT_REQUIRED\",\"message\":\"https://login.example.test/authorize?state=abc\"}}]}",
+        "https://login.example.test/authorize?state=abc")]
+    public void OAuth_consent_url_is_extracted(
+        string message,
+        string expected)
+        => OAuthConsentParser.TryParse(
+                new InvalidOperationException(message),
+                "teams-user-tools")!
+            .ConsentUrl.Should().Be(expected);
+
+    [Fact]
+    public void Unrelated_failure_is_not_treated_as_oauth_consent()
+        => OAuthConsentParser.TryParse(
+                new InvalidOperationException("Toolbox returned 500."),
+                "teams-user-tools")
+            .Should().BeNull();
+
+    [Theory]
     [InlineData(HttpStatusCode.Unauthorized)]
     [InlineData(HttpStatusCode.TooManyRequests)]
     [InlineData(HttpStatusCode.InternalServerError)]
@@ -151,6 +184,18 @@ public class DirectHostedAgentTests
         DirectHostedAgent.GetPersistedContainerId(session, "user-2")
             .Should().BeNull();
     }
+
+    [Theory]
+    [InlineData("Piotr Karpala", "Piotr")]
+    [InlineData("  Anne-Marie Example  ", "Anne-Marie")]
+    [InlineData("O'Connor Example", "O'Connor")]
+    [InlineData("", null)]
+    [InlineData("12345", null)]
+    public void Teams_display_name_is_reduced_to_a_safe_first_name(
+        string displayName,
+        string? expected)
+        => DirectHostedAgent.NormalizeFirstName(displayName)
+            .Should().Be(expected);
 
     private sealed class TestAgentSession : AgentSession
     {

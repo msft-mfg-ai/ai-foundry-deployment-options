@@ -14,6 +14,18 @@ public class ConversationState : IStoreItem
     public string? DirectAgentSession { get; set; }
 
     /// <summary>
+    /// Original user request to retry after Foundry completes OAuth consent.
+    /// No access or refresh token is stored by the bot.
+    /// </summary>
+    public string? PendingConsentPrompt { get; set; }
+
+    /// <summary>
+    /// Indicates that the SSO diagnostic tool is waiting for a Teams
+    /// token-exchange invoke. No token is persisted.
+    /// </summary>
+    public bool PendingSsoDiagnostic { get; set; }
+
+    /// <summary>
     /// Conversation reference captured on every turn so we can do proactive
     /// replies if that behavior is added later.
     /// </summary>

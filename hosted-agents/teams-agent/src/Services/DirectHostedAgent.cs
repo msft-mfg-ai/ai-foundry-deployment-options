@@ -48,6 +48,7 @@ public sealed class DirectHostedAgent : IAsyncDisposable
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<DirectHostedAgent> _logger;
     private readonly TokenCredential _credential;
+    private readonly TeamsSsoToolContext _teamsSsoToolContext;
     private readonly SemaphoreSlim _initializationLock = new(1, 1);
     private readonly ConcurrentDictionary<AgentSession, CodeExecutionContext> _codeExecutions =
         new(ReferenceEqualityComparer.Instance);
@@ -56,18 +57,15 @@ public sealed class DirectHostedAgent : IAsyncDisposable
 
     public DirectHostedAgent(
         IConfiguration configuration,
-        ILoggerFactory loggerFactory)
+        ILoggerFactory loggerFactory,
+        TokenCredential credential,
+        TeamsSsoToolContext teamsSsoToolContext)
     {
         _configuration = configuration;
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<DirectHostedAgent>();
-        _credential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
-        {
-            ManagedIdentityClientId =
-                configuration["FOUNDRY_AGENT_INSTANCE_CLIENT_ID"]
-                ?? configuration["AZURE_CLIENT_ID"],
-            ExcludeInteractiveBrowserCredential = true,
-        });
+        _credential = credential;
+        _teamsSsoToolContext = teamsSsoToolContext;
     }
 
     public bool Enabled => _configuration.GetValue("DirectAgent:Enabled", false);
@@ -77,6 +75,7 @@ public sealed class DirectHostedAgent : IAsyncDisposable
         ConversationState state,
         string userId,
         string callId,
+        string? userFirstName,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
         AgentGeneration generation;
@@ -117,8 +116,16 @@ public sealed class DirectHostedAgent : IAsyncDisposable
             Exception? streamFailure = null;
             var containerFiles = new Dictionary<string, ContainerFileReference>(
                 StringComparer.Ordinal);
+            var messages = new List<ChatMessage>();
+            if (userFirstName is not null)
+            {
+                messages.Add(new ChatMessage(
+                    ChatRole.System,
+                    $"The current Teams user's first name is {userFirstName}. Address them by first name naturally when appropriate, but do not force their name into every response."));
+            }
+            messages.Add(new ChatMessage(ChatRole.User, message));
             await using var updates = generation.Agent.RunStreamingAsync(
-                    message,
+                    messages,
                     session,
                     cancellationToken: cancellationToken)
                 .GetAsyncEnumerator(cancellationToken);
@@ -174,6 +181,12 @@ public sealed class DirectHostedAgent : IAsyncDisposable
 
             foreach (var file in containerFiles.Values)
             {
+                yield return new AgentResponseUpdate(
+                    ChatRole.Assistant,
+                    [
+                        new AgentProgressContent(
+                            AgentProgressStage.PreparingGeneratedFile),
+                    ]);
                 var generatedFile = await DownloadGeneratedFileAsync(
                     generation.ContainerClient,
                     file,
@@ -195,6 +208,159 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                     session,
                     codeExecution));
         }
+    }
+
+    private async IAsyncEnumerable<AgentResponseUpdate>
+        RunWithUserToolsStreamingAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentSession session,
+        AgentRunOptions? runOptions,
+        AIAgent innerAgent,
+        string? callId,
+        [System.Runtime.CompilerServices.EnumeratorCancellation]
+        CancellationToken cancellationToken)
+    {
+        var userToolboxEndpoint = _configuration["DirectAgent:UserToolboxEndpoint"];
+        if (string.IsNullOrWhiteSpace(userToolboxEndpoint))
+        {
+            await foreach (var update in innerAgent.RunStreamingAsync(
+                messages,
+                session,
+                runOptions,
+                cancellationToken))
+            {
+                yield return update;
+            }
+            yield break;
+        }
+
+        if (string.IsNullOrWhiteSpace(callId))
+        {
+            throw new InvalidOperationException(
+                "A Foundry call ID is required for delegated user tools.");
+        }
+
+        var userToolboxName = _configuration["DirectAgent:UserToolboxName"]
+            ?? "teams-user-tools";
+        var previousCallId = OutboundFoundryCallId.Value;
+        OutboundFoundryCallId.Value = callId;
+        McpClient? userToolboxClient = null;
+        try
+        {
+            (McpClient Client, IList<McpClientTool> Tools)? userToolbox = null;
+            OAuthConsentContent? consent = null;
+            try
+            {
+                userToolbox = await CreateToolboxClientAsync(
+                    userToolboxEndpoint,
+                    userToolboxName,
+                    callId,
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                consent = OAuthConsentParser.TryParse(
+                    ex,
+                    userToolboxName);
+                if (consent is null
+                    && IsDelegatedUserToolAuthenticationFailure(ex))
+                {
+                    _logger.LogWarning(
+                        "Delegated Toolbox {ToolboxName} is unavailable for this caller; continuing without its tools.",
+                        userToolboxName);
+                }
+                else if (consent is null)
+                {
+                    throw;
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "Delegated Toolbox {ToolboxName} requires OAuth consent for tool {ToolName}.",
+                        consent.ToolboxName,
+                        consent.ToolName);
+                }
+            }
+
+            if (consent is not null)
+            {
+                yield return new AgentResponseUpdate(
+                    ChatRole.Assistant,
+                    [consent]);
+                yield break;
+            }
+
+            if (userToolbox is null)
+            {
+                await foreach (var update in innerAgent.RunStreamingAsync(
+                    messages,
+                    session,
+                    runOptions,
+                    cancellationToken))
+                {
+                    yield return update;
+                }
+                yield break;
+            }
+
+            userToolboxClient = userToolbox.Value.Client;
+            var userTools = userToolbox.Value.Tools.Cast<AITool>().ToArray();
+            var effectiveRunOptions = CreateRunOptionsWithTools(
+                runOptions,
+                userTools);
+
+            await foreach (var update in innerAgent.RunStreamingAsync(
+                messages,
+                session,
+                effectiveRunOptions,
+                cancellationToken))
+            {
+                yield return update;
+            }
+        }
+        finally
+        {
+            OutboundFoundryCallId.Value = previousCallId;
+            if (userToolboxClient is not null)
+            {
+                await userToolboxClient.DisposeAsync();
+            }
+        }
+    }
+
+    internal static ChatClientAgentRunOptions CreateRunOptionsWithTools(
+        AgentRunOptions? runOptions,
+        IList<AITool> tools)
+    {
+        var chatOptions = new ChatOptions
+        {
+            Tools = [.. tools],
+        };
+        if (runOptions is ChatClientAgentRunOptions chatRunOptions)
+        {
+            chatOptions = chatRunOptions.ChatOptions?.Clone() ?? chatOptions;
+            chatOptions.Tools =
+            [
+                .. chatOptions.Tools ?? [],
+                .. tools,
+            ];
+            return new ChatClientAgentRunOptions(chatOptions)
+            {
+                ChatClientFactory = chatRunOptions.ChatClientFactory,
+                ContinuationToken = chatRunOptions.ContinuationToken,
+                AllowBackgroundResponses = chatRunOptions.AllowBackgroundResponses,
+                AdditionalProperties = chatRunOptions.AdditionalProperties,
+                ResponseFormat = chatRunOptions.ResponseFormat,
+            };
+        }
+
+        return new ChatClientAgentRunOptions(chatOptions)
+        {
+            ContinuationToken = runOptions?.ContinuationToken,
+            AllowBackgroundResponses = runOptions?.AllowBackgroundResponses,
+            AdditionalProperties = runOptions?.AdditionalProperties,
+            ResponseFormat = runOptions?.ResponseFormat,
+        };
     }
 
     public async Task<AIAgent> GetAgentAsync(CancellationToken cancellationToken)
@@ -231,6 +397,7 @@ public sealed class DirectHostedAgent : IAsyncDisposable
             var (toolboxClient, toolboxTools) = await CreateToolboxClientAsync(
                 toolboxEndpoint,
                 toolboxName,
+                fixedCallId: null,
                 cancellationToken);
             var skillsClient = await CreateSkillsClientAsync(
                 toolboxEndpoint,
@@ -275,6 +442,15 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                         Name = "code",
                         Description = "Execute Python in a user-isolated Code Interpreter container. The PowerPoint template is available at /mnt/data/template.pptx. Files saved under /mnt/data are returned to the user.",
                     });
+                var teamsSsoTool = AIFunctionFactory.Create(
+                    (CancellationToken toolCancellationToken) =>
+                        _teamsSsoToolContext.InspectAsync(
+                            toolCancellationToken),
+                    new AIFunctionFactoryOptions
+                    {
+                        Name = "inspect_teams_sso_token",
+                        Description = "Trigger Microsoft Teams silent SSO and inspect a safe allowlist of claims from the resulting user token. The raw token is never returned.",
+                    });
                 var agentTools = toolboxTools
                     .Where(tool => !string.Equals(
                         tool.ProtocolTool.Name,
@@ -282,6 +458,7 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                         StringComparison.Ordinal))
                     .Cast<AITool>()
                     .Append(codeTool)
+                    .Append(teamsSsoTool)
                     .ToArray();
 
                 agent = projectClient.AsAIAgent(
@@ -506,10 +683,13 @@ public sealed class DirectHostedAgent : IAsyncDisposable
 
         if (_codeExecutions.ContainsKey(session))
         {
-            await foreach (var update in innerAgent.RunStreamingAsync(
+            var existingContext = _codeExecutions[session];
+            await foreach (var update in RunWithUserToolsStreamingAsync(
                 messages,
                 session,
                 runOptions,
+                innerAgent,
+                existingContext.CallId,
                 cancellationToken))
             {
                 yield return update;
@@ -723,12 +903,42 @@ public sealed class DirectHostedAgent : IAsyncDisposable
         => Path.GetExtension(filename).ToLowerInvariant()
             is ".pptx" or ".pdf" or ".png" or ".jpg" or ".jpeg";
 
+    internal static string? NormalizeFirstName(string? displayName)
+    {
+        if (string.IsNullOrWhiteSpace(displayName))
+        {
+            return null;
+        }
+
+        var token = displayName.Trim()
+            .Split(
+                (char[]?)null,
+                StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault();
+        if (token is null)
+        {
+            return null;
+        }
+
+        var firstName = new string(
+            token
+                .Where(character =>
+                    char.IsLetter(character)
+                    || character is '-' or '\'')
+                .Take(50)
+                .ToArray());
+        return string.IsNullOrWhiteSpace(firstName)
+            ? null
+            : firstName;
+    }
+
     private static string? GetHostedCallId()
         => HostedCallIdProperty.GetValue(null) as string;
 
     private async Task<(McpClient Client, IList<McpClientTool> Tools)> CreateToolboxClientAsync(
         string toolboxEndpoint,
         string toolboxName,
+        string? fixedCallId,
         CancellationToken cancellationToken)
     {
         for (var attempt = 0; ; attempt++)
@@ -739,7 +949,9 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                 var toolboxHttpClient = new HttpClient(
                     new ToolboxAuthenticationHandler(_credential)
                     {
-                        InnerHandler = new HostedFoundryCallIdHandler(new HttpClientHandler()),
+                        InnerHandler = new HostedFoundryCallIdHandler(
+                            new HttpClientHandler(),
+                            fixedCallId),
                     });
                 var toolboxTransport = new HttpClientTransport(
                     new HttpClientTransportOptions
@@ -883,6 +1095,37 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                     || detail.Contains("invalid_token", StringComparison.OrdinalIgnoreCase)
                     || detail.Contains("authentication failed", StringComparison.OrdinalIgnoreCase)
                     || detail.Contains("bearer token", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    internal static bool IsDelegatedUserToolAuthenticationFailure(
+        Exception exception)
+    {
+        if (IsMcpAuthenticationFailure(exception))
+        {
+            return true;
+        }
+
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            var detail = current.Message;
+            if (detail.Contains(
+                    "user identity authentication",
+                    StringComparison.OrdinalIgnoreCase)
+                || detail.Contains(
+                    "OBO token",
+                    StringComparison.OrdinalIgnoreCase)
+                || detail.Contains(
+                    "audience for incoming token",
+                    StringComparison.OrdinalIgnoreCase)
+                || detail.Contains(
+                    "failed to fetch access token",
+                    StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
@@ -1133,13 +1376,15 @@ public sealed class DirectHostedAgent : IAsyncDisposable
     }
 
     private sealed class HostedFoundryCallIdHandler(
-        HttpMessageHandler innerHandler) : DelegatingHandler(innerHandler)
+        HttpMessageHandler innerHandler,
+        string? fixedCallId = null) : DelegatingHandler(innerHandler)
     {
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
-            var callId = OutboundFoundryCallId.Value
+            var callId = fixedCallId
+                ?? OutboundFoundryCallId.Value
                 ?? GetHostedCallId()
                 ?? FoundryAgentRequestContext.Current.CallId;
             if (!string.IsNullOrWhiteSpace(callId))
