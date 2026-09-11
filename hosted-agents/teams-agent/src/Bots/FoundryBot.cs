@@ -25,6 +25,16 @@ public class FoundryBot(
         ITurnContext<IInvokeActivity> turnContext,
         CancellationToken cancellationToken)
     {
+        if (string.Equals(
+                turnContext.Activity.Name,
+                "signin/failure",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return await HandleSsoFailureAsync(
+                turnContext,
+                cancellationToken);
+        }
+
         if (!string.Equals(
                 turnContext.Activity.Name,
                 "signin/tokenExchange",
@@ -69,10 +79,15 @@ public class FoundryBot(
                     cancellationToken)
                 : await teamsSso.GetUserTokenAsync(
                     turnContext,
+                    payload.State,
                     cancellationToken);
 
             if (token is null || string.IsNullOrWhiteSpace(token.Token))
             {
+                await CompleteSsoFailureAsync(
+                    turnContext,
+                    "Teams completed the sign-in flow, but Azure Bot Service did not return a user token.",
+                    cancellationToken);
                 return CreateTokenExchangeResponse(
                     payload,
                     StatusCodes.Status412PreconditionFailed,
@@ -93,11 +108,16 @@ public class FoundryBot(
             logger.LogWarning(
                 ex,
                 "Teams SSO token exchange failed.");
+            await CompleteSsoFailureAsync(
+                turnContext,
+                "Teams SSO token exchange failed before a user token was returned.",
+                cancellationToken);
             return CreateTokenExchangeResponse(
                 new TokenExchangePayload(
                     null,
                     null,
-                    teamsSso.ConnectionName),
+                    teamsSso.ConnectionName,
+                    null),
                 StatusCodes.Status412PreconditionFailed,
                 "Teams SSO token exchange failed.");
         }
@@ -243,12 +263,18 @@ public class FoundryBot(
         var streaming = new SdkStreamingMessageHelper(turnContext);
         var generatedFiles = new List<GeneratedFileContent>();
         OAuthConsentContent? oauthConsent = null;
+        var ssoCompletionPending = false;
         using var ssoToolScope = teamsSsoToolContext.Push(
-            toolCancellationToken => RunSsoDiagnosticAsync(
-                turnContext,
-                conversationKey,
-                conversation,
-                toolCancellationToken));
+            async toolCancellationToken =>
+            {
+                var result = await RunSsoDiagnosticAsync(
+                    turnContext,
+                    conversationKey,
+                    conversation,
+                    toolCancellationToken);
+                ssoCompletionPending = result.CompletionPending;
+                return result.ToolResult;
+            });
         streaming.StartHeartbeat();
         try
         {
@@ -268,7 +294,8 @@ public class FoundryBot(
                         progress,
                         cancellationToken);
                 }
-                if (!string.IsNullOrEmpty(update.Text))
+                if (!ssoCompletionPending
+                    && !string.IsNullOrEmpty(update.Text))
                 {
                     streaming.AppendDelta(update.Text);
                 }
@@ -285,6 +312,10 @@ public class FoundryBot(
                 conversation,
                 cancellationToken);
             await streaming.FinalizeAsync(cancellationToken);
+            if (ssoCompletionPending)
+            {
+                return;
+            }
             if (oauthConsent is not null)
             {
                 await turnContext.SendActivityAsync(
@@ -329,7 +360,7 @@ public class FoundryBot(
         }
     }
 
-    private async Task<string> RunSsoDiagnosticAsync(
+    private async Task<SsoDiagnosticResult> RunSsoDiagnosticAsync(
         ITurnContext turnContext,
         UserConversationKey conversationKey,
         ConversationState conversation,
@@ -337,12 +368,14 @@ public class FoundryBot(
     {
         if (!teamsSso.Enabled)
         {
-            return JsonSerializer.Serialize(new
-            {
-                authenticated = false,
-                reason =
-                    "Teams SSO is not configured. Set TeamsSso__ConnectionName and configure the matching Azure Bot OAuth connection.",
-            });
+            return new SsoDiagnosticResult(
+                JsonSerializer.Serialize(new
+                {
+                    authenticated = false,
+                    reason =
+                        "Teams SSO is not configured. Set TeamsSso__ConnectionName and configure the matching Azure Bot OAuth connection.",
+                }),
+                CompletionPending: false);
         }
 
         var token = await teamsSso.GetUserTokenAsync(
@@ -351,7 +384,9 @@ public class FoundryBot(
         if (token is not null
             && !string.IsNullOrWhiteSpace(token.Token))
         {
-            return TokenClaimSummary.ToToolResult(token.Token);
+            return new SsoDiagnosticResult(
+                TokenClaimSummary.ToToolResult(token.Token),
+                CompletionPending: false);
         }
 
         var signIn = await teamsSso.GetSignInResourceAsync(
@@ -359,12 +394,14 @@ public class FoundryBot(
             cancellationToken);
         if (signIn is null)
         {
-            return JsonSerializer.Serialize(new
-            {
-                authenticated = false,
-                reason =
-                    "The Azure Bot OAuth connection did not return a sign-in resource.",
-            });
+            return new SsoDiagnosticResult(
+                JsonSerializer.Serialize(new
+                {
+                    authenticated = false,
+                    reason =
+                        "The Azure Bot OAuth connection did not return a sign-in resource.",
+                }),
+                CompletionPending: false);
         }
 
         conversation.PendingSsoDiagnostic = true;
@@ -395,14 +432,16 @@ public class FoundryBot(
             }),
             cancellationToken);
 
-        return JsonSerializer.Serialize(new
-        {
-            authenticated = false,
-            pending = true,
-            tokenIncluded = false,
-            message =
-                "Teams silent SSO was requested. If silent exchange succeeds, the bot will display the safe token claims in a follow-up activity.",
-        });
+        return new SsoDiagnosticResult(
+            JsonSerializer.Serialize(new
+            {
+                authenticated = false,
+                pending = true,
+                tokenIncluded = false,
+                message =
+                    "The OAuth card was sent. The bot will display the safe token claims or a failure as a separate activity; do not send an interim response.",
+            }),
+            CompletionPending: true);
     }
 
     private async Task CompleteSsoDiagnosticAsync(
@@ -437,20 +476,80 @@ public class FoundryBot(
             cancellationToken);
     }
 
+    private async Task<InvokeResponse> HandleSsoFailureAsync(
+        ITurnContext<IInvokeActivity> turnContext,
+        CancellationToken cancellationToken)
+    {
+        var value = turnContext.Activity.Value;
+        var data = value is null
+            ? null
+            : ToJObject(value);
+        var code = data?.Value<string>("code");
+        logger.LogWarning(
+            "Teams reported an SSO sign-in failure with code {FailureCode}.",
+            string.IsNullOrWhiteSpace(code) ? "unknown" : code);
+        await CompleteSsoFailureAsync(
+            turnContext,
+            string.IsNullOrWhiteSpace(code)
+                ? "Teams reported that SSO sign-in failed."
+                : $"Teams reported that SSO sign-in failed ({code}).",
+            cancellationToken);
+        return new InvokeResponse
+        {
+            Status = StatusCodes.Status200OK,
+        };
+    }
+
+    private async Task CompleteSsoFailureAsync(
+        ITurnContext<IInvokeActivity> turnContext,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        var conversationKey =
+            UserConversationKey.FromActivity(turnContext.Activity);
+        var conversation = await state.GetOrCreateAsync(
+            conversationKey,
+            cancellationToken);
+        if (!conversation.PendingSsoDiagnostic)
+        {
+            return;
+        }
+
+        conversation.PendingSsoDiagnostic = false;
+        await state.SaveAsync(
+            conversationKey,
+            conversation,
+            cancellationToken);
+        await turnContext.SendActivityAsync(
+            MessageFactory.Text(
+                $"{reason} No token was stored or displayed. Try the SSO diagnostic again after correcting the OAuth connection."),
+            cancellationToken);
+    }
+
     private static TokenExchangePayload ReadTokenExchangePayload(
         object? value)
     {
         if (value is null)
         {
-            return new TokenExchangePayload(null, null, null);
+            return new TokenExchangePayload(null, null, null, null);
         }
 
-        var data = value as JObject ?? JObject.FromObject(value);
+        var data = ToJObject(value);
         return new TokenExchangePayload(
             data.ToObject<TokenExchangeRequest>(),
             data.Value<string>("id"),
-            data.Value<string>("connectionName"));
+            data.Value<string>("connectionName"),
+            data.Value<string>("state"));
     }
+
+    internal static JObject ToJObject(object value)
+        => value switch
+        {
+            JObject json => json,
+            JsonElement element when element.ValueKind == JsonValueKind.Object
+                => JObject.Parse(element.GetRawText()),
+            _ => JObject.FromObject(value),
+        };
 
     private static InvokeResponse CreateTokenExchangeResponse(
         TokenExchangePayload payload,
@@ -470,7 +569,12 @@ public class FoundryBot(
     private sealed record TokenExchangePayload(
         TokenExchangeRequest? Request,
         string? Id,
-        string? ConnectionName);
+        string? ConnectionName,
+        string? State);
+
+    private sealed record SsoDiagnosticResult(
+        string ToolResult,
+        bool CompletionPending);
 
     private async Task HandleCardActionAsync(
         ITurnContext<IMessageActivity> turnContext,
@@ -550,7 +654,7 @@ public class FoundryBot(
             return false;
         }
 
-        var data = value as JObject ?? JObject.FromObject(value);
+        var data = ToJObject(value);
         action = data.Value<string>("action") ?? string.Empty;
         return action.StartsWith(
             "oauth_consent_",

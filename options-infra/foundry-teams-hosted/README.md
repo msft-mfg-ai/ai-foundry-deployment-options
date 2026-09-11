@@ -64,6 +64,11 @@ intercepts that card when silent SSO succeeds and sends
 `signin/tokenExchange`. The bot returns only an allowlist of decoded claims
 (`aud`, `iss`, tenant/user IDs, display identity, scopes/roles, client ID, and
 token timestamps). It never returns or persists the compact token.
+When an OAuth card is required, the original model turn is suppressed after
+the card is sent. The later `signin/tokenExchange`, `signin/verifyState`, or
+`signin/failure` invoke is the authoritative completion activity, avoiding a
+misleading model-generated "pending" response immediately before the claims
+card.
 
 The C# image uses `TeamsAgent__*` and `DirectAgent__*` application settings
 because Foundry hosted containers reserve all `FOUNDRY_*` and `AGENT_*`
@@ -115,10 +120,11 @@ azd performs the following additional steps:
 5. Deploys `teams-hosted-runtime.bicep` with the generated gateway identity and
    version. This template owns the APIM API, backend, policy, named values,
    diagnostics, APIM Foundry RBAC, Cosmos data-plane RBAC, Azure Bot, and Teams
-   channel and its `teams-sso` OAuth connection. The postdeploy hook also
-   creates a federated credential that lets the hosted instance identity
-   authenticate as the generated SSO/bot application without storing that
-   application's secret in the hosted container.
+   channel and its `teams-sso` OAuth connection. The generated Entra
+   application is configured as a confidential client. Its secret is supplied
+   to Azure Bot Service and to the hosted container's Bot Framework
+   authentication stack; it is never written to Bicep outputs or the Teams
+   package.
 6. Configures APIM to create a Foundry session lazily, cache it for one hour,
    and retry once with a replacement if the cached session becomes inaccessible.
 7. Writes
@@ -128,7 +134,8 @@ Sideload that package in Teams to test the agent.
 
 ## Important authentication boundaries
 
-Five authentication boundaries are expected:
+The flow contains several credentials that are intentionally not
+interchangeable:
 
 1. Azure Bot sends a Bot Framework JWT to APIM.
 2. APIM uses its managed identity to invoke Foundry.
@@ -156,6 +163,58 @@ APIM receives a custom role containing
 The role permits only the user-identity delegation required by
 `x-ms-user-identity`; it does not grant general Foundry access.
 
+### Why the Teams token is not a universal MCP token
+
+An Entra access token is issued for **one resource audience**. Its `aud` claim
+identifies the API allowed to accept it, and its `scp` claim lists the
+delegated permissions within that API. Configuring several delegated
+permissions on the client application does not combine several resource
+audiences into one token.
+
+For example:
+
+- A token with `aud` set to the Cloud Helper application can contain
+  `mcp.access`, but Microsoft Graph must reject it even if the client
+  application also has consent for Graph `User.Read`.
+- A Graph token can contain `User.Read`, `Mail.Read`, or other Graph scopes,
+  but a custom MCP server must reject it unless that MCP server deliberately
+  uses Microsoft Graph as its resource audience.
+- `x-ms-user-identity` contains a trusted user object ID used for Foundry
+  multiplexing. It is not an OAuth access token and cannot authorize an MCP
+  call.
+- The Bot Framework JWT arriving from Teams proves that Bot Service sent the
+  activity. It is not the signed-in user's delegated token.
+
+The current `teams-sso` Bot Service OAuth connection requests the scope in
+`SSO_SCOPES` and returns a token for that scope's resource. The diagnostic can
+decode safe claims from that token because it runs inside the hosted bot.
+Foundry Toolbox does not receive the compact token: its request gets the
+Foundry call ID and user identity context only. Consequently, adding a Graph
+MCP tool to the Toolbox does not automatically forward the Bot Service token
+to it.
+
+Use one of these designs for delegated tools:
+
+1. **One Bot OAuth connection per resource.** Configure a `graph-sso`
+   connection for Graph scopes and a separate connection for each custom MCP
+   resource. The hosted bot retrieves the correct token by connection name
+   and calls that API or MCP server through a request-scoped client.
+2. **A middle-tier OBO broker.** Send the Teams bootstrap token to a trusted
+   backend that performs OAuth 2.0 on-behalf-of exchange for the target
+   resource. The broker must request and cache tokens separately by tenant,
+   user, client, resource, and scope set.
+3. **Foundry-managed user authentication.** Let the Foundry connection and
+   Toolbox own consent and token acquisition. This is the preferred
+   abstraction when supported by the caller, but the current Cloud Helper
+   project-connection path rejects this hosted caller with `User identity
+   authentication for this tool is not supported for this caller`.
+
+For Microsoft Graph specifically, the simplest working implementation is a
+separate Azure Bot OAuth connection whose scopes are Graph scopes such as
+`User.Read offline_access`, followed by a direct request-scoped Graph or MCP
+client in the hosted agent. Never send a Cloud Helper token to Graph or a
+Graph token to Cloud Helper.
+
 ## Configuration
 
 | azd value | Default | Purpose |
@@ -177,12 +236,12 @@ It writes these generated values to azd:
 - `SSO_APP_RESOURCE`
 - `SSO_SCOPES`
 
-The secret is passed only as a secure Bicep parameter to Azure Bot Service. The
-hosted container receives the app ID and connection name, but not the secret.
-After the hosted agent version exists, postdeploy creates a federated
-credential on this app whose subject is the hosted instance identity's
-principal ID. The hosted identity then exchanges its managed-identity
-assertion for Bot Connector tokens as the generated bot app.
+The secret is passed as a secure Bicep parameter to Azure Bot Service and as a
+hosted-agent environment value used by the Bot Framework authentication
+stack. It is not included in deployment outputs, logs, or the Teams package.
+Treat access to the hosted-agent configuration as secret-bearing. Rotate the
+credential by running preprovision again and redeploying the hosted service;
+prune expired credentials from the app registration separately.
 
 The generated SSO Entra application exposes
 `api://botid-<application-client-id>/access_as_user` and pre-authorizes these
@@ -196,6 +255,77 @@ If the deploying identity cannot grant tenant-wide admin consent, run
 as a tenant administrator. Reinstall the generated Teams package whenever the
 SSO app changes because `webApplicationInfo` and the bot ID are generated from
 that application.
+
+### Manual Entra and Bot OAuth setup
+
+The preprovision hook is the source of truth. Operators who cannot run it may
+reproduce the setup manually in the Entra and Azure portals:
+
+1. Create a **single-tenant** app registration and service principal. Record
+   its application/client ID and tenant ID.
+2. Under **Expose an API**, set the Application ID URI to
+   `api://botid-<application-client-id>`.
+3. Add a delegated scope named `access_as_user`. Its full scope URI is
+   `api://botid-<application-client-id>/access_as_user`.
+4. Preauthorize the Teams clients for that scope:
+   - Teams desktop/mobile:
+     `1fec8e78-bce4-4aaf-ab1b-5451cc387264`
+   - Teams web:
+     `5e3ce6c0-2b1f-4285-8d4b-75ee78787346`
+   - Add the Microsoft 365 and Outlook clients from
+     [`preprovision-sso-app.sh`](../scripts/preprovision-sso-app.sh) when the
+     app will run in those hosts.
+5. Under **Authentication**, add the web redirect URI
+   `https://token.botframework.com/.auth/web/redirect`. Enable both access
+   token and ID token issuance. Set the API's requested access-token version
+   to `2`.
+6. Under **API permissions**, add the delegated permission required by the
+   downstream resource. Add Graph permissions only when a separate Graph
+   token will actually be requested. Grant tenant-wide admin consent where
+   required.
+7. Create a client secret and store it in a secret manager. Set:
+
+   ```bash
+   azd env set SSO_APP_ID "<application-client-id>"
+   azd env set SSO_APP_SECRET "<client-secret>"
+   azd env set SSO_APP_RESOURCE "api://botid-<application-client-id>"
+   azd env set SSO_SCOPES "<downstream-scope> offline_access"
+   ```
+
+8. Configure the Azure Bot to use the same application ID with app type
+   **Single Tenant** and the same tenant ID.
+9. Create an Azure Bot OAuth connection named `teams-sso` using provider
+   **Azure Active Directory v2**:
+
+   | Setting | Value |
+   |---|---|
+   | Client ID | The app registration's application/client ID |
+   | Client secret | The app registration's client secret |
+   | Tenant ID | The tenant ID |
+   | Token exchange URL | `api://botid-<application-client-id>` |
+   | Scopes | One resource's delegated scopes plus `offline_access` |
+
+10. In the Teams manifest, use the same application ID for `bots[0].botId` and
+    `webApplicationInfo.id`, set `webApplicationInfo.resource` to
+    `api://botid-<application-client-id>`, and include
+    `token.botframework.com` in `validDomains`. Add the Teams `identity`
+    permission when other app capabilities require it; the OAuth exchange
+    itself is driven by `webApplicationInfo` and the OAuth card.
+11. Sideload or update the Teams package. In Azure Bot's OAuth connection,
+    run **Test Connection**; then invoke `inspect_teams_sso_token` in Teams and
+    verify the safe claims card has the expected `aud` and `scp`.
+
+If consent succeeds but the token is not returned, inspect
+`signin/tokenExchange`, `signin/verifyState`, and `signin/failure` activities.
+Foundry Invocations materializes `Activity.Value` as
+`System.Text.Json.JsonElement`; handlers must parse `GetRawText()` rather than
+using `JObject.FromObject(JsonElement)`, or the token and magic-code fields are
+lost.
+
+See the visual walkthrough in
+[`docs/teams-sso-auth-flow.html`](docs/teams-sso-auth-flow.html) and edit the
+source diagram in
+[`docs/teams-sso-auth-flow.excalidraw`](docs/teams-sso-auth-flow.excalidraw).
 
 The sample creates one Teams-facing hosted agent. To add another, declare
 another Invocations/Responses service and extend the runtime Bicep agent maps.

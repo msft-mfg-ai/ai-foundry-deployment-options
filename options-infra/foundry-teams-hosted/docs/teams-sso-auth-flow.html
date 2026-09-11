@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Teams SSO: One User, Four Proofs</title>
+  <style>
+    :root {
+      --ink: #14201f;
+      --paper: #f3efe4;
+      --paper-deep: #e8e0cf;
+      --rule: #1c302e;
+      --teal: #007f73;
+      --orange: #e5532d;
+      --blue: #2769d5;
+      --gold: #d4a72c;
+      --muted: #61706c;
+      --white: #fffdf7;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(rgba(20, 32, 31, .045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(20, 32, 31, .045) 1px, transparent 1px),
+        var(--paper);
+      background-size: 24px 24px;
+      font-family: "Aptos", "Segoe UI", sans-serif;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .2;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.13'/%3E%3C/svg%3E");
+    }
+
+    main {
+      position: relative;
+      width: min(1180px, calc(100% - 32px));
+      margin: 32px auto;
+      border: 2px solid var(--rule);
+      background: rgba(243, 239, 228, .94);
+      box-shadow: 12px 12px 0 var(--rule);
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 28px;
+      align-items: end;
+      padding: clamp(24px, 5vw, 58px);
+      border-bottom: 2px solid var(--rule);
+    }
+
+    .eyebrow, .stamp, .token-kind, .lane-label, button {
+      font-family: "Cascadia Mono", "Courier New", monospace;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      font-weight: 700;
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--orange);
+      font-size: 13px;
+    }
+
+    h1 {
+      max-width: 820px;
+      margin: 0;
+      font-family: "Baskerville", "Georgia", serif;
+      font-size: clamp(46px, 8vw, 104px);
+      font-weight: 500;
+      line-height: .87;
+      letter-spacing: -.055em;
+    }
+
+    .stamp {
+      width: 150px;
+      aspect-ratio: 1;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      color: var(--teal);
+      border: 3px double var(--teal);
+      border-radius: 50%;
+      text-align: center;
+      font-size: 12px;
+      transform: rotate(7deg);
+    }
+
+    .lede {
+      display: grid;
+      grid-template-columns: 1.4fr .6fr;
+      gap: 0;
+      border-bottom: 2px solid var(--rule);
+    }
+
+    .lede > div {
+      padding: 28px clamp(24px, 5vw, 58px);
+    }
+
+    .lede > div + div {
+      border-left: 2px solid var(--rule);
+      background: var(--paper-deep);
+    }
+
+    .lede p {
+      margin: 0;
+      font-size: clamp(18px, 2.2vw, 27px);
+      line-height: 1.35;
+    }
+
+    .lede strong { color: var(--orange); }
+
+    .aud-rule {
+      font-family: "Cascadia Mono", "Courier New", monospace;
+      font-size: 15px !important;
+    }
+
+    .aud-rule code {
+      display: block;
+      margin-top: 10px;
+      padding: 10px;
+      color: var(--white);
+      background: var(--rule);
+    }
+
+    .flow {
+      padding: clamp(28px, 5vw, 58px);
+      border-bottom: 2px solid var(--rule);
+      overflow: hidden;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      margin: 0 0 28px;
+      font-family: "Baskerville", "Georgia", serif;
+      font-size: clamp(30px, 4vw, 52px);
+      font-weight: 500;
+    }
+
+    .section-title::after {
+      content: "";
+      height: 2px;
+      flex: 1;
+      background: var(--rule);
+    }
+
+    .rail {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 34px;
+      position: relative;
+    }
+
+    .rail::before {
+      content: "";
+      position: absolute;
+      top: 48px;
+      left: 8%;
+      right: 8%;
+      height: 4px;
+      background: var(--rule);
+      z-index: 0;
+    }
+
+    .station {
+      position: relative;
+      z-index: 1;
+      min-width: 0;
+    }
+
+    .station-number {
+      width: 98px;
+      height: 98px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 18px;
+      border: 4px solid var(--rule);
+      border-radius: 50%;
+      color: var(--white);
+      background: var(--teal);
+      font-family: "Baskerville", "Georgia", serif;
+      font-size: 42px;
+      box-shadow: 6px 6px 0 var(--gold);
+    }
+
+    .station:nth-child(2) .station-number { background: var(--blue); }
+    .station:nth-child(3) .station-number { background: var(--orange); }
+    .station:nth-child(4) .station-number { background: var(--rule); }
+
+    .station h3 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+
+    .station p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.48;
+    }
+
+    .tokens {
+      display: grid;
+      grid-template-columns: 1fr 1.1fr;
+      min-height: 560px;
+      border-bottom: 2px solid var(--rule);
+    }
+
+    .token-list {
+      padding: clamp(28px, 5vw, 58px);
+      border-right: 2px solid var(--rule);
+    }
+
+    .token-buttons {
+      display: grid;
+      gap: 12px;
+    }
+
+    button {
+      display: grid;
+      grid-template-columns: 44px 1fr;
+      gap: 12px;
+      align-items: center;
+      width: 100%;
+      padding: 15px;
+      color: var(--ink);
+      border: 2px solid var(--rule);
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+      transition: transform .16s ease, background .16s ease, color .16s ease;
+    }
+
+    button:hover { transform: translateX(6px); }
+    button[aria-selected="true"] {
+      color: var(--white);
+      background: var(--rule);
+    }
+
+    .token-icon {
+      width: 38px;
+      height: 26px;
+      display: grid;
+      place-items: center;
+      color: var(--white);
+      background: var(--teal);
+      clip-path: polygon(0 0, 88% 0, 100% 50%, 88% 100%, 0 100%);
+    }
+
+    button:nth-child(2) .token-icon { background: var(--blue); }
+    button:nth-child(3) .token-icon { background: var(--orange); }
+    button:nth-child(4) .token-icon { background: var(--gold); color: var(--ink); }
+
+    .token-detail {
+      position: relative;
+      padding: clamp(28px, 5vw, 58px);
+      background: var(--white);
+      overflow: hidden;
+    }
+
+    .token-detail::after {
+      content: "AUD";
+      position: absolute;
+      right: -18px;
+      bottom: -46px;
+      color: rgba(20, 32, 31, .055);
+      font-family: "Baskerville", "Georgia", serif;
+      font-size: 190px;
+      line-height: 1;
+    }
+
+    .token-kind {
+      color: var(--orange);
+      font-size: 13px;
+    }
+
+    .token-detail h3 {
+      max-width: 680px;
+      margin: 10px 0 20px;
+      font-family: "Baskerville", "Georgia", serif;
+      font-size: clamp(34px, 5vw, 66px);
+      font-weight: 500;
+      line-height: .96;
+    }
+
+    .claim {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 90px 1fr;
+      gap: 16px;
+      padding: 12px 0;
+      border-top: 1px solid var(--rule);
+    }
+
+    .claim dt {
+      font-family: "Cascadia Mono", "Courier New", monospace;
+      font-weight: 700;
+    }
+
+    .claim dd { margin: 0; }
+
+    .can-cannot {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .verdict {
+      padding: 16px;
+      border: 2px solid var(--rule);
+    }
+
+    .verdict strong {
+      display: block;
+      margin-bottom: 8px;
+      font-family: "Cascadia Mono", "Courier New", monospace;
+      text-transform: uppercase;
+    }
+
+    .verdict.can { border-color: var(--teal); }
+    .verdict.cannot { border-color: var(--orange); }
+
+    .tool-boundary {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .tool-boundary > section {
+      padding: clamp(28px, 5vw, 58px);
+    }
+
+    .tool-boundary > section + section {
+      border-left: 2px solid var(--rule);
+      background: var(--paper-deep);
+    }
+
+    .tool-boundary h2 {
+      margin: 0 0 18px;
+      font-family: "Baskerville", "Georgia", serif;
+      font-size: clamp(28px, 4vw, 48px);
+      font-weight: 500;
+    }
+
+    .route {
+      display: grid;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .route div {
+      padding: 12px 14px;
+      border-left: 8px solid var(--teal);
+      background: var(--white);
+    }
+
+    .route div:nth-child(2) { border-color: var(--blue); }
+    .route div:nth-child(3) { border-color: var(--orange); }
+
+    footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 18px 24px;
+      color: var(--white);
+      background: var(--rule);
+      font-family: "Cascadia Mono", "Courier New", monospace;
+      font-size: 12px;
+    }
+
+    @media (max-width: 780px) {
+      main { margin: 16px auto 28px; box-shadow: 7px 7px 0 var(--rule); }
+      header, .lede, .tokens, .tool-boundary { grid-template-columns: 1fr; }
+      .stamp { display: none; }
+      .lede > div + div, .tool-boundary > section + section {
+        border-left: 0;
+        border-top: 2px solid var(--rule);
+      }
+      .rail { grid-template-columns: 1fr 1fr; }
+      .rail::before { display: none; }
+      .token-list { border-right: 0; border-bottom: 2px solid var(--rule); }
+      .can-cannot { grid-template-columns: 1fr; }
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      header > *, .lede > *, .station {
+        animation: arrive .55s both;
+      }
+      .lede > * { animation-delay: .08s; }
+      .station:nth-child(2) { animation-delay: .08s; }
+      .station:nth-child(3) { animation-delay: .16s; }
+      .station:nth-child(4) { animation-delay: .24s; }
+      @keyframes arrive {
+        from { opacity: 0; transform: translateY(14px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">Microsoft Teams + Azure Bot + Foundry hosted agent</p>
+        <h1>One user.<br>Four proofs.</h1>
+      </div>
+      <div class="stamp">A token is not an identity header</div>
+    </header>
+
+    <section class="lede">
+      <div>
+        <p>SSO succeeded. The remaining question is not <strong>"do we have a token?"</strong> It is <strong>"which API is this token allowed to enter?"</strong></p>
+      </div>
+      <div>
+        <p class="aud-rule">The acceptance rule:<code>request.token.aud == receiving API</code></p>
+      </div>
+    </section>
+
+    <section class="flow">
+      <h2 class="section-title">The successful sign-in path</h2>
+      <div class="rail">
+        <article class="station">
+          <div class="station-number">1</div>
+          <h3>Teams bootstraps SSO</h3>
+          <p>The installed manifest identifies the bot app and its <code>access_as_user</code> scope.</p>
+        </article>
+        <article class="station">
+          <div class="station-number">2</div>
+          <h3>Bot Service exchanges</h3>
+          <p><code>signin/tokenExchange</code> carries the Teams bootstrap token to the configured OAuth connection.</p>
+        </article>
+        <article class="station">
+          <div class="station-number">3</div>
+          <h3>Entra issues downstream</h3>
+          <p>The OAuth connection requests one resource's scopes and caches the resulting delegated token.</p>
+        </article>
+        <article class="station">
+          <div class="station-number">4</div>
+          <h3>Hosted bot consumes</h3>
+          <p>The bot can inspect claims or call the matching API. It never exposes the compact token to the model.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="tokens">
+      <div class="token-list">
+        <h2 class="section-title">Pick a proof</h2>
+        <div class="token-buttons" role="tablist" aria-label="Authentication artifacts">
+          <button type="button" role="tab" aria-selected="true" data-token="bot">
+            <span class="token-icon">1</span><span>Bot Framework JWT</span>
+          </button>
+          <button type="button" role="tab" aria-selected="false" data-token="identity">
+            <span class="token-icon">2</span><span>x-ms-user-identity</span>
+          </button>
+          <button type="button" role="tab" aria-selected="false" data-token="bootstrap">
+            <span class="token-icon">3</span><span>Teams bootstrap token</span>
+          </button>
+          <button type="button" role="tab" aria-selected="false" data-token="downstream">
+            <span class="token-icon">4</span><span>Downstream access token</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="token-detail" id="token-detail" role="tabpanel" aria-live="polite"></div>
+    </section>
+
+    <section class="tool-boundary">
+      <section>
+        <p class="eyebrow">Why Toolbox cannot just use it</p>
+        <h2>The bearer token stops at the hosted bot.</h2>
+        <p>The Toolbox request currently receives a Foundry call ID and trusted user identity context. It does not receive the Bot Service token. An object ID says <em>who</em>; it does not grant permission to act at Graph or a custom MCP API.</p>
+      </section>
+      <section>
+        <p class="eyebrow">Working delegated-tool designs</p>
+        <h2>Acquire for the destination.</h2>
+        <div class="route">
+          <div><strong>Graph:</strong> separate <code>graph-sso</code> OAuth connection, Graph scopes, request-scoped Graph/MCP client.</div>
+          <div><strong>Custom MCP:</strong> its own resource scope and OAuth connection, or a trusted OBO broker.</div>
+          <div><strong>Foundry Toolbox:</strong> Foundry-managed user auth when the hosted caller path supports it.</div>
+        </div>
+      </section>
+    </section>
+
+    <footer>
+      <span>Invariant: one access token -> one resource audience</span>
+      <span>Raw delegated tokens never enter model context</span>
+    </footer>
+  </main>
+
+  <script>
+    const details = {
+      bot: {
+        kind: "Service-to-service proof",
+        title: "Bot Framework JWT",
+        claims: [
+          ["Issuer", "Bot Framework identity platform"],
+          ["Audience", "The bot application ID"],
+          ["Purpose", "Proves the activity was sent to this bot"]
+        ],
+        can: "Authenticate the inbound Bot Framework activity at APIM and the bot adapter.",
+        cannot: "Call Foundry, Microsoft Graph, or a custom MCP API as the user."
+      },
+      identity: {
+        kind: "Trusted identity context",
+        title: "x-ms-user-identity",
+        claims: [
+          ["Value", "Verified Teams user object ID"],
+          ["Created by", "APIM after validating the activity"],
+          ["Purpose", "Multiplex and isolate Foundry user state"]
+        ],
+        can: "Tell Foundry which user owns this call and session context.",
+        cannot: "Act as a bearer credential. It has no audience, scopes, signature, or expiry."
+      },
+      bootstrap: {
+        kind: "Teams SSO bootstrap",
+        title: "access_as_user token",
+        claims: [
+          ["Audience", "api://botid-<bot-app-id>"],
+          ["Scope", "access_as_user"],
+          ["Purpose", "Authorize Bot Service token exchange"]
+        ],
+        can: "Complete silent Teams SSO for the installed bot application.",
+        cannot: "Be forwarded as a universal Graph or MCP token."
+      },
+      downstream: {
+        kind: "Delegated API credential",
+        title: "Audience-bound access token",
+        claims: [
+          ["Audience", "Cloud Helper OR Graph OR another API"],
+          ["Scopes", "Only delegated scopes for that audience"],
+          ["Issued via", "Bot OAuth connection or OBO broker"]
+        ],
+        can: "Call the API named by aud when its required scope is present.",
+        cannot: "Call a second resource. A Cloud Helper token is not a Graph token."
+      }
+    };
+
+    const panel = document.querySelector("#token-detail");
+    const buttons = [...document.querySelectorAll("[data-token]")];
+
+    function render(key) {
+      const item = details[key];
+      panel.innerHTML = `
+        <div class="token-kind">${item.kind}</div>
+        <h3>${item.title}</h3>
+        <dl>${item.claims.map(([name, value]) => `
+          <div class="claim"><dt>${name}</dt><dd>${value}</dd></div>
+        `).join("")}</dl>
+        <div class="can-cannot">
+          <div class="verdict can"><strong>Can</strong>${item.can}</div>
+          <div class="verdict cannot"><strong>Cannot</strong>${item.cannot}</div>
+        </div>`;
+    }
+
+    buttons.forEach(button => {
+      button.addEventListener("click", () => {
+        buttons.forEach(candidate => candidate.setAttribute("aria-selected", "false"));
+        button.setAttribute("aria-selected", "true");
+        render(button.dataset.token);
+      });
+    });
+
+    render("bot");
+  </script>
+</body>
+</html>

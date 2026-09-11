@@ -17,6 +17,15 @@ public sealed class TeamsSsoService(
     public async Task<TokenResponse?> GetUserTokenAsync(
         ITurnContext turnContext,
         CancellationToken cancellationToken)
+        => await GetUserTokenAsync(
+            turnContext,
+            magicCode: null,
+            cancellationToken);
+
+    public async Task<TokenResponse?> GetUserTokenAsync(
+        ITurnContext turnContext,
+        string? magicCode,
+        CancellationToken cancellationToken)
     {
         var client = GetClient(turnContext);
         if (client is null || !Enabled)
@@ -30,7 +39,7 @@ public sealed class TeamsSsoService(
                 turnContext.Activity.From.Id,
                 ConnectionName!,
                 turnContext.Activity.ChannelId,
-                magicCode: null,
+                magicCode,
                 cancellationToken);
         }
         catch (Exception ex)
