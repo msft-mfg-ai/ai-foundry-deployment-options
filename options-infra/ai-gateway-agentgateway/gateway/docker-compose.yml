@@ -1,0 +1,16 @@
+services:
+  agentgateway:
+    image: cr.agentgateway.dev/agentgateway:v1.5.0
+    restart: unless-stopped
+    command: ["-f", "/config.yaml"]
+    ports:
+      - "4000:4000"
+    environment:
+      AGENTGATEWAY_API_KEY: ${AGENTGATEWAY_API_KEY}
+      AZURE_OPENAI_RESOURCE_NAME: ${AZURE_OPENAI_RESOURCE_NAME}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
+      MCP_TARGET_URL: ${MCP_TARGET_URL}
+      A2A_TARGET_URL: ${A2A_TARGET_URL}
+    volumes:
+      - ./config.local.yaml:/config.yaml:ro
+      - ./data:/data

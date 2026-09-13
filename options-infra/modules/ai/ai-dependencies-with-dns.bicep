@@ -4,6 +4,9 @@ param location string = resourceGroup().location
 @description('Location for the dependency resources (Storage, AI Search, Cosmos DB). Defaults to `location`. Use a different region when the primary location does not allow one of the services (e.g. AI Search in eastus2).')
 param dependenciesLocation string = location
 
+@description('Location for a newly created AI Search service. Defaults to `dependenciesLocation`.')
+param aiSearchLocation string = dependenciesLocation
+
 param tags object = {}
 param resourceToken string
 param aiServicesName string
@@ -44,6 +47,7 @@ module ai_dependencies '../ai-dependencies/standard-dependent-resources.bicep' =
     tags: tags
     azureStorageName: azureStorageName
     aiSearchName: aiSearchName
+    aiSearchLocation: aiSearchLocation
     cosmosDBName: cosmosDBName
     cosmosDBLocation: cosmosDBLocation
 
