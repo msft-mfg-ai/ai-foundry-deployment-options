@@ -18,6 +18,18 @@ param sku object = {
 param myIpAddress string = ''
 param managedIdentityResourceId string?
 
+@export()
+type trustedCertificateType = {
+  keyVaultId: string
+  certificates: {
+    name: string
+    version: string
+  }[]
+}
+
+@description('Private CA certificates trusted by the Foundry account. Each certificate is a PEM-formatted Key Vault secret pinned to a version.')
+param trustedCertificates trustedCertificateType[] = []
+
 // Keyvault integration
 param keyVaultResourceId string?
 @description('Bunch of known issues with KeyVault integration, so disable by default')
@@ -34,6 +46,57 @@ param kind string = 'AIServices'
 // --------------------------------------------------------------------------------------------------------------
 var useExistingService = !empty(existing_Foundry_Name)
 param deployments aiModelTDeploymentType[] = []
+var trustedCertificateProperties = empty(trustedCertificates)
+  ? {}
+  : {
+      trustedCertificates: trustedCertificates
+    }
+var accountIdentity = !empty(managedIdentityResourceId)
+  ? {
+      type: 'UserAssigned'
+      userAssignedIdentities: {
+        '${managedIdentityResourceId}': {}
+      }
+    }
+  : {
+      type: 'SystemAssigned'
+    }
+var accountProperties = union(
+  {
+    // required to work in AI Foundry
+    allowProjectManagement: true
+    publicNetworkAccess: publicNetworkAccess
+    disableLocalAuth: disableLocalAuth
+    instant: {
+      raiPolicyName: 'Microsoft.DefaultV2'
+      // disable instant access models: https://learn.microsoft.com/en-us/azure/foundry/concepts/instant-models?tabs=python%2Cbicep#enterprise-controls
+      modelAllowList: []
+    }
+    networkAcls: {
+      bypass: 'AzureServices'
+      defaultAction: 'Allow'
+      ipRules: empty(myIpAddress)
+        ? []
+        : [
+            {
+              value: myIpAddress
+            }
+          ]
+      virtualNetworkRules: []
+    }
+    networkInjections: (!empty(agentSubnetResourceId)
+      ? [
+          {
+            scenario: 'agent'
+            subnetArmId: agentSubnetResourceId
+            useMicrosoftManagedNetwork: false
+          }
+        ]
+      : null)
+    customSubDomainName: toLower('${(name)}')
+  },
+  trustedCertificateProperties
+)
 
 @export()
 type aiModelTDeploymentType = {
@@ -91,54 +154,13 @@ module raiPolicy 'rai-policy.bicep' = if (!useExistingService) {
 }
 
 // --------------------------------------------------------------------------------------------------------------
-resource account 'Microsoft.CognitiveServices/accounts@2026-01-15-preview' = if (!useExistingService) {
+resource account 'Microsoft.CognitiveServices/accounts@2026-07-15-preview' = if (!useExistingService) {
   name: name
   location: location
   tags: tags
   kind: kind
-  identity: !empty(managedIdentityResourceId)
-    ? {
-        type: 'UserAssigned'
-        userAssignedIdentities: {
-          '${managedIdentityResourceId}': {}
-        }
-      }
-    : {
-        type: 'SystemAssigned'
-      }
-  properties: {
-    // required to work in AI Foundry
-    allowProjectManagement: true
-    publicNetworkAccess: publicNetworkAccess
-    disableLocalAuth: disableLocalAuth
-    instant: {
-      raiPolicyName: 'Microsoft.DefaultV2'
-      // disable instant access models: https://learn.microsoft.com/en-us/azure/foundry/concepts/instant-models?tabs=python%2Cbicep#enterprise-controls
-      modelAllowList: []
-    }
-    networkAcls: {
-      bypass: 'AzureServices'
-      defaultAction: 'Allow'
-      ipRules: empty(myIpAddress)
-        ? []
-        : [
-            {
-              value: myIpAddress
-            }
-          ]
-      virtualNetworkRules: []
-    }
-    networkInjections: (!empty(agentSubnetResourceId)
-      ? [
-          {
-            scenario: 'agent'
-            subnetArmId: agentSubnetResourceId
-            useMicrosoftManagedNetwork: false
-          }
-        ]
-      : null)
-    customSubDomainName: toLower('${(name)}')
-  }
+  identity: accountIdentity
+  properties: accountProperties
   sku: sku
 }
 
@@ -187,7 +209,7 @@ resource connection 'Microsoft.CognitiveServices/accounts/connections@2025-04-01
     }
   }
   dependsOn: [
-    // foundry_project
+    account
   ]
 }
 
@@ -200,6 +222,9 @@ module kvRoleAssignment '../kv/kv-role-assignment.bicep' = if (addKeyVault && !u
       ? account.?identity.principalId ?? ''
       : identity.properties.principalId
   }
+  dependsOn: [
+    account
+  ]
 }
 // --------------------------------------------------------------------------------------------------------------
 // Outputs

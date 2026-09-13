@@ -16,8 +16,9 @@
 #             The PFX is bound to the ACA managed environment as a certificate
 #             resource and presented at the ACA ingress for the custom
 #             domain — ACA terminates TLS, so the LiteLLM container itself
-#             does NOT consume the cert. The root CA is installed in the
-#             nginx proxy so it can validate ACA's leaf cert.
+#             does NOT consume the cert. The public root CA is stored in Key
+#             Vault and registered in the Foundry account trustedCertificates
+#             configuration.
 #
 # Idempotency:
 #     If all three output env vars are already non-empty in the azd env, the
@@ -114,6 +115,6 @@ azd env set LITELLM_CERT_PFX_BASE64 "$b64_pfx"
 azd env set LITELLM_CERT_PFX_PASSWORD "$pfx_password"
 azd env set LITELLM_ROOT_CA_PEM_BASE64 "$b64_ca"
 
-echo "✓ Self-signed cert generated and stored in azd env (3 vars)."
+echo "✓ Self-signed cert generated for ACA and Foundry private CA trust."
 echo "  Leaf CN/SAN : ${LITELLM_DOMAIN}"
 echo "  Root CA CN  : LiteLLM Dev Root CA ${AZURE_ENV_NAME}"
