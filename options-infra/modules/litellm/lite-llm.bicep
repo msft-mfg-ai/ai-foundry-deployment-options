@@ -5,9 +5,11 @@ param logAnalyticsWorkspaceResourceId string
 @description('Identity used by Container Apps to access Key Vault and other resources')
 param identityResourceId string
 @secure()
-param openAiApiKey string
+param openAiApiKey string = ''
 param openAiApiBase string
 param aiFoundryName string
+@description('Use the Container App user-assigned identity for Azure OpenAI instead of an API key.')
+param useAzureManagedIdentity bool = false
 
 param acaSubnetResourceId string
 param privateEndpointSubnetId string
@@ -50,6 +52,10 @@ resource userAssignedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@
 
 var litelllmasterkey = empty(liteLlmMasterKeyOverride) ? take(uniqueString(resourceToken, 'litellm'), 6) : liteLlmMasterKeyOverride
 var customDomainEnabled = !empty(customDomain)
+var keyVaultSecrets = concat(
+  useAzureManagedIdentity ? [] : [{ name: 'openaiapikey', value: openAiApiKey }],
+  [{ name: 'litelllmasterkey', value: litelllmasterkey }]
+)
 
 var custom_domain_cert_valid = customDomainEnabled && (empty(certPfxBase64) || empty(certPfxPassword))
   ? fail('When customDomain is set, certPfxBase64 and certPfxPassword must both be provided.')
@@ -118,10 +124,7 @@ module keyVault '../kv/key-vault.bicep' = {
     tags: tags
     location: location
     name: 'kv-${resourceToken}'
-    secrets: [
-      { name: 'openaiapikey', value: openAiApiKey }
-      { name: 'litelllmasterkey', value: litelllmasterkey }
-    ]
+    secrets: keyVaultSecrets
     userAssignedManagedIdentityPrincipalIds: [userAssignedIdentity.properties.principalId]
     principalId: null
     doRoleAssignments: true
@@ -243,20 +246,20 @@ module liteLlmApp '../aca/container-app.bicep' = {
     workloadProfileName: managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
     applicationInsightsConnectionString: appInsightsConnectionString
     definition: {
-      settings: [
+      settings: concat(
+        [
         {
           secret: true
           name: 'LITELLM_MASTER_KEY'
           keyVaultSecretName: 'litelllmasterkey'
         }
         {
-          secret: true
-          name: 'AZURE_API_KEY'
-          keyVaultSecretName: 'openaiapikey'
-        }
-        {
           name: 'AZURE_API_BASE'
           value: openAiApiBase
+        }
+        {
+          name: 'AZURE_CLIENT_ID'
+          value: userAssignedIdentity.properties.clientId
         }
         {
           name: 'PROXY_BASE_URL'
@@ -275,7 +278,17 @@ module liteLlmApp '../aca/container-app.bicep' = {
           name: 'OTEL_EXPORTER'
           value: 'otlp_grpc'
         }
-      ]
+        ],
+        useAzureManagedIdentity
+          ? []
+          : [
+              {
+                secret: true
+                name: 'AZURE_API_KEY'
+                keyVaultSecretName: 'openaiapikey'
+              }
+            ]
+      )
     }
     containerArgs: [
       '--config'

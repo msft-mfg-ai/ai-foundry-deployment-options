@@ -18,6 +18,18 @@ param sku object = {
 param myIpAddress string = ''
 param managedIdentityResourceId string?
 
+@export()
+type trustedCertificateType = {
+  keyVaultId: string
+  certificates: {
+    name: string
+    version: string
+  }[]
+}
+
+@description('Private CA certificates trusted by the Foundry account. Each certificate is a PEM-formatted Key Vault secret pinned to a version.')
+param trustedCertificates trustedCertificateType[] = []
+
 // Keyvault integration
 param keyVaultResourceId string?
 @description('Bunch of known issues with KeyVault integration, so disable by default')
@@ -34,6 +46,52 @@ param kind string = 'AIServices'
 // --------------------------------------------------------------------------------------------------------------
 var useExistingService = !empty(existing_Foundry_Name)
 param deployments aiModelTDeploymentType[] = []
+var trustedCertificateProperties = empty(trustedCertificates)
+  ? {}
+  : {
+      trustedCertificates: trustedCertificates
+    }
+var accountIdentity = !empty(managedIdentityResourceId)
+  ? {
+      type: 'UserAssigned'
+      userAssignedIdentities: {
+        '${managedIdentityResourceId}': {}
+      }
+    }
+  : {
+      type: 'SystemAssigned'
+    }
+var accountProperties = union(
+  {
+    // required to work in AI Foundry
+    allowProjectManagement: true
+    publicNetworkAccess: publicNetworkAccess
+    disableLocalAuth: disableLocalAuth
+    networkAcls: {
+      bypass: 'AzureServices'
+      defaultAction: 'Allow'
+      ipRules: empty(myIpAddress)
+        ? []
+        : [
+            {
+              value: myIpAddress
+            }
+          ]
+      virtualNetworkRules: []
+    }
+    networkInjections: (!empty(agentSubnetResourceId)
+      ? [
+          {
+            scenario: 'agent'
+            subnetArmId: agentSubnetResourceId
+            useMicrosoftManagedNetwork: false
+          }
+        ]
+      : null)
+    customSubDomainName: toLower('${(name)}')
+  },
+  trustedCertificateProperties
+)
 
 @export()
 type aiModelTDeploymentType = {
@@ -82,49 +140,13 @@ resource existingAccount 'Microsoft.CognitiveServices/accounts@2025-04-01-previe
 }
 
 // --------------------------------------------------------------------------------------------------------------
-resource account 'Microsoft.CognitiveServices/accounts@2025-12-01' = if (!useExistingService) {
+resource account 'Microsoft.CognitiveServices/accounts@2026-07-15-preview' = if (!useExistingService) {
   name: name
   location: location
   tags: tags
   kind: kind
-  identity: !empty(managedIdentityResourceId)
-    ? {
-        type: 'UserAssigned'
-        userAssignedIdentities: {
-          '${managedIdentityResourceId}': {}
-        }
-      }
-    : {
-        type: 'SystemAssigned'
-      }
-  properties: {
-    // required to work in AI Foundry
-    allowProjectManagement: true
-    publicNetworkAccess: publicNetworkAccess
-    disableLocalAuth: disableLocalAuth
-    networkAcls: {
-      bypass: 'AzureServices'
-      defaultAction: 'Allow'
-      ipRules: empty(myIpAddress)
-        ? []
-        : [
-            {
-              value: myIpAddress
-            }
-          ]
-      virtualNetworkRules: []
-    }
-    networkInjections: (!empty(agentSubnetResourceId)
-      ? [
-          {
-            scenario: 'agent'
-            subnetArmId: agentSubnetResourceId
-            useMicrosoftManagedNetwork: false
-          }
-        ]
-      : null)
-    customSubDomainName: toLower('${(name)}')
-  }
+  identity: accountIdentity
+  properties: accountProperties
   sku: sku
 }
 
@@ -136,6 +158,9 @@ resource deployment 'Microsoft.CognitiveServices/accounts/deployments@2025-10-01
     properties: deployment.properties
     // use the sku in the deployment if it exists, otherwise default to standard
     sku: deployment.?sku ?? { name: 'Standard', capacity: 20 }
+    dependsOn: [
+      account
+    ]
   }
 ]
 
@@ -170,7 +195,7 @@ resource connection 'Microsoft.CognitiveServices/accounts/connections@2025-04-01
     }
   }
   dependsOn: [
-    // foundry_project
+    account
   ]
 }
 
@@ -181,6 +206,9 @@ module kvRoleAssignment '../kv/kv-role-assignment.bicep' = if (addKeyVault && !u
     keyVaultName: keyVaultName!
     principalId: empty(managedIdentityResourceId) ? account.?identity.principalId ?? '' : identity.properties.principalId
   }
+  dependsOn: [
+    account
+  ]
 }
 // --------------------------------------------------------------------------------------------------------------
 // Outputs

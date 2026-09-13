@@ -21,6 +21,9 @@ param azureStorageName string
 @description('Name of the new Cosmos DB account')
 param cosmosDBName string
 
+@description('Optional location override for a newly created Cosmos DB account and its write region.')
+param cosmosDBLocation string = ''
+
 @description('The AI Search Service full ARM Resource ID. This is an optional field, and if not provided, the resource will be created.')
 param aiSearchResourceId string?
 
@@ -72,9 +75,13 @@ var canaryRegions = ['eastus2euap', 'centraluseuap']
 // is overridden. Norway East is included as of 2026-05.
 var lowCapacityRegions = ['eastus', 'northeurope', 'westeurope', 'norwayeast']
 var cosmosDbRegion = contains(canaryRegions, location) ? 'westus' : location
+var effectiveCosmosAccountLocation = empty(cosmosDBLocation) ? cosmosDbRegion : cosmosDBLocation
+var effectiveCosmosDataLocation = empty(cosmosDBLocation)
+  ? (contains(lowCapacityRegions, location) ? 'eastus2' : location)
+  : cosmosDBLocation
 resource cosmosDB 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = if(!cosmosDBExists) {
   name: cosmosDBName
-  location: cosmosDbRegion
+  location: effectiveCosmosAccountLocation
   kind: 'GlobalDocumentDB'
   tags: defaultTags
   properties: {
@@ -89,7 +96,7 @@ resource cosmosDB 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = if(!cosmo
     enableFreeTier: false
     locations: [
       {
-        locationName: contains(lowCapacityRegions, location) ? 'eastus2' : location
+        locationName: effectiveCosmosDataLocation
         failoverPriority: 0
         isZoneRedundant: false
       }
