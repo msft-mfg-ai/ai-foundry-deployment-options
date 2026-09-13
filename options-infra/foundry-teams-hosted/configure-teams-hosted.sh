@@ -31,19 +31,32 @@ agent_json=$(azd ai agent show "$agent_name" --output json)
 agent_version=$(printf '%s' "$agent_json" | jq -r '.version // empty')
 hosted_identity_client_id=$(printf '%s' "$agent_json" | jq -r '.instance_identity.client_id // empty')
 agent_principal_id=$(printf '%s' "$agent_json" | jq -r '.instance_identity.principal_id // empty')
+blueprint_client_id=$(printf '%s' "$agent_json" | jq -r '.blueprint.client_id // empty')
 sso_app_id="${SSO_APP_ID:-}"
 sso_app_secret="${SSO_APP_SECRET:-}"
 sso_app_resource="${SSO_APP_RESOURCE:-}"
 sso_scopes="${SSO_SCOPES:-}"
 
-if [ -z "$agent_version" ] || [ -z "$hosted_identity_client_id" ] || [ -z "$agent_principal_id" ]; then
-  echo "azd did not return version and instance identity metadata for $agent_name." >&2
+if [ -z "$agent_version" ] || [ -z "$hosted_identity_client_id" ] || [ -z "$agent_principal_id" ] || [ -z "$blueprint_client_id" ]; then
+  echo "azd did not return version, instance identity, and blueprint metadata for $agent_name." >&2
   exit 1
 fi
 if [ -z "$sso_app_id" ] || [ -z "$sso_app_secret" ] || [ -z "$sso_app_resource" ] || [ -z "$sso_scopes" ]; then
   echo "SSO_APP_ID, SSO_APP_SECRET, SSO_APP_RESOURCE, and SSO_SCOPES are required." >&2
   exit 1
 fi
+
+set -- python3 configure-agent-identity-obo.py \
+  --blueprint-client-id "$blueprint_client_id" \
+  --bot-app-id "$sso_app_id"
+if [ -n "${CLOUD_HELPER_MCP_CLIENT_ID:-}" ] && [ -n "${CLOUD_HELPER_MCP_SCOPE:-}" ]; then
+  set -- "$@" \
+    --mcp-client-id "$CLOUD_HELPER_MCP_CLIENT_ID" \
+    --mcp-scope "$CLOUD_HELPER_MCP_SCOPE"
+fi
+"$@"
+agent_identity_sso_resource="api://${blueprint_client_id}"
+agent_identity_sso_scopes="${agent_identity_sso_resource}/access_as_user offline_access"
 
 bot_app_id="$sso_app_id"
 bot_identity_suffix=$(printf '%s' "$bot_app_id" | tr -d '-' | cut -c1-8)
@@ -91,6 +104,9 @@ az deployment group create \
     teamsSsoClientSecret="$sso_app_secret" \
     teamsSsoScopes="$sso_scopes" \
     teamsSsoTokenExchangeUrl="$sso_app_resource" \
+    agentIdentitySsoConnectionName="agent-blueprint-sso" \
+    agentIdentitySsoTokenExchangeUrl="$agent_identity_sso_resource" \
+    agentIdentitySsoScopes="$agent_identity_sso_scopes" \
   --output none
 
 session_admin_endpoint="${APIM_GATEWAY_URL%/}/teams-admin/${agent_name}/sessions/current"

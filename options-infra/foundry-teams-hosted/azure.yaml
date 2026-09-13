@@ -72,6 +72,16 @@ services:
         value: ${SSO_APP_ID}
       - name: TeamsSso__ClientSecret
         value: ${SSO_APP_SECRET}
+      - name: AgentIdentityObo__Enabled
+        value: "true"
+      - name: AgentIdentityObo__ConnectionName
+        value: agent-blueprint-sso
+      - name: AgentIdentityObo__BlueprintClientId
+        value: ${AGENT_IDENTITY_BLUEPRINT_CLIENT_ID}
+      - name: AgentIdentityObo__GraphScopes
+        value: https://graph.microsoft.com/User.Read
+      - name: AgentIdentityObo__McpScopes
+        value: ${CLOUD_HELPER_MCP_SCOPE}
       - name: JwtValidation__Enabled
         value: "false"
     protocols:

@@ -52,6 +52,15 @@ param teamsSsoScopes string = ''
 @description('Application ID URI used for Teams token exchange, for example api://botid-<app-id>.')
 param teamsSsoTokenExchangeUrl string = ''
 
+@description('Azure Bot OAuth connection that returns a user assertion audienced to the Agent Identity blueprint.')
+param agentIdentitySsoConnectionName string = ''
+
+@description('Agent Identity blueprint application ID URI.')
+param agentIdentitySsoTokenExchangeUrl string = ''
+
+@description('Agent Identity blueprint delegated scope plus offline_access.')
+param agentIdentitySsoScopes string = ''
+
 var apiId = 'teams-hosted-agents'
 var backendId = 'teams-hosted-agent-invocations'
 var sessionAdminApiId = 'teams-hosted-agent-sessions'
@@ -118,6 +127,32 @@ module teamsBot '../modules/bot/bot-service.bicep' = {
     ssoScopes: teamsSsoScopes
     ssoTokenExchangeUrl: teamsSsoTokenExchangeUrl
   }
+}
+
+var enableAgentIdentitySso = !empty(agentIdentitySsoConnectionName) && !empty(agentIdentitySsoTokenExchangeUrl) && !empty(agentIdentitySsoScopes)
+
+resource bot 'Microsoft.BotService/botServices@2023-09-15-preview' existing = {
+  name: botName
+}
+
+resource agentIdentitySsoConnection 'Microsoft.BotService/botServices/connections@2023-09-15-preview' = if (enableAgentIdentitySso) {
+  parent: bot
+  name: agentIdentitySsoConnectionName
+  location: 'global'
+  properties: {
+    serviceProviderId: '30dd229c-58e3-4a48-bdfd-91ec48eb906c'
+    serviceProviderDisplayName: 'Azure Active Directory v2'
+    clientId: teamsSsoClientId
+    clientSecret: teamsSsoClientSecret
+    scopes: agentIdentitySsoScopes
+    parameters: [
+      { key: 'tenantID', value: tenant().tenantId }
+      { key: 'tokenExchangeUrl', value: agentIdentitySsoTokenExchangeUrl }
+    ]
+  }
+  dependsOn: [
+    teamsBot
+  ]
 }
 
 resource backend 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' = {

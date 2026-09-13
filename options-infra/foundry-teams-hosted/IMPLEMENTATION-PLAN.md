@@ -245,16 +245,15 @@ Cosmos must not store:
 Authenticate the Teams user, make trusted identity attributes available to the
 agent, and enable allowlisted downstream delegated-token acquisition.
 
-**Status:** The diagnostic subset and SSO infrastructure automation are
-implemented. The azd preprovision hook creates the Teams SSO app registration,
-scope, Teams client preauthorizations, downstream delegated permission, and
-Bot OAuth credential. Postdeploy creates a FIC from the hosted instance
-identity to that bot app. The model-callable
-`inspect_teams_sso_token` tool retrieves a cached Bot Service token or starts
-the OAuth-card/token-exchange flow, handles `signin/tokenExchange` and
-`signin/verifyState`, and displays only an allowlist of decoded claims. It
-persists only a pending boolean. Automatic trusted-context injection,
-pending-message replay, deduplication, and `/signout` remain follow-up work.
+**Status:** Teams SSO bootstrap and Entra Agent Identity OBO are validated
+end-to-end. The Bot OAuth connection returns a user assertion audienced to the
+parent Agent Identity blueprint. The hosted runtime acquires an FMI-bound
+`AzureADTokenExchange` assertion as that blueprint, and the child Agent
+Identity exchanges both assertions for resource-specific delegated tokens.
+Graph `User.Read` and the configured MCP `mcp.access` scope are declared,
+admin-consented, and inherited from the blueprint. Trusted code selects the
+scope set; compact tokens are never returned to the model or persisted.
+Pending-message replay, deduplication, and `/signout` remain follow-up work.
 
 ### Application changes
 

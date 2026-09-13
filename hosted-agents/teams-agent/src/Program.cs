@@ -94,6 +94,8 @@ builder.Services.AddSingleton<IHostedService, GeneratedFileCleanupService>();
 builder.Services.AddSingleton<ITeamsFileService, TeamsFileService>();
 builder.Services.AddSingleton<TeamsSsoService>();
 builder.Services.AddSingleton<TeamsSsoToolContext>();
+builder.Services.AddSingleton<AgentIdentityToolContext>();
+builder.Services.AddSingleton<AgentIdentityOboService>();
 
 builder.Services.AddDefaultMsalAuth(builder.Configuration);
 builder.Services.AddSingleton<IConnections>(sp =>

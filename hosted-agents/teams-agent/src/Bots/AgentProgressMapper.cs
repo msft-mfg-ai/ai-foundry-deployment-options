@@ -43,6 +43,20 @@ internal static class AgentProgressMapper
         {
             return "Starting Teams sign-in...";
         }
+        if (string.Equals(
+                call.Name,
+                "get_my_graph_profile",
+                StringComparison.Ordinal))
+        {
+            return "Getting your Microsoft Graph profile...";
+        }
+        if (string.Equals(
+                call.Name,
+                "inspect_my_mcp_access",
+                StringComparison.Ordinal))
+        {
+            return "Checking your delegated MCP access...";
+        }
 
         if (call.Name is LoadSkillTool or ReadSkillResourceTool)
         {

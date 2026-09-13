@@ -49,6 +49,8 @@ public sealed class DirectHostedAgent : IAsyncDisposable
     private readonly ILogger<DirectHostedAgent> _logger;
     private readonly TokenCredential _credential;
     private readonly TeamsSsoToolContext _teamsSsoToolContext;
+    private readonly AgentIdentityOboService _agentIdentityObo;
+    private readonly AgentIdentityToolContext _agentIdentityToolContext;
     private readonly SemaphoreSlim _initializationLock = new(1, 1);
     private readonly ConcurrentDictionary<AgentSession, CodeExecutionContext> _codeExecutions =
         new(ReferenceEqualityComparer.Instance);
@@ -59,13 +61,17 @@ public sealed class DirectHostedAgent : IAsyncDisposable
         IConfiguration configuration,
         ILoggerFactory loggerFactory,
         TokenCredential credential,
-        TeamsSsoToolContext teamsSsoToolContext)
+        TeamsSsoToolContext teamsSsoToolContext,
+        AgentIdentityOboService agentIdentityObo,
+        AgentIdentityToolContext agentIdentityToolContext)
     {
         _configuration = configuration;
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<DirectHostedAgent>();
         _credential = credential;
         _teamsSsoToolContext = teamsSsoToolContext;
+        _agentIdentityObo = agentIdentityObo;
+        _agentIdentityToolContext = agentIdentityToolContext;
     }
 
     public bool Enabled => _configuration.GetValue("DirectAgent:Enabled", false);
@@ -451,14 +457,47 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                         Name = "inspect_teams_sso_token",
                         Description = "Trigger Microsoft Teams silent SSO and inspect a safe allowlist of claims from the resulting user token. The raw token is never returned.",
                     });
+                var localTools = new List<AITool>
+                {
+                    codeTool,
+                    teamsSsoTool,
+                };
+                if (_agentIdentityObo.Enabled)
+                {
+                    localTools.Add(
+                        AIFunctionFactory.Create(
+                            (CancellationToken toolCancellationToken) =>
+                                _agentIdentityToolContext.RunAsync(
+                                    AgentIdentityTokenTarget.Graph,
+                                    toolCancellationToken),
+                            new AIFunctionFactoryOptions
+                            {
+                                Name = "get_my_graph_profile",
+                                Description = "Get the signed-in Teams user's Microsoft Graph profile through Agent Identity on-behalf-of authentication. Returns safe profile fields and token claims; never returns tokens.",
+                            }));
+                    if (_agentIdentityObo.McpScopes.Count > 0)
+                    {
+                        localTools.Add(
+                            AIFunctionFactory.Create(
+                                (CancellationToken toolCancellationToken) =>
+                                    _agentIdentityToolContext.RunAsync(
+                                        AgentIdentityTokenTarget.Mcp,
+                                        toolCancellationToken),
+                                new AIFunctionFactoryOptions
+                                {
+                                    Name = "inspect_my_mcp_access",
+                                    Description = "Verify that the signed-in Teams user can obtain an Agent Identity delegated token for the configured MCP API. Returns only safe token claims; never returns the token.",
+                                }));
+                    }
+                }
+
                 var agentTools = toolboxTools
                     .Where(tool => !string.Equals(
                         tool.ProtocolTool.Name,
                         "code",
                         StringComparison.Ordinal))
                     .Cast<AITool>()
-                    .Append(codeTool)
-                    .Append(teamsSsoTool)
+                    .Concat(localTools)
                     .ToArray();
 
                 agent = projectClient.AsAIAgent(

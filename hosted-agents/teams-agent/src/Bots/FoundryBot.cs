@@ -19,6 +19,8 @@ public class FoundryBot(
     InvocationContextStore invocationContexts,
     TeamsSsoService teamsSso,
     TeamsSsoToolContext teamsSsoToolContext,
+    AgentIdentityOboService agentIdentityObo,
+    AgentIdentityToolContext agentIdentityToolContext,
     ILogger<FoundryBot> logger) : TeamsActivityHandler
 {
     protected override async Task<InvokeResponse> OnInvokeActivityAsync(
@@ -49,17 +51,28 @@ public class FoundryBot(
                 cancellationToken);
         }
 
-        TokenExchangePayload payload;
+        var payload = new TokenExchangePayload(
+            null,
+            null,
+            teamsSso.ConnectionName,
+            null);
         try
         {
             payload = ReadTokenExchangePayload(
                 turnContext.Activity.Value);
-            if (!string.IsNullOrWhiteSpace(
-                    payload.ConnectionName)
-                && !string.Equals(
-                    payload.ConnectionName,
-                    teamsSso.ConnectionName,
-                    StringComparison.Ordinal))
+            var connectionName = payload.ConnectionName;
+            if (string.IsNullOrWhiteSpace(connectionName))
+            {
+                var conversation = await state.GetOrCreateAsync(
+                    UserConversationKey.FromActivity(
+                        turnContext.Activity),
+                    cancellationToken);
+                connectionName =
+                    conversation.PendingAgentIdentitySignIn
+                        ? agentIdentityObo.ConnectionName
+                        : teamsSso.ConnectionName;
+            }
+            if (!IsAcceptedSsoConnection(connectionName))
             {
                 return CreateTokenExchangeResponse(
                     payload,
@@ -73,12 +86,14 @@ public class FoundryBot(
                     StringComparison.OrdinalIgnoreCase)
                 ? await teamsSso.ExchangeTokenAsync(
                     turnContext,
+                    connectionName,
                     payload.Request
                         ?? throw new InvalidOperationException(
                             "The Teams token-exchange payload is invalid."),
                     cancellationToken)
                 : await teamsSso.GetUserTokenAsync(
                     turnContext,
+                    connectionName,
                     payload.State,
                     cancellationToken);
 
@@ -87,6 +102,7 @@ public class FoundryBot(
                 await CompleteSsoFailureAsync(
                     turnContext,
                     "Teams completed the sign-in flow, but Azure Bot Service did not return a user token.",
+                    connectionName,
                     cancellationToken);
                 return CreateTokenExchangeResponse(
                     payload,
@@ -94,10 +110,23 @@ public class FoundryBot(
                     "Token exchange did not return a user token.");
             }
 
-            await CompleteSsoDiagnosticAsync(
-                turnContext,
-                token.Token,
-                cancellationToken);
+            if (string.Equals(
+                    connectionName,
+                    agentIdentityObo.ConnectionName,
+                    StringComparison.Ordinal))
+            {
+                await CompleteAgentIdentitySignInAsync(
+                    turnContext,
+                    token.Token,
+                    cancellationToken);
+            }
+            else
+            {
+                await CompleteSsoDiagnosticAsync(
+                    turnContext,
+                    token.Token,
+                    cancellationToken);
+            }
             return CreateTokenExchangeResponse(
                 payload,
                 StatusCodes.Status200OK,
@@ -111,6 +140,7 @@ public class FoundryBot(
             await CompleteSsoFailureAsync(
                 turnContext,
                 "Teams SSO token exchange failed before a user token was returned.",
+                payload.ConnectionName,
                 cancellationToken);
             return CreateTokenExchangeResponse(
                 new TokenExchangePayload(
@@ -271,6 +301,18 @@ public class FoundryBot(
                     turnContext,
                     conversationKey,
                     conversation,
+                    toolCancellationToken);
+                ssoCompletionPending = result.CompletionPending;
+                return result.ToolResult;
+            });
+        using var agentIdentityToolScope = agentIdentityToolContext.Push(
+            async (target, toolCancellationToken) =>
+            {
+                var result = await RunAgentIdentityToolAsync(
+                    turnContext,
+                    conversationKey,
+                    conversation,
+                    target,
                     toolCancellationToken);
                 ssoCompletionPending = result.CompletionPending;
                 return result.ToolResult;
@@ -476,6 +518,152 @@ public class FoundryBot(
             cancellationToken);
     }
 
+    private async Task<SsoDiagnosticResult> RunAgentIdentityToolAsync(
+        ITurnContext turnContext,
+        UserConversationKey conversationKey,
+        ConversationState conversation,
+        AgentIdentityTokenTarget target,
+        CancellationToken cancellationToken)
+    {
+        var connectionName = agentIdentityObo.ConnectionName;
+        if (!agentIdentityObo.Enabled
+            || string.IsNullOrWhiteSpace(connectionName))
+        {
+            return new SsoDiagnosticResult(
+                JsonSerializer.Serialize(new
+                {
+                    succeeded = false,
+                    reason =
+                        "Agent Identity OBO diagnostics are not configured.",
+                }),
+                CompletionPending: false);
+        }
+
+        var token = await teamsSso.GetUserTokenAsync(
+            turnContext,
+            connectionName,
+            magicCode: null,
+            cancellationToken);
+        if (token is not null
+            && !string.IsNullOrWhiteSpace(token.Token))
+        {
+            return new SsoDiagnosticResult(
+                await RunAgentIdentityTargetAsync(
+                    target,
+                    token.Token,
+                    cancellationToken),
+                CompletionPending: false);
+        }
+
+        var signIn = await teamsSso.GetSignInResourceAsync(
+            turnContext,
+            connectionName,
+            cancellationToken);
+        if (signIn is null)
+        {
+            return new SsoDiagnosticResult(
+                JsonSerializer.Serialize(new
+                {
+                    succeeded = false,
+                    reason =
+                        "The Agent Identity blueprint OAuth connection did not return a sign-in resource.",
+                }),
+                CompletionPending: false);
+        }
+
+        conversation.PendingAgentIdentitySignIn = true;
+        conversation.PendingAgentIdentityTarget = target;
+        await state.SaveAsync(
+            conversationKey,
+            conversation,
+            cancellationToken);
+        await turnContext.SendActivityAsync(
+            MessageFactory.Attachment(new Attachment
+            {
+                ContentType = OAuthCard.ContentType,
+                Content = new OAuthCard
+                {
+                    Text =
+                        "Sign in to use delegated Agent Identity tools.",
+                    ConnectionName = connectionName,
+                    TokenExchangeResource =
+                        signIn.TokenExchangeResource,
+                    Buttons =
+                    [
+                        new CardAction
+                        {
+                            Title = "Validate Agent ID OBO",
+                            Type = ActionTypes.Signin,
+                            Value = signIn.SignInLink,
+                        },
+                    ],
+                },
+            }),
+            cancellationToken);
+
+        return new SsoDiagnosticResult(
+            JsonSerializer.Serialize(new
+            {
+                succeeded = false,
+                pending = true,
+                tokenIncluded = false,
+                message =
+                    "The Agent ID OAuth card was sent. Do not send an interim response.",
+            }),
+            CompletionPending: true);
+    }
+
+    private async Task CompleteAgentIdentitySignInAsync(
+        ITurnContext<IInvokeActivity> turnContext,
+        string userAssertion,
+        CancellationToken cancellationToken)
+    {
+        var conversationKey =
+            UserConversationKey.FromActivity(turnContext.Activity);
+        var conversation = await state.GetOrCreateAsync(
+            conversationKey,
+            cancellationToken);
+        if (!conversation.PendingAgentIdentitySignIn)
+        {
+            return;
+        }
+
+        conversation.PendingAgentIdentitySignIn = false;
+        var target = conversation.PendingAgentIdentityTarget
+            ?? AgentIdentityTokenTarget.Graph;
+        conversation.PendingAgentIdentityTarget = null;
+        await state.SaveAsync(
+            conversationKey,
+            conversation,
+            cancellationToken);
+        var result = await RunAgentIdentityTargetAsync(
+            target,
+            userAssertion,
+            cancellationToken);
+        await turnContext.SendActivityAsync(
+            MessageFactory.Text(
+                $"**Agent Identity delegated access**\n```json\n{result}\n```"),
+            cancellationToken);
+    }
+
+    private Task<string> RunAgentIdentityTargetAsync(
+        AgentIdentityTokenTarget target,
+        string userAssertion,
+        CancellationToken cancellationToken) =>
+        target switch
+        {
+            AgentIdentityTokenTarget.Graph =>
+                agentIdentityObo.ExchangeForGraphAsync(
+                    userAssertion,
+                    cancellationToken),
+            AgentIdentityTokenTarget.Mcp =>
+                agentIdentityObo.InspectMcpAccessAsync(
+                    userAssertion,
+                    cancellationToken),
+            _ => throw new InvalidOperationException(
+                $"Unsupported Agent Identity token target: {target}."),
+        };
+
     private async Task<InvokeResponse> HandleSsoFailureAsync(
         ITurnContext<IInvokeActivity> turnContext,
         CancellationToken cancellationToken)
@@ -485,6 +673,7 @@ public class FoundryBot(
             ? null
             : ToJObject(value);
         var code = data?.Value<string>("code");
+        var connectionName = data?.Value<string>("connectionName");
         logger.LogWarning(
             "Teams reported an SSO sign-in failure with code {FailureCode}.",
             string.IsNullOrWhiteSpace(code) ? "unknown" : code);
@@ -493,6 +682,7 @@ public class FoundryBot(
             string.IsNullOrWhiteSpace(code)
                 ? "Teams reported that SSO sign-in failed."
                 : $"Teams reported that SSO sign-in failed ({code}).",
+            connectionName,
             cancellationToken);
         return new InvokeResponse
         {
@@ -503,6 +693,7 @@ public class FoundryBot(
     private async Task CompleteSsoFailureAsync(
         ITurnContext<IInvokeActivity> turnContext,
         string reason,
+        string? connectionName,
         CancellationToken cancellationToken)
     {
         var conversationKey =
@@ -510,12 +701,30 @@ public class FoundryBot(
         var conversation = await state.GetOrCreateAsync(
             conversationKey,
             cancellationToken);
-        if (!conversation.PendingSsoDiagnostic)
+        var agentIdentityFailure = string.Equals(
+            connectionName,
+            agentIdentityObo.ConnectionName,
+            StringComparison.Ordinal)
+            || (string.IsNullOrWhiteSpace(connectionName)
+                && conversation.PendingAgentIdentitySignIn);
+        if (agentIdentityFailure)
         {
-            return;
+            if (!conversation.PendingAgentIdentitySignIn)
+            {
+                return;
+            }
+            conversation.PendingAgentIdentitySignIn = false;
+            conversation.PendingAgentIdentityTarget = null;
+        }
+        else
+        {
+            if (!conversation.PendingSsoDiagnostic)
+            {
+                return;
+            }
+            conversation.PendingSsoDiagnostic = false;
         }
 
-        conversation.PendingSsoDiagnostic = false;
         await state.SaveAsync(
             conversationKey,
             conversation,
@@ -525,6 +734,17 @@ public class FoundryBot(
                 $"{reason} No token was stored or displayed. Try the SSO diagnostic again after correcting the OAuth connection."),
             cancellationToken);
     }
+
+    private bool IsAcceptedSsoConnection(string? connectionName)
+        => !string.IsNullOrWhiteSpace(connectionName)
+            && (string.Equals(
+                    connectionName,
+                    teamsSso.ConnectionName,
+                    StringComparison.Ordinal)
+                || string.Equals(
+                    connectionName,
+                    agentIdentityObo.ConnectionName,
+                    StringComparison.Ordinal));
 
     private static TokenExchangePayload ReadTokenExchangePayload(
         object? value)

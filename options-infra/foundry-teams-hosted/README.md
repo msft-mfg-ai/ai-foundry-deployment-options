@@ -27,7 +27,7 @@ Teams
        and the PowerPoint skill
      - per-invocation Toolbox: Cloud Helper MCP through a project connection
      - Toolbox PowerPoint skill with the packaged OTIS template
-     - `inspect_teams_sso_token` diagnostic tool for Teams silent SSO
+     - Teams SSO bootstrap plus Agent Identity OBO for Graph and direct MCP clients
      - protocol 2.0 user and call context for multiplexed user isolation
      - authenticated Code Interpreter container-file download
      - native Teams file consent and OneDrive/SharePoint upload
@@ -149,10 +149,12 @@ interchangeable:
    the current protocol user. The hosted identity receives the same custom
    user-identity impersonation action at project scope because it is the direct
    caller from the container to Toolbox.
-5. For the optional SSO diagnostic, Teams obtains the `access_as_user` token
-   and Azure Bot Service exchanges, caches, and refreshes the downstream user
-   token through the `teams-sso` OAuth connection. The bot persists only a
-   pending-diagnostic boolean; it never stores an access or refresh token.
+5. Teams obtains an `access_as_user` assertion audienced to the hosted agent's
+   parent Agent Identity blueprint through the `agent-blueprint-sso` Bot OAuth
+   connection. The hosted runtime requests the blueprint's
+   `AzureADTokenExchange` assertion, bound to the child Agent Identity through
+   its FMI path. Trusted tool code combines both assertions in Agent Identity
+   OBO and requests a token for the exact downstream scope set.
 
 APIM preserves the first token in `x-client-bot-authorization`; the C# handler
 restores it only for the Bot Framework adapter. Do not reuse that token for
@@ -193,27 +195,30 @@ Foundry call ID and user identity context only. Consequently, adding a Graph
 MCP tool to the Toolbox does not automatically forward the Bot Service token
 to it.
 
-Use one of these designs for delegated tools:
+The validated implementation uses one blueprint-audience user assertion and
+requests resource tokens on demand:
 
-1. **One Bot OAuth connection per resource.** Configure a `graph-sso`
-   connection for Graph scopes and a separate connection for each custom MCP
-   resource. The hosted bot retrieves the correct token by connection name
-   and calls that API or MCP server through a request-scoped client.
-2. **A middle-tier OBO broker.** Send the Teams bootstrap token to a trusted
-   backend that performs OAuth 2.0 on-behalf-of exchange for the target
-   resource. The broker must request and cache tokens separately by tenant,
-   user, client, resource, and scope set.
-3. **Foundry-managed user authentication.** Let the Foundry connection and
-   Toolbox own consent and token acquisition. This is the preferred
-   abstraction when supported by the caller, but the current Cloud Helper
-   project-connection path rejects this hosted caller with `User identity
-   authentication for this tool is not supported for this caller`.
+```text
+Teams SSO
+  -> Tc (aud = Agent Identity blueprint)
+  -> blueprint-managed AzureADTokenExchange assertion T1
+  -> Agent Identity OBO
+       -> Graph scopes when trusted Graph code runs
+       -> mcp.access when a direct MCP client runs
+```
 
-For Microsoft Graph specifically, the simplest working implementation is a
-separate Azure Bot OAuth connection whose scopes are Graph scopes such as
-`User.Read offline_access`, followed by a direct request-scoped Graph or MCP
-client in the hosted agent. Never send a Cloud Helper token to Graph or a
-Graph token to Cloud Helper.
+`AgentIdentityOboService.GetUserAccessTokenAsync` accepts an explicit scope set
+from trusted code. Scope names are never accepted from model arguments. The
+`get_my_graph_profile` structured tool requests Graph `User.Read`; the
+`inspect_my_mcp_access` tool verifies issuance for the configured MCP scope
+without returning the compact token. A direct MCP transport can call the same
+service and attach the returned token in its HTTP authorization handler.
+
+Foundry Toolbox remains appropriate for application-authenticated tools and
+Foundry-managed user-authentication integrations. It does not currently expose
+a hook for this hosted agent to inject the already-acquired per-user bearer
+token into a custom MCP request. Use a direct MCP client configured in the
+hosted code when that token transport is required.
 
 ## Configuration
 
@@ -223,6 +228,22 @@ Graph token to Cloud Helper.
 | `TEAMS_APP_DISPLAY_NAME` | `Teams Hosted Agent` | Generated Teams app name |
 | `CLOUD_HELPER_MCP_CLIENT_ID` | none | Client ID of the downstream Cloud Helper API whose delegated scope is granted to the generated SSO app |
 | `CLOUD_HELPER_MCP_SCOPE` | `https://ai.azure.com/user_impersonation` | Delegated downstream scope requested by the Bot OAuth connection |
+| `AGENT_IDENTITY_BLUEPRINT_CLIENT_ID` | discovered after hosted-agent deployment | Parent Agent Identity blueprint used to acquire the FMI-bound exchange assertion |
+| `AGENT_IDENTITY_SSO_RESOURCE` | `api://<blueprint-client-id>` | Audience of the Teams user assertion used by Agent Identity OBO |
+| `AGENT_IDENTITY_SSO_SCOPES` | `<resource>/access_as_user offline_access` | Scopes requested by the `agent-blueprint-sso` Bot OAuth connection |
+
+The hosted-agent postdeploy hook discovers `.blueprint.client_id` from
+`azd ai agent show`, runs `configure-agent-identity-obo.py`, and:
+
+- exposes and preauthorizes the blueprint `access_as_user` scope;
+- grants and admin-consents Graph `User.Read` and the configured MCP scope;
+- configures scope-only inheritance for both downstream resources;
+- persists the discovered blueprint values in the azd environment;
+- creates or updates the `agent-blueprint-sso` Bot OAuth connection in Bicep.
+
+The first hosted-agent deployment creates the Foundry-managed blueprint. A
+subsequent hosted-agent deployment consumes the persisted blueprint client ID;
+later deployments are fully idempotent.
 
 The preprovision hook creates or reuses
 `sso-foundry-teams-<AZURE_ENV_NAME>`, creates its service principal, sets

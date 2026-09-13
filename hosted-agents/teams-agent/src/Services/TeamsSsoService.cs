@@ -26,9 +26,20 @@ public sealed class TeamsSsoService(
         ITurnContext turnContext,
         string? magicCode,
         CancellationToken cancellationToken)
+        => await GetUserTokenAsync(
+            turnContext,
+            ConnectionName,
+            magicCode,
+            cancellationToken);
+
+    public async Task<TokenResponse?> GetUserTokenAsync(
+        ITurnContext turnContext,
+        string? connectionName,
+        string? magicCode,
+        CancellationToken cancellationToken)
     {
         var client = GetClient(turnContext);
-        if (client is null || !Enabled)
+        if (client is null || string.IsNullOrWhiteSpace(connectionName))
         {
             return null;
         }
@@ -37,7 +48,7 @@ public sealed class TeamsSsoService(
         {
             return await client.GetUserTokenAsync(
                 turnContext.Activity.From.Id,
-                ConnectionName!,
+                connectionName,
                 turnContext.Activity.ChannelId,
                 magicCode,
                 cancellationToken);
@@ -47,7 +58,7 @@ public sealed class TeamsSsoService(
             logger.LogWarning(
                 ex,
                 "Teams SSO cached-token lookup failed for connection {ConnectionName}.",
-                ConnectionName);
+                connectionName);
             return null;
         }
     }
@@ -55,9 +66,18 @@ public sealed class TeamsSsoService(
     public async Task<SignInResource?> GetSignInResourceAsync(
         ITurnContext turnContext,
         CancellationToken cancellationToken)
+        => await GetSignInResourceAsync(
+            turnContext,
+            ConnectionName,
+            cancellationToken);
+
+    public async Task<SignInResource?> GetSignInResourceAsync(
+        ITurnContext turnContext,
+        string? connectionName,
+        CancellationToken cancellationToken)
     {
         var client = GetClient(turnContext);
-        if (client is null || !Enabled)
+        if (client is null || string.IsNullOrWhiteSpace(connectionName))
         {
             return null;
         }
@@ -65,7 +85,7 @@ public sealed class TeamsSsoService(
         try
         {
             return await client.GetSignInResourceAsync(
-                ConnectionName!,
+                connectionName,
                 turnContext.Activity,
                 finalRedirect: null,
                 cancellationToken);
@@ -75,13 +95,24 @@ public sealed class TeamsSsoService(
             logger.LogWarning(
                 ex,
                 "Teams SSO sign-in resource lookup failed for connection {ConnectionName}.",
-                ConnectionName);
+                connectionName);
             return null;
         }
     }
 
     public async Task<TokenResponse?> ExchangeTokenAsync(
         ITurnContext turnContext,
+        TokenExchangeRequest request,
+        CancellationToken cancellationToken)
+        => await ExchangeTokenAsync(
+            turnContext,
+            ConnectionName,
+            request,
+            cancellationToken);
+
+    public async Task<TokenResponse?> ExchangeTokenAsync(
+        ITurnContext turnContext,
+        string? connectionName,
         TokenExchangeRequest request,
         CancellationToken cancellationToken)
     {
@@ -94,7 +125,7 @@ public sealed class TeamsSsoService(
         var client = GetClient(turnContext)
             ?? throw new InvalidOperationException(
                 "The Bot Framework user-token client is unavailable.");
-        if (!Enabled)
+        if (string.IsNullOrWhiteSpace(connectionName))
         {
             throw new InvalidOperationException(
                 "Teams SSO is not configured.");
@@ -102,7 +133,7 @@ public sealed class TeamsSsoService(
 
         return await client.ExchangeTokenAsync(
             turnContext.Activity.From.Id,
-            ConnectionName!,
+            connectionName,
             turnContext.Activity.ChannelId,
             request,
             cancellationToken);

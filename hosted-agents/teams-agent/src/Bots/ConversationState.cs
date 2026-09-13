@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using AgentChat.Services;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Core.Models;
 using Microsoft.Agents.Storage;
@@ -24,6 +25,18 @@ public class ConversationState : IStoreItem
     /// token-exchange invoke. No token is persisted.
     /// </summary>
     public bool PendingSsoDiagnostic { get; set; }
+
+    /// <summary>
+    /// Indicates that the Agent ID OBO diagnostic is waiting for a
+    /// blueprint-audience user token. No token is persisted.
+    /// </summary>
+    public bool PendingAgentIdentitySignIn { get; set; }
+
+    /// <summary>
+    /// Allowlisted delegated resource requested by the pending Agent Identity
+    /// sign-in flow. No scope or token is supplied by the model.
+    /// </summary>
+    public AgentIdentityTokenTarget? PendingAgentIdentityTarget { get; set; }
 
     /// <summary>
     /// Conversation reference captured on every turn so we can do proactive

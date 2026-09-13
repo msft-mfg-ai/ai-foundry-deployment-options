@@ -24,16 +24,35 @@ $agent = azd ai agent show $agentName --output json | ConvertFrom-Json
 $agentVersion = $agent.version
 $hostedIdentityClientId = $agent.instance_identity.client_id
 $agentPrincipalId = $agent.instance_identity.principal_id
+$blueprintClientId = $agent.blueprint.client_id
 $ssoAppId = $env:SSO_APP_ID
 $ssoAppSecret = $env:SSO_APP_SECRET
 $ssoAppResource = $env:SSO_APP_RESOURCE
 $ssoScopes = $env:SSO_SCOPES
-if (-not $agentVersion -or -not $hostedIdentityClientId -or -not $agentPrincipalId) {
-  throw "azd did not return version and instance identity metadata for $agentName."
+if (-not $agentVersion -or -not $hostedIdentityClientId -or -not $agentPrincipalId -or -not $blueprintClientId) {
+  throw "azd did not return version, instance identity, and blueprint metadata for $agentName."
 }
 if (-not $ssoAppId -or -not $ssoAppSecret -or -not $ssoAppResource -or -not $ssoScopes) {
   throw 'SSO_APP_ID, SSO_APP_SECRET, SSO_APP_RESOURCE, and SSO_SCOPES are required.'
 }
+
+$agentIdentityArgs = @(
+  'configure-agent-identity-obo.py',
+  '--blueprint-client-id', $blueprintClientId,
+  '--bot-app-id', $ssoAppId
+)
+if ($env:CLOUD_HELPER_MCP_CLIENT_ID -and $env:CLOUD_HELPER_MCP_SCOPE) {
+  $agentIdentityArgs += @(
+    '--mcp-client-id', $env:CLOUD_HELPER_MCP_CLIENT_ID,
+    '--mcp-scope', $env:CLOUD_HELPER_MCP_SCOPE
+  )
+}
+& python @agentIdentityArgs
+if ($LASTEXITCODE -ne 0) {
+  throw 'Agent Identity OBO configuration failed.'
+}
+$agentIdentitySsoResource = "api://$blueprintClientId"
+$agentIdentitySsoScopes = "$agentIdentitySsoResource/access_as_user offline_access"
 
 $botAppId = $ssoAppId
 $botIdentitySuffix = $botAppId.Replace('-', '').Substring(0, 8)
@@ -84,6 +103,9 @@ az deployment group create `
     teamsSsoClientSecret=$ssoAppSecret `
     teamsSsoScopes=$ssoScopes `
     teamsSsoTokenExchangeUrl=$ssoAppResource `
+    agentIdentitySsoConnectionName=agent-blueprint-sso `
+    agentIdentitySsoTokenExchangeUrl=$agentIdentitySsoResource `
+    agentIdentitySsoScopes=$agentIdentitySsoScopes `
   --output none
 
 $sessionAdminEndpoint = "$($env:APIM_GATEWAY_URL.TrimEnd('/'))/teams-admin/$agentName/sessions/current"
