@@ -347,6 +347,9 @@ See the visual walkthrough in
 [`docs/teams-sso-auth-flow.html`](docs/teams-sso-auth-flow.html) and edit the
 source diagram in
 [`docs/teams-sso-auth-flow.excalidraw`](docs/teams-sso-auth-flow.excalidraw).
+For the validated Entra Agent Identity OBO configuration, token sequence,
+permission inheritance, and Azure role assignments, open
+[`docs/agent-identity-obo-flow.html`](docs/agent-identity-obo-flow.html).
 
 The sample creates one Teams-facing hosted agent. To add another, declare
 another Invocations/Responses service and extend the runtime Bicep agent maps.
