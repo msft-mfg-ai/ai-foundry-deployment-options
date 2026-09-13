@@ -1,20 +1,21 @@
 #!/usr/bin/env sh
 # =============================================================================
-# Publish N Foundry agents to Microsoft 365 + build N×2 Teams sideload zips.
+# Publish N Foundry agents to Microsoft 365 + build N×3 Teams sideload zips.
 # =============================================================================
 #
 # Multi-agent variant of the publish hook. Reads the multi-agent contract
 # emitted by main.bicep and processes each agent in turn:
 #   1. POSTs `/microsoft365/publish` with the agent's guid + blueprintAppId
 #      (idempotent — "version already exists" is treated as success).
-#   2. Writes 2 Teams app zips per agent into ./teams-app/build/:
+#   2. Writes 3 Teams app zips per agent into ./teams-app/build/:
 #        - teams-app-<agent>-direct.zip   (Foundry activityprotocol bot)
 #        - teams-app-<agent>-proxy.zip    (custom proxy bot with Teams SSO)
+#        - teams-app-<agent>-tab.zip      (web chat tab; no Azure Bot Service)
 #
 # Required outputs from main.bicep (also written to azd env):
 #   AGENT_NAMES              JSON array of agent names
 #   AGENT_PUBLISH_INFO       JSON array of {agentName,agentGuid,blueprintAppId}
-#   TEAMS_MANIFESTS          JSON array of {agentName,direct,proxy}
+#   TEAMS_MANIFESTS          JSON array of {agentName,direct,proxy,tab}
 #   FOUNDRY_NAME             Foundry account name
 #   FOUNDRY_RESOURCE_GROUP   RG containing the Foundry account
 #   PROJECT_NAME             Foundry project name
@@ -129,7 +130,7 @@ PY
     rm -f "$BODY_FILE"
   fi
 
-  # Extract direct + proxy manifests for this agent, inject native Teams
+  # Extract direct + proxy + tab manifests for this agent, inject native Teams
   # command lists (so /reset, /agents, etc. appear in the slash-autocomplete
   # and command menu), and zip them.
   AGENT_NAME="$AGENT" python3 - "$MANIFESTS" "$BUILD_DIR" <<'PY'
@@ -176,7 +177,7 @@ def inject_command_lists(manifest):
         }]
     return manifest
 
-for kind in ('direct', 'proxy'):
+for kind in ('direct', 'proxy', 'tab'):
     m = match.get(kind)
     if not m:
         continue
@@ -187,7 +188,7 @@ for kind in ('direct', 'proxy'):
     print(f"  wrote {out}")
 PY
 
-  for kind in direct proxy; do
+  for kind in direct proxy tab; do
     MANIFEST_FILE="${BUILD_DIR}/manifest-${AGENT}-${kind}.json"
     [ -f "$MANIFEST_FILE" ] || continue
     ZIP_FILE="${BUILD_DIR}/teams-app-${AGENT}-${kind}.zip"

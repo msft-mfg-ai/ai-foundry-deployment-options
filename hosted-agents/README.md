@@ -10,6 +10,7 @@ infrastructure samples so each sample can still be provisioned independently.
 | `copilot-canary` | `copilot-canary` | `options-infra/ai-gateway-pe-testing` |
 | `vnet-mcp-agent` | `hosted-agent-no-cap`, `hosted-agent-with-cap` | `options-infra/foundry-byo-vnet-no-dependencies` |
 | `toolbox-agent` | `toolbox-oauth-test`, `toolbox-code-interpreter-test` | `hosted-agents/toolbox-agent` |
+| `teams-agent` | `teams-hosted-agent` | `options-infra/foundry-teams-hosted` |
 | `perf-support-agent/hosted` | `support-agent-hosted-bypass-mock`, `support-agent-hosted-bypass-real`, `support-agent-hosted-mock`, `support-agent-hosted-real` | `options-infra/foundry-perf-testing` |
 
 `perf-support-agent/custom` is the Container Apps comparison implementation,

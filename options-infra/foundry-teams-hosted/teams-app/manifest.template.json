@@ -1,0 +1,67 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.22/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.22",
+  "version": "1.0.2",
+  "id": "00000000-0000-0000-0000-000000000000",
+  "developer": {
+    "name": "Foundry POC",
+    "websiteUrl": "https://www.example.com",
+    "privacyUrl": "https://www.example.com/privacy",
+    "termsOfUseUrl": "https://www.example.com/terms"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "name": {
+    "short": "Teams Hosted Agent",
+    "full": "Teams Hosted Agent"
+  },
+  "description": {
+    "short": "Self-contained Microsoft Foundry hosted agent for Teams.",
+    "full": "Self-contained Microsoft Foundry hosted agent for Teams using the Invocations protocol."
+  },
+  "accentColor": "#5B67D1",
+  "bots": [
+    {
+      "botId": "00000000-0000-0000-0000-000000000000",
+      "scopes": [
+        "personal",
+        "team",
+        "groupChat"
+      ],
+      "supportsFiles": true,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": [
+            "personal",
+            "team",
+            "groupChat"
+          ],
+          "commands": [
+            {
+              "title": "/agent",
+              "description": "Show active agent + project info"
+            },
+            {
+              "title": "/new",
+              "description": "Start a fresh thread (alias: /reset)"
+            },
+            {
+              "title": "/debug",
+              "description": "Show redacted runtime and request diagnostics"
+            },
+            {
+              "title": "/help",
+              "description": "List commands"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "validDomains": [
+    "token.botframework.com"
+  ]
+}

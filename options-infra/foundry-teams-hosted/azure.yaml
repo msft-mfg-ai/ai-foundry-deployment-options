@@ -1,0 +1,326 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+requiredVersions:
+  extensions:
+    azure.ai.agents: ">=1.0.0-beta.13"
+    azure.ai.connections: ">=1.0.0-beta.6"
+    azure.ai.projects: ">=1.0.0-beta.9"
+    azure.ai.skills: ">=1.0.0-beta.5"
+    azure.ai.toolboxes: ">=1.0.0-beta.6"
+
+name: foundry-teams-hosted
+
+infra:
+  provider: bicep
+  path: .
+  module: main
+
+services:
+  teams-hosted-agent:
+    host: azure.ai.agent
+    language: docker
+    project: .hosted-agent-build/teams-agent
+    uses:
+      - teams-project
+      - teams-tools
+      - teams-user-tools
+    toolboxes:
+      - teams-tools
+      - teams-user-tools
+    kind: hosted
+    name: teams-hosted-agent
+    displayName: Teams Hosted Agent
+    description: Self-contained C# Teams agent with direct Foundry inference and Toolbox tools.
+    container:
+      resources:
+        cpu: "1.0"
+        memory: 2Gi
+    sessionConfiguration:
+      idleTimeoutSeconds: 300
+    environmentVariables:
+      - name: HostedAgent__Enabled
+        value: "true"
+      - name: TeamsAgent__ProjectEndpoint
+        value: ${FOUNDRY_PROJECT_ENDPOINT}
+      - name: TeamsAgent__ProjectResourceId
+        value: ${FOUNDRY_PROJECT_ID}
+      - name: DirectAgent__Enabled
+        value: "true"
+      - name: DirectAgent__Name
+        value: teams-hosted-agent
+      - name: DirectAgent__Model
+        value: ${AI_GATEWAY_CONNECTION_DYNAMIC}/${CHAT_MODEL}
+      - name: DirectAgent__ToolboxName
+        value: teams-tools
+      - name: DirectAgent__ToolboxEndpoint
+        value: ${TOOLBOX_TEAMS_TOOLS_MCP_ENDPOINT}
+      - name: DirectAgent__UserToolboxName
+        value: teams-user-tools
+      - name: DirectAgent__UserToolboxEndpoint
+        value: ${TOOLBOX_TEAMS_USER_TOOLS_MCP_ENDPOINT}
+      - name: Cosmos__Endpoint
+        value: ${COSMOS_ENDPOINT}
+      - name: Cosmos__Database
+        value: ${COSMOS_DATABASE}
+      - name: Cosmos__Container
+        value: ${COSMOS_CONTAINER}
+      - name: MicrosoftAppTenantId
+        value: ${AZURE_TENANT_ID}
+      - name: TeamsSso__ConnectionName
+        value: teams-sso
+      - name: TeamsSso__AppId
+        value: ${SSO_APP_ID}
+      - name: TeamsSso__ClientSecret
+        value: ${SSO_APP_SECRET}
+      - name: AgentIdentityObo__Enabled
+        value: "true"
+      - name: AgentIdentityObo__ConnectionName
+        value: agent-blueprint-sso
+      - name: AgentIdentityObo__BlueprintClientId
+        value: ${AGENT_IDENTITY_BLUEPRINT_CLIENT_ID}
+      - name: AgentIdentityObo__GraphScopes
+        value: https://graph.microsoft.com/User.Read
+      - name: AgentIdentityObo__McpScopes
+        value: ${CLOUD_HELPER_MCP_SCOPE}
+      - name: JwtValidation__Enabled
+        value: "false"
+    protocols:
+      - protocol: invocations
+        version: 2.0.0
+      - protocol: responses
+        version: 2.0.0
+    agentEndpoint:
+      protocols:
+        - invocations
+        - responses
+      authorizationSchemes:
+        - type: Entra
+    hooks:
+      prebuild:
+        windows:
+          shell: pwsh
+          dir: ../..
+          run: |
+            & '../scripts/sync-hosted-agents.ps1' @(
+              '../../hosted-agents/teams-agent=.hosted-agent-build/teams-agent'
+            )
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        posix:
+          shell: sh
+          dir: ../..
+          run: |
+            set -eu
+            sh ../scripts/sync-hosted-agents.sh \
+              ../../hosted-agents/teams-agent=.hosted-agent-build/teams-agent
+      postdeploy:
+        windows:
+          shell: pwsh
+          run: ../../configure-teams-hosted.ps1
+          interactive: false
+          continueOnError: false
+        posix:
+          shell: sh
+          run: sh ../../configure-teams-hosted.sh
+          interactive: false
+          continueOnError: false
+
+  teams-tools:
+    host: azure.ai.toolbox
+    uses:
+      - teams-project
+      - powerpoint
+    description: Foundry Toolbox exposed to the Teams assistant for research and presentation generation.
+    skills:
+      - name: powerpoint
+    tools:
+      - type: mcp
+        connection: teams-public-mcp
+        server_label: microsoft-learn
+      - type: web_search
+        name: web
+      - type: code_interpreter
+        name: code
+        container:
+          type: auto
+    hooks:
+      postdeploy:
+        windows:
+          shell: pwsh
+          run: |
+            $endpoint = azd env get-value TOOLBOX_TEAMS_TOOLS_MCP_ENDPOINT 2>$null
+            if ($LASTEXITCODE -ne 0 -or $endpoint -notmatch '/versions/([^/]+)/mcp') {
+              throw 'Could not resolve the deployed teams-tools version.'
+            }
+            $version = $Matches[1]
+            $details = azd ai toolbox show teams-tools --version $version --output json | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if (-not ($details.version.skills | Where-Object { $_.name -eq 'powerpoint' })) {
+              $skillVersion = azd env get-value SKILL_POWERPOINT_VERSION 2>$null
+              if ($LASTEXITCODE -ne 0 -or -not $skillVersion) {
+                throw 'Could not resolve the deployed powerpoint skill version.'
+              }
+              $attached = azd ai toolbox skill add teams-tools "powerpoint@$skillVersion" `
+                --from-version $version `
+                --output json | ConvertFrom-Json
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $version = $attached.version
+            }
+            azd ai toolbox publish teams-tools $version
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $publishedEndpoint = $endpoint -replace '/versions/[^/]+/mcp', "/versions/$version/mcp"
+            azd env set TOOLBOX_TEAMS_TOOLS_MCP_ENDPOINT $publishedEndpoint
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          interactive: false
+          continueOnError: false
+        posix:
+          shell: sh
+          run: |
+            set -eu
+            endpoint=$(azd env get-value TOOLBOX_TEAMS_TOOLS_MCP_ENDPOINT 2>/dev/null) || endpoint=""
+            version=$(printf '%s' "$endpoint" | sed -n 's#^.*/versions/\([^/]*\)/mcp.*$#\1#p')
+            if [ -z "$version" ]; then
+              echo "Could not resolve the deployed teams-tools version." >&2
+              exit 1
+            fi
+            details=$(azd ai toolbox show teams-tools --version "$version" --output json)
+            if ! printf '%s' "$details" | jq -e '.version.skills[]? | select(.name == "powerpoint")' >/dev/null; then
+              skill_version=$(azd env get-value SKILL_POWERPOINT_VERSION 2>/dev/null) || skill_version=""
+              if [ -z "$skill_version" ]; then
+                echo "Could not resolve the deployed powerpoint skill version." >&2
+                exit 1
+              fi
+              attached=$(azd ai toolbox skill add teams-tools "powerpoint@$skill_version" \
+                --from-version "$version" \
+                --output json)
+              version=$(printf '%s' "$attached" | jq -r '.version // empty')
+              if [ -z "$version" ]; then
+                echo "Could not resolve the Toolbox version created by skill attachment." >&2
+                exit 1
+              fi
+            fi
+            azd ai toolbox publish teams-tools "$version"
+            published_endpoint=$(printf '%s' "$endpoint" | sed "s#/versions/[^/]*/mcp#/versions/$version/mcp#")
+            azd env set TOOLBOX_TEAMS_TOOLS_MCP_ENDPOINT "$published_endpoint"
+          interactive: false
+          continueOnError: false
+
+  teams-user-tools:
+    host: azure.ai.toolbox
+    uses:
+      - teams-project
+    description: Per-invocation Toolbox for tools that require the delegated Foundry user context.
+    tools:
+      - type: mcp
+        project_connection_id: cloud-helper
+        server_label: cloud-helper
+
+  powerpoint:
+    host: azure.ai.skill
+    project: .hosted-agent-build/powerpoint-skill
+    uses:
+      - teams-project
+    archive: .
+    hooks:
+      prepackage:
+        windows:
+          shell: pwsh
+          dir: ../..
+          run: |
+            & '../scripts/sync-hosted-agents.ps1' @(
+              '../../hosted-agents/teams-agent/skills/powerpoint=.hosted-agent-build/powerpoint-skill'
+            )
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        posix:
+          shell: sh
+          dir: ../..
+          run: |
+            set -eu
+            sh ../scripts/sync-hosted-agents.sh \
+              ../../hosted-agents/teams-agent/skills/powerpoint=.hosted-agent-build/powerpoint-skill
+
+  teams-project:
+    host: azure.ai.project
+    endpoint: ${FOUNDRY_PROJECT_ENDPOINT}
+
+hooks:
+  preprovision:
+    windows:
+      shell: pwsh
+      run: |
+        $env:SSO_DOWNSTREAM_CLIENT_ID = $env:CLOUD_HELPER_MCP_CLIENT_ID
+        $env:SSO_DOWNSTREAM_SCOPE = $env:CLOUD_HELPER_MCP_SCOPE
+        & '../scripts/preprovision-sso-app.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & '../scripts/preprovision-list-foundry-models.ps1'
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        if (-not $env:CHAT_MODEL) {
+          $instancesJson = azd env get-value FOUNDRY_INSTANCES_JSON
+          if ($LASTEXITCODE -ne 0 -or -not $instancesJson) {
+            throw 'FOUNDRY_INSTANCES_JSON was not persisted by model discovery.'
+          }
+          $instances = $instancesJson | ConvertFrom-Json
+          $model = $instances[0].deployments[0].modelName
+          if (-not $model) { throw 'No model deployment was discovered for CHAT_MODEL.' }
+          azd env set CHAT_MODEL $model
+        }
+        if (-not $env:MY_IP) {
+          $ip = (Invoke-RestMethod https://api.ipify.org).Trim()
+          Write-Host "Auto-detected MY_IP=$ip for ACR image push"
+          azd env set MY_IP $ip
+        }
+      interactive: false
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        set -eu
+        SSO_DOWNSTREAM_CLIENT_ID="${CLOUD_HELPER_MCP_CLIENT_ID:-}" \
+          SSO_DOWNSTREAM_SCOPE="${CLOUD_HELPER_MCP_SCOPE:-}" \
+          sh ../scripts/preprovision-sso-app.sh
+        sh ../scripts/preprovision-select-foundry-instances.sh
+        sh ../scripts/preprovision-list-foundry-models.sh
+        if [ -z "${CHAT_MODEL:-}" ]; then
+          instances_json=$(azd env get-value FOUNDRY_INSTANCES_JSON)
+          if [ -z "$instances_json" ]; then
+            echo "FOUNDRY_INSTANCES_JSON was not persisted by model discovery." >&2
+            exit 1
+          fi
+          model=$(printf '%s' "$instances_json" | jq -r '.[0].deployments[0].modelName // empty')
+          if [ -z "$model" ]; then
+            echo "No model deployment was discovered for CHAT_MODEL." >&2
+            exit 1
+          fi
+          azd env set CHAT_MODEL "$model"
+        fi
+        if [ -z "${MY_IP:-}" ]; then
+          ip=$(curl -sf https://api.ipify.org)
+          echo "Auto-detected MY_IP=${ip} for ACR image push"
+          azd env set MY_IP "$ip"
+        fi
+      interactive: true
+      continueOnError: false
+
+  predeploy:
+    windows:
+      shell: pwsh
+      run: |
+        azd ai connection create teams-public-mcp `
+          --project-endpoint $env:FOUNDRY_PROJECT_ENDPOINT `
+          --kind remote-tool `
+          --target https://learn.microsoft.com/api/mcp `
+          --auth-type none `
+          --force
+      interactive: false
+      continueOnError: false
+    posix:
+      shell: sh
+      run: |
+        set -eu
+        azd ai connection create teams-public-mcp \
+          --project-endpoint "${FOUNDRY_PROJECT_ENDPOINT}" \
+          --kind remote-tool \
+          --target https://learn.microsoft.com/api/mcp \
+          --auth-type none \
+          --force
+      interactive: false
+      continueOnError: false

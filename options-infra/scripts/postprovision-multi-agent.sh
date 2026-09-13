@@ -116,26 +116,29 @@ echo "Per-agent app regs (each has FIC trusting the container UAMI):"
 echo "$PAIRS" | awk -F'\t' '{ printf "  - %-20s appId=%s\n", $1, $2 }'
 echo ""
 
-# Register https://<fqdn>/signin-oidc on the shared backend reg so the
-# /admin OIDC sign-in (used by ManifestController) can redirect back.
+# Register the admin and Teams web-tab callbacks on the shared backend reg.
 if [ -n "$BACKEND_ID" ] && [ -n "$PROXY_FQDN" ]; then
   # PROXY_FQDN may already include scheme (CONTAINER_APP_FQDN output does).
   bare_fqdn=$(printf '%s' "$PROXY_FQDN" | sed -E 's#^https?://##')
-  redirect="https://${bare_fqdn}/signin-oidc"
   current_replies=$(az ad app show --id "$BACKEND_ID" --query "web.redirectUris" -o tsv 2>/dev/null | tr '\n' ' ' || true)
-  case " $current_replies " in
-    *" $redirect "*)
-      echo "Backend reply URL ${redirect} already registered." ;;
-    *)
-      # shellcheck disable=SC2086
-      az ad app update --id "$BACKEND_ID" --web-redirect-uris $current_replies "$redirect" >/dev/null
-      echo "Registered backend reply URL: $redirect"
-      ;;
-  esac
+  for redirect in \
+    "https://${bare_fqdn}/signin-oidc" \
+    "https://${bare_fqdn}/chat/auth/callback"; do
+    case " $current_replies " in
+      *" $redirect "*)
+        echo "Backend reply URL ${redirect} already registered." ;;
+      *)
+        # shellcheck disable=SC2086
+        az ad app update --id "$BACKEND_ID" --web-redirect-uris $current_replies "$redirect" >/dev/null
+        current_replies="${current_replies} ${redirect}"
+        echo "Registered backend reply URL: $redirect"
+        ;;
+    esac
+  done
 fi
 echo ""
 echo "Next steps:"
-echo "  1. Sideload each teams-app/build/teams-app-<agent>-<direct|proxy>.zip"
+echo "  1. Sideload each teams-app/build/teams-app-<agent>-<direct|proxy|tab>.zip"
 echo "     into Teams (Apps → Manage your apps → Upload a custom app)."
-echo "  2. Open the chat — silent SSO should succeed; agent should respond."
+echo "  2. Open the bot chat or web tab — silent SSO should succeed."
 echo "=========================================="

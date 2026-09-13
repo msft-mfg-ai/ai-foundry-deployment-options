@@ -15,7 +15,7 @@ If you need multi-agent, private VNet, a reverse proxy with Teams SSO/OBO into F
 | Step | Resource | Why |
 |---|---|---|
 | 1 | UAMI + `Azure AI User` role on the project | So the deployment script can PATCH the agent |
-| 2 | `Microsoft.Resources/deploymentScripts` | PATCHes `…/agents/{name}` with `protocols: ["responses","activity"]` + `authorization_schemes: [Entra, BotServiceRbac]` |
+| 2 | `Microsoft.Resources/deploymentScripts` | PATCHes `…/agents/{name}` with `protocols: ["responses","activity"]` + `authorization_schemes: [Entra, BotServiceTenant]`, matching the tenant-wide publish scope |
 | 3 | `Microsoft.BotService/botServices` (**SKU=S1**) | Wired to the agent's activityprotocol endpoint, `msaAppId` = `instance_identity.client_id` from PATCH response. WebChat + DirectLine + MsTeams channels enabled. |
 | 4 | Teams app manifest (output string) | Emitted via Bicep `string()`; postprovision zips it with the icons in `teams-app/` |
 
@@ -26,7 +26,7 @@ If you need multi-agent, private VNet, a reverse proxy with Teams SSO/OBO into F
 ```
               ┌─────────────────────────────────────────────────────────┐
               │  Bicep (azd provision)                                   │
-   azd up ──▶ │  1. PATCH agent → enable activity + BotServiceRbac       │
+   azd up ──▶ │  1. PATCH agent → enable activity + BotServiceTenant     │
               │  2. Create Bot Service (S1) with msaAppId = agent SP     │
               │  3. Emit Teams manifest as TEAMS_MANIFEST_JSON output    │
               └─────────────────────────────────────────────────────────┘

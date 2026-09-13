@@ -14,7 +14,7 @@ param sku string = 'S1'
 @description('Bot display name shown in channels.')
 param displayName string = name
 
-@description('Messaging endpoint (https://...) the bot posts to. For Foundry agents, point at the agent\'s activityprotocol URL.')
+@description('Messaging endpoint (https://...) the bot posts to.')
 param endpoint string
 
 @allowed([

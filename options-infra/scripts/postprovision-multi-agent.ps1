@@ -105,9 +105,27 @@ foreach ($agent in $agentMap.Keys) {
     $appId = $agentMap[$agent]
     Write-Host ("  - {0,-20} appId={1}" -f $agent, $appId)
 }
+
+if ($backendId -and $proxyFqdn) {
+    $bareFqdn = $proxyFqdn -replace '^https?://', ''
+    $requiredReplies = @(
+        "https://$bareFqdn/signin-oidc",
+        "https://$bareFqdn/chat/auth/callback"
+    )
+    $currentReplies = (az ad app show --id $backendId --query "web.redirectUris" -o tsv) -split "`n" |
+        Where-Object { $_ }
+    $mergedReplies = @($currentReplies + $requiredReplies | Sort-Object -Unique)
+    if ($mergedReplies.Count -ne @($currentReplies | Sort-Object -Unique).Count) {
+        az ad app update --id $backendId --web-redirect-uris @mergedReplies | Out-Null
+        Write-Host "Registered backend reply URLs for admin and Teams web tab."
+    } else {
+        Write-Host "Backend reply URLs for admin and Teams web tab already registered."
+    }
+}
+
 Write-Host ""
 Write-Host "Next steps:"
-Write-Host "  1. Sideload each teams-app/build/teams-app-<agent>-<direct|proxy>.zip"
+Write-Host "  1. Sideload each teams-app/build/teams-app-<agent>-<direct|proxy|tab>.zip"
 Write-Host "     into Teams (Apps -> Manage your apps -> Upload a custom app)."
-Write-Host "  2. Open the chat - silent SSO should succeed; agent should respond."
+Write-Host "  2. Open the bot chat or web tab - silent SSO should succeed."
 Write-Host "=========================================="

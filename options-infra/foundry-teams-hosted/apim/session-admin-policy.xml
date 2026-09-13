@@ -1,0 +1,66 @@
+<policies>
+  <inbound>
+    <base />
+    <set-variable name="agent-name"
+                  value="@(context.Request.MatchedParameters.GetValueOrDefault(&quot;agent-name&quot;, &quot;&quot;))" />
+    <set-variable name="agent-version" value="@{
+      var json = System.Text.Encoding.UTF8.GetString(
+        System.Convert.FromBase64String(&quot;{{teams-agent-versions}}&quot;));
+      var map = Newtonsoft.Json.Linq.JObject.Parse(json);
+      var agentName = (string)context.Variables[&quot;agent-name&quot;];
+      return map[agentName]?.ToString() ?? string.Empty;
+    }" />
+    <choose>
+      <when condition="@(string.IsNullOrEmpty((string)context.Variables[&quot;agent-version&quot;]))">
+        <return-response>
+          <set-status code="404" reason="Unknown hosted agent" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-body>{"error":"Unknown hosted agent route."}</set-body>
+        </return-response>
+      </when>
+    </choose>
+    <set-variable name="session-cache-key"
+                  value="@(&quot;teams-hosted-session:&quot; + (string)context.Variables[&quot;agent-name&quot;] + &quot;:&quot; + (string)context.Variables[&quot;agent-version&quot;])" />
+    <cache-lookup-value key="@((string)context.Variables[&quot;session-cache-key&quot;])"
+                        variable-name="agent-session-id"
+                        caching-type="internal" />
+    <choose>
+      <when condition="@(context.Request.Method == &quot;DELETE&quot;)">
+        <cache-remove-value key="@((string)context.Variables[&quot;session-cache-key&quot;])"
+                            caching-type="internal" />
+        <return-response>
+          <set-status code="204" reason="No Content" />
+        </return-response>
+      </when>
+      <otherwise>
+        <return-response>
+          <set-status code="200" reason="OK" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-body>@{
+            var sessionId = context.Variables.ContainsKey("agent-session-id")
+              ? (string)context.Variables["agent-session-id"]
+              : null;
+            return new Newtonsoft.Json.Linq.JObject(
+              new Newtonsoft.Json.Linq.JProperty("agent", (string)context.Variables["agent-name"]),
+              new Newtonsoft.Json.Linq.JProperty("version", (string)context.Variables["agent-version"]),
+              new Newtonsoft.Json.Linq.JProperty("sessionId", sessionId)
+            ).ToString(Newtonsoft.Json.Formatting.None);
+          }</set-body>
+        </return-response>
+      </otherwise>
+    </choose>
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>

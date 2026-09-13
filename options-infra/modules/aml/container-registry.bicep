@@ -54,7 +54,7 @@ var importRequiredRoleAssignments = importRunOnDeploy
 var allRolesAssignments = union(pullRoleAssignments, importRequiredRoleAssignments)
 
 // Container registry
-module containerRegistry 'br/public:avm/res/container-registry/registry:0.10.0' = {
+module containerRegistry 'br/public:avm/res/container-registry/registry:0.13.0' = {
   name: 'registryDeployment-${name}'
   params: {
     name: name
@@ -62,6 +62,7 @@ module containerRegistry 'br/public:avm/res/container-registry/registry:0.10.0' 
     location: location
     tags: tags
     publicNetworkAccess: (publicAccessEnabled || !empty(allowedIpAddresses)) ? 'Enabled' : 'Disabled'
+    networkRuleSetDefaultAction: publicAccessEnabled ? 'Allow' : 'Deny'
     networkRuleSetIpRules: empty(allowedIpAddresses) ? null : map(allowedIpAddresses, ip => {
       action: 'Allow'
       value: ip
