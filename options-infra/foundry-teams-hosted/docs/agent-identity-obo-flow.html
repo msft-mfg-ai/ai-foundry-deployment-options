@@ -650,8 +650,8 @@ Scopes: api://&lt;blueprint-client-id&gt;/access_as_user offline_access</div>
             <tr>
               <td><span class="role-name">Child Agent Identity</span></td>
               <td>Foundry project</td>
-              <td>Azure AI User</td>
-              <td>Use Foundry runtime APIs and Toolbox from the hosted container.</td>
+              <td>Foundry User<br><code>53ca6127-db72-4b80-b1b0-d745d6d5456d</code></td>
+              <td>Use Foundry runtime APIs, models, files, and Toolbox from the hosted container. This built-in role has broad project data-plane access and is a candidate for replacement with a tested custom runtime role.</td>
             </tr>
             <tr>
               <td><span class="role-name">Child Agent Identity</span></td>
@@ -663,7 +663,7 @@ Scopes: api://&lt;blueprint-client-id&gt;/access_as_user offline_access</div>
               <td><span class="role-name">Child Agent Identity</span></td>
               <td>Cosmos account</td>
               <td>Cosmos DB Built-in Data Contributor</td>
-              <td>Read and write user-partitioned conversation state; never tokens.</td>
+              <td>Read and write user-partitioned conversation state; never tokens. The current assignment is account-scoped and should be narrowed to the <code>botstate/conversations</code> container if the deployment API supports that scope consistently.</td>
             </tr>
           </tbody>
         </table>
@@ -676,6 +676,15 @@ The Foundry account
 
 Assignment scope:
 The specific Foundry project</div>
+
+        <div class="callout">
+          Least-privilege review: keep the custom impersonation role because
+          it contains exactly one data action. Evaluate replacing
+          <code>Foundry User</code> with a runtime-only custom role after
+          recording every API used by model inference, Toolbox, skills, and
+          file download. Narrow Cosmos from account scope to the conversation
+          container when supported and validated.
+        </div>
       </div>
     </section>
 
