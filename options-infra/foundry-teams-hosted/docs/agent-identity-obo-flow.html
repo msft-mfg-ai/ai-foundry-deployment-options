@@ -650,14 +650,14 @@ Scopes: api://&lt;blueprint-client-id&gt;/access_as_user offline_access</div>
             <tr>
               <td><span class="role-name">Child Agent Identity</span></td>
               <td>Foundry project</td>
-              <td>Foundry User<br><code>53ca6127-db72-4b80-b1b0-d745d6d5456d</code></td>
-              <td>Use Foundry runtime APIs, models, files, and Toolbox from the hosted container. This built-in role has broad project data-plane access and is a candidate for replacement with a tested custom runtime role.</td>
+              <td>Implicit hosted-agent access</td>
+              <td>Foundry grants the hosted agent implicit access to core capabilities in its own project, including project-endpoint inference and session storage. An explicit Foundry User assignment is required only for advanced scenarios where implicit access does not cover the API being called.</td>
             </tr>
             <tr>
-              <td><span class="role-name">Child Agent Identity</span></td>
-              <td>Foundry project</td>
-              <td>Foundry Agent User Identity Impersonation</td>
-              <td>Preserve the delegated user boundary on hosted-agent-to-Toolbox calls.</td>
+              <td><span class="role-name">Hosted container request context</span></td>
+              <td>Outbound Foundry call</td>
+              <td><code>x-agent-foundry-call-id</code> header</td>
+              <td>Forward the platform-issued call ID unchanged to Foundry services such as Toolbox. This is context propagation, not a new <code>x-ms-user-identity</code> delegation, so it does not require the child identity to hold the impersonation role.</td>
             </tr>
             <tr>
               <td><span class="role-name">Child Agent Identity</span></td>
@@ -678,12 +678,14 @@ Assignment scope:
 The specific Foundry project</div>
 
         <div class="callout">
-          Least-privilege review: keep the custom impersonation role because
-          it contains exactly one data action. Evaluate replacing
-          <code>Foundry User</code> with a runtime-only custom role after
-          recording every API used by model inference, Toolbox, skills, and
-          file download. Narrow Cosmos from account scope to the conversation
-          container when supported and validated.
+          Least-privilege review: assign the custom impersonation role only to
+          APIM, because APIM is the middle tier that sends
+          <code>x-ms-user-identity</code>. Remove the child Agent Identity's
+          explicit impersonation assignment. Also test removal of the child's
+          explicit <code>Foundry User</code> assignment because hosted agents
+          have implicit access to core project capabilities. Narrow Cosmos
+          from account scope to the conversation container when supported and
+          validated.
         </div>
       </div>
     </section>
