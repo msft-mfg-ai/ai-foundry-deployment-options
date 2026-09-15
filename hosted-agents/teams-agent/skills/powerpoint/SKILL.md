@@ -6,6 +6,8 @@ description: Create polished PowerPoint presentations using the packaged branded
 # PowerPoint presentation generation
 
 Use this skill whenever the user asks to create or revise a PowerPoint presentation.
+Do not use this skill for a standalone image request unless the user also asks
+for a presentation, slides, a deck, or a `.pptx` file.
 
 ## Quality standard
 
@@ -43,7 +45,11 @@ Do not return the first file that opens successfully.
    Preserve the template's brand colors and typography as the base. Do not
    replace them with a generic blue palette.
 6. Research or create the required content and visual assets before laying out
-   slides. Never invent factual chart values.
+   slides. Prefer the local `generate_image` tool for original hero imagery or
+   illustrations when it is available. It stages the asset in the same
+   Code Interpreter container and returns an exact `/mnt/data` path. If the
+   tool is absent, fall back gracefully to diagrams, charts, typography, or
+   user-provided assets. Never invent factual chart values.
 7. Use Code Interpreter for all PowerPoint and image manipulation. Install
    `python-pptx` and `Pillow` when they are not importable.
 8. Build the deck using named layouts and placeholders when they fit the
@@ -99,8 +105,9 @@ from scratch unless the user asks for a redesign.
   keyword.
 - Prefer one strong hero image or a small coherent image set over many
   unrelated thumbnails.
-- Transfer image bytes into Code Interpreter as input files before using
-  `python-pptx`.
+- For generated originals, call `generate_image` first and use its exact
+  `/mnt/data` path. For other sources, transfer image bytes into Code
+  Interpreter as input files before using `python-pptx`.
 - Use Pillow to validate dimensions, normalize to PNG or JPEG, and crop with a
   deliberate contain or cover strategy. Never stretch an image.
 - Keep important subjects away from crop edges and text overlays.

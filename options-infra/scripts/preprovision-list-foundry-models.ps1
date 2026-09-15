@@ -49,6 +49,58 @@ function Get-AzdEnv {
   return ($val | Out-String).Trim()
 }
 
+function Set-AzdEnv {
+  param(
+    [Parameter(Mandatory)][string]$Key,
+    [AllowEmptyString()][string]$Value
+  )
+  azd env set $Key $Value | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw "Failed to persist azd environment value '$Key'."
+  }
+}
+
+function Set-ImageSelection {
+  param([Parameter(Mandatory)][string]$InstancesJson)
+  $override = if ($env:IMAGE_MODEL) { $env:IMAGE_MODEL } else { Get-AzdEnv 'IMAGE_MODEL' }
+  $gatewayAuthenticationType = if ($env:GATEWAY_AUTHENTICATION_TYPE) {
+    $env:GATEWAY_AUTHENTICATION_TYPE
+  } else {
+    Get-AzdEnv 'GATEWAY_AUTHENTICATION_TYPE'
+  }
+  if (-not $gatewayAuthenticationType) {
+    $gatewayAuthenticationType = 'ProjectManagedIdentity'
+  }
+  $selector = Join-Path $PSScriptRoot 'select-image-model.py'
+  $selectionJson = & python $selector `
+    --instances-json $InstancesJson `
+    --override $override `
+    --gateway-authentication-type $gatewayAuthenticationType
+  if ($LASTEXITCODE -ne 0 -or -not $selectionJson) {
+    throw 'Image model selection failed.'
+  }
+  $selection = $selectionJson | ConvertFrom-Json
+  $model = if ($selection.selected) { [string]$selection.selected.model } else { '' }
+  $profile = if ($selection.selected) { [string]$selection.selected.profile } else { '' }
+  $path = if ($selection.selected) { [string]$selection.selected.path } else { '' }
+  $apiVersion = if ($selection.selected) { [string]$selection.selected.apiVersion } else { '' }
+  $annotatedInstances = ConvertTo-Json -InputObject @($selection.instances) -Depth 6 -Compress
+  Set-AzdEnv FOUNDRY_INSTANCES_JSON $annotatedInstances
+  Set-AzdEnv GATEWAY_AUTHENTICATION_TYPE $gatewayAuthenticationType
+  Set-AzdEnv IMAGE_MODEL_RESOLVED $model
+  Set-AzdEnv IMAGE_MODEL_PROFILE $profile
+  Set-AzdEnv IMAGE_MODEL_PATH $path
+  Set-AzdEnv IMAGE_MODEL_API_VERSION $apiVersion
+  Set-AzdEnv IMAGE_MODEL_DISCOVERY_JSON $selectionJson
+  if ($gatewayAuthenticationType -ne 'ProjectManagedIdentity') {
+    Write-Warn "Image generation is disabled because GATEWAY_AUTHENTICATION_TYPE='$gatewayAuthenticationType'; the hosted image tool supports ProjectManagedIdentity only."
+  } elseif ($model) {
+    Write-Ok "Selected image deployment '$model' ($profile)"
+  } else {
+    Write-Warn 'No compatible GPT Image or MAI Image deployment found; image generation is disabled.'
+  }
+}
+
 # Returns a PSCustomObject in the foundryInstanceType shape, or throws on error.
 function Get-FoundryInstance {
   param([Parameter(Mandatory)][string]$ResourceId)
@@ -80,7 +132,7 @@ function Get-FoundryInstance {
 
   $depsJson = az cognitiveservices account deployment list `
     --name $name --resource-group $rg --subscription $sub `
-    --query '[].{modelName:name, modelVersion:properties.model.version, modelFormat:properties.model.format}' -o json 2>$null
+    --query '[].{modelName:name, modelCatalogName:properties.model.name, modelVersion:properties.model.version, modelFormat:properties.model.format}' -o json 2>$null
   if ($LASTEXITCODE -ne 0) { $depsJson = '[]' }
 
   $deployments = @()
@@ -145,6 +197,7 @@ function Get-ApimInstance {
     $deployments = @($listing.value | ForEach-Object {
       [PSCustomObject]@{
         modelName    = $_.name
+        modelCatalogName = if ($_.properties.model.name) { $_.properties.model.name } else { $_.name }
         modelVersion = $_.properties.model.version
         modelFormat  = if ($_.properties.model.format) { $_.properties.model.format } else { 'OpenAI' }
       }
@@ -192,7 +245,7 @@ if (-not $rawIds -and -not $apimUrls) {
   Write-Dim '     • EXISTING_FOUNDRY_RESOURCE_ID  (single instance)'
   Write-Dim '     • OPENAI_RESOURCE_ID            (AI Gateway sample fallback)'
   Write-Dim '     • EXISTING_APIM_URLS            (comma-separated AI Gateway URLs exposing /inference/deployments)'
-  azd env set FOUNDRY_INSTANCES_JSON '[]' | Out-Null
+  Set-ImageSelection -InstancesJson '[]'
   Write-Host ''
   Write-Ok "Wrote FOUNDRY_INSTANCES_JSON=[] (deployment will fail with a clear 'no instances' message)"
   return
@@ -236,7 +289,7 @@ if ($payload.Count -eq 1 -and -not $instancesJson.StartsWith('[')) {
   $instancesJson = "[$instancesJson]"
 }
 
-azd env set FOUNDRY_INSTANCES_JSON $instancesJson | Out-Null
+Set-ImageSelection -InstancesJson $instancesJson
 
 Write-Host ''
 Write-HR

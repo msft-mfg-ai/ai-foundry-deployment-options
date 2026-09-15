@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Core.Models;
 
@@ -6,59 +7,43 @@ namespace AgentChat.Bots;
 
 public sealed class SdkStreamingMessageHelper
 {
+    private static readonly Regex InternalContainerPathPattern = new(
+        @"/mnt/data/[^\s`]+",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     private readonly ITurnContext _turnContext;
-    private readonly bool _streamingEnabled;
+    private readonly bool _progressEnabled;
     private readonly StringBuilder _buffer = new();
     private readonly SemaphoreSlim _informativeUpdateLock = new(1, 1);
-    private CancellationTokenSource? _heartbeatCancellation;
-    private Task? _heartbeatTask;
     private string _currentStatus = "Thinking...";
     private string? _lastReportedStatus;
+    private string? _progressActivityId;
     private bool _informativeUpdatesFailed;
-    private bool _textStarted;
 
     public SdkStreamingMessageHelper(ITurnContext turnContext)
     {
         _turnContext = turnContext;
-        _streamingEnabled =
+        _progressEnabled =
             turnContext.Activity.ChannelId == "msteams"
             && string.Equals(
                 turnContext.Activity.Conversation?.ConversationType,
                 "personal",
                 StringComparison.OrdinalIgnoreCase);
-        if (_streamingEnabled)
-        {
-            _turnContext.StreamingResponse.Interval = 1000;
-        }
     }
 
     public void AppendDelta(string delta)
     {
         _buffer.Append(delta);
-        _textStarted = true;
-        if (_streamingEnabled)
-        {
-            _turnContext.StreamingResponse.QueueTextChunk(delta);
-        }
     }
 
     public void StartHeartbeat()
     {
-        if (!_streamingEnabled || _heartbeatTask is not null)
-        {
-            return;
-        }
-
-        _heartbeatCancellation = new CancellationTokenSource();
-        _heartbeatTask = HeartbeatAsync(_heartbeatCancellation.Token);
     }
 
     public async Task ReportProgressAsync(
         string status,
         CancellationToken cancellationToken)
     {
-        if (!_streamingEnabled
-            || _textStarted
+        if (!_progressEnabled
             || _informativeUpdatesFailed
             || string.IsNullOrWhiteSpace(status)
             || string.Equals(
@@ -70,70 +55,31 @@ public sealed class SdkStreamingMessageHelper
         }
 
         _currentStatus = status;
-        await TryQueueInformativeUpdateAsync(
+        await TrySendProgressUpdateAsync(
             status,
-            suppressDuplicate: true,
-            waitForLock: false,
             cancellationToken);
     }
 
     public async Task FinalizeAsync(CancellationToken cancellationToken)
     {
-        await StopHeartbeatAsync();
+        var text = SanitizeAssistantText(_buffer.ToString());
 
-        if (_streamingEnabled && _turnContext.StreamingResponse.IsStreamStarted())
-        {
-            await _turnContext.StreamingResponse.EndStreamAsync(cancellationToken);
-            _buffer.Clear();
-            return;
-        }
-
-        if (_buffer.Length > 0)
+        if (!string.IsNullOrWhiteSpace(text))
         {
             await _turnContext.SendActivityAsync(
-                MessageFactory.Text(_buffer.ToString()),
+                MessageFactory.Text(text),
                 cancellationToken);
             _buffer.Clear();
         }
     }
 
-    private async Task HeartbeatAsync(CancellationToken cancellationToken)
-    {
-        while (!cancellationToken.IsCancellationRequested && !_textStarted)
-        {
-            try
-            {
-                await TryQueueInformativeUpdateAsync(
-                    _currentStatus,
-                    suppressDuplicate: false,
-                    waitForLock: true,
-                    cancellationToken);
-                await Task.Delay(TimeSpan.FromSeconds(4), cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-            catch
-            {
-                return;
-            }
-        }
-    }
-
-    private async Task TryQueueInformativeUpdateAsync(
+    private async Task TrySendProgressUpdateAsync(
         string status,
-        bool suppressDuplicate,
-        bool waitForLock,
         CancellationToken cancellationToken)
     {
-        var lockAcquired = waitForLock
-            ? await _informativeUpdateLock.WaitAsync(
-                Timeout.InfiniteTimeSpan,
-                cancellationToken)
-            : await _informativeUpdateLock.WaitAsync(
-                TimeSpan.Zero,
-                cancellationToken);
+        var lockAcquired = await _informativeUpdateLock.WaitAsync(
+            TimeSpan.Zero,
+            cancellationToken);
         if (!lockAcquired)
         {
             return;
@@ -141,21 +87,32 @@ public sealed class SdkStreamingMessageHelper
 
         try
         {
-            if (_textStarted
-                || (suppressDuplicate
-                    && string.Equals(
-                        status,
-                        _lastReportedStatus,
-                        StringComparison.Ordinal)))
+            if (string.Equals(
+                    status,
+                    _lastReportedStatus,
+                    StringComparison.Ordinal))
             {
                 return;
             }
 
             try
             {
-                await _turnContext.StreamingResponse.QueueInformativeUpdateAsync(
-                    status,
-                    cancellationToken);
+                if (_progressActivityId is null)
+                {
+                    var response = await _turnContext.SendActivityAsync(
+                        MessageFactory.Text(status),
+                        cancellationToken);
+                    _progressActivityId = response?.Id;
+                }
+                else
+                {
+                    var activity = MessageFactory.Text(status);
+                    activity.Id = _progressActivityId;
+                    activity.Conversation = _turnContext.Activity.Conversation;
+                    await _turnContext.UpdateActivityAsync(
+                        activity,
+                        cancellationToken);
+                }
                 _lastReportedStatus = status;
             }
             catch (OperationCanceledException)
@@ -174,29 +131,21 @@ public sealed class SdkStreamingMessageHelper
         }
     }
 
-    private async Task StopHeartbeatAsync()
+    internal static string SanitizeAssistantText(string text)
     {
-        var cancellation = _heartbeatCancellation;
-        var task = _heartbeatTask;
-        _heartbeatCancellation = null;
-        _heartbeatTask = null;
-
-        if (cancellation is null)
+        if (string.IsNullOrWhiteSpace(text))
         {
-            return;
+            return text;
         }
 
-        cancellation.Cancel();
-        if (task is not null)
-        {
-            try
-            {
-                await task;
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }
-        cancellation.Dispose();
+        var sanitized = InternalContainerPathPattern.Replace(
+            text,
+            "the attached generated file");
+        return Regex.Replace(
+                sanitized,
+                @"[ \t]+\r?\n",
+                Environment.NewLine,
+                RegexOptions.CultureInvariant)
+            .Trim();
     }
 }

@@ -10,6 +10,7 @@ using 'main.bicep'
 // At least one instance with at least one deployment is required —
 // main.bicep fails the deployment otherwise.
 param foundryInstances = json(readEnvironmentVariable('FOUNDRY_INSTANCES_JSON', '[]'))
+param gatewayAuthenticationType = readEnvironmentVariable('GATEWAY_AUTHENTICATION_TYPE', 'ProjectManagedIdentity')
 
 var projectsCountValue = readEnvironmentVariable('PROJECTS_COUNT', '')
 param projectsCount = empty(projectsCountValue) ? null : int(projectsCountValue)

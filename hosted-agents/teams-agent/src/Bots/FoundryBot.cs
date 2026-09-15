@@ -236,7 +236,16 @@ public class FoundryBot(
         HostedInvocationContext? invocationContext,
         CancellationToken cancellationToken)
     {
-        switch (text.Split(' ', 2)[0].ToLowerInvariant())
+        var commandParts = text.Split(
+            ' ',
+            2,
+            StringSplitOptions.TrimEntries);
+        var command = commandParts[0].ToLowerInvariant();
+        var argument = commandParts.Length == 2
+            ? commandParts[1]
+            : null;
+
+        switch (command)
         {
             case "/help":
             case "/commands":
@@ -245,6 +254,9 @@ public class FoundryBot(
                     [
                         ("/agent", "Show hosted agent, Foundry, and Teams conversation details"),
                         ("/debug", "Show redacted runtime and request diagnostics"),
+                        ("/image <prompt>", "Generate and return a standalone image"),
+                        ("/pptx <topic>", "Create and return a PowerPoint presentation"),
+                        ("/research <question>", "Research a question with configured tools and sources"),
                         ("/new", "Start a fresh conversation"),
                         ("/help", "List commands"),
                     ])),
@@ -274,13 +286,69 @@ public class FoundryBot(
                     cancellationToken);
                 break;
 
+            case "/image":
+            case "/pptx":
+            case "/research":
+                if (string.IsNullOrWhiteSpace(argument))
+                {
+                    await turnContext.SendActivityAsync(
+                        MessageFactory.Text(CommandUsage(command)),
+                        cancellationToken);
+                    break;
+                }
+                if (invocationContext is null)
+                {
+                    throw new InvalidOperationException(
+                        "Foundry invocation context is unavailable for this Teams activity.");
+                }
+                await turnContext.SendActivityAsync(
+                    new Activity { Type = ActivityTypes.Typing },
+                    cancellationToken);
+                await RunAgentAsync(
+                    turnContext,
+                    conversationKey,
+                    conversation,
+                    BuildCommandPrompt(command, argument),
+                    invocationContext,
+                    cancellationToken);
+                break;
+
             default:
                 await turnContext.SendActivityAsync(
-                    MessageFactory.Text($"Unknown command `{text.Split(' ', 2)[0]}`. Try `/help`."),
+                    MessageFactory.Text($"Unknown command `{commandParts[0]}`. Try `/help`."),
                     cancellationToken);
                 break;
         }
     }
+
+    internal static string BuildCommandPrompt(
+        string command,
+        string argument) =>
+        command switch
+        {
+            "/image" =>
+                "Use the image-generation skill and the generate_image tool. Generate and return a standalone image file for the request below. Do not use the PowerPoint skill or create a presentation unless the request explicitly asks for one.\n\nUser request:\n"
+                + argument,
+            "/pptx" =>
+                "Use the PowerPoint skill and its complete create-render-inspect workflow. Create and return a .pptx file for the request below. Use generate_image when original visual assets would improve the deck.\n\nUser request:\n"
+                + argument,
+            "/research" =>
+                "Use the configured research tools before answering the question below. Prefer authoritative sources, distinguish sourced facts from inference, and include concise source links in the answer.\n\nUser question:\n"
+                + argument,
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(command),
+                command,
+                "Unsupported routed command."),
+        };
+
+    private static string CommandUsage(string command) =>
+        command switch
+        {
+            "/image" => "Usage: `/image <what you want to generate>`",
+            "/pptx" => "Usage: `/pptx <presentation topic and requirements>`",
+            "/research" => "Usage: `/research <question>`",
+            _ => "Try `/help` for available commands.",
+        };
 
     private async Task RunAgentAsync(
         ITurnContext turnContext,
@@ -382,7 +450,6 @@ public class FoundryBot(
 
                 var activity = MessageFactory.Attachment(
                     teamsFiles.CreateConsentCard(conversationKey, file));
-                activity.Text = $"Generated file: `{file.Name}`";
                 await turnContext.SendActivityAsync(
                     activity,
                     cancellationToken);
@@ -894,8 +961,10 @@ public class FoundryBot(
                 owner,
                 fileConsentCardResponse,
                 cancellationToken);
+            await RemoveFileConsentCardAsync(
+                turnContext,
+                cancellationToken);
             var activity = MessageFactory.Attachment(attachment);
-            activity.Text = $"Generated file: `{attachment.Name}`";
             await turnContext.SendActivityAsync(
                 activity,
                 cancellationToken);
@@ -934,10 +1003,50 @@ public class FoundryBot(
     {
         var owner = UserConversationKey.FromActivity(turnContext.Activity);
         teamsFiles.Discard(owner, fileConsentCardResponse);
+        await RemoveFileConsentCardAsync(
+            turnContext,
+            cancellationToken);
         await turnContext.SendActivityAsync(
             MessageFactory.Text("Generated file download canceled."),
             cancellationToken);
     }
+
+    private async Task RemoveFileConsentCardAsync(
+        ITurnContext turnContext,
+        CancellationToken cancellationToken)
+    {
+        var activityId = GetFileConsentActivityId(turnContext.Activity);
+        if (activityId is null)
+        {
+            logger.LogDebug(
+                "The file-consent invoke did not include the original activity ID.");
+            return;
+        }
+
+        try
+        {
+            await turnContext.DeleteActivityAsync(
+                activityId,
+                cancellationToken);
+        }
+        catch (OperationCanceledException)
+            when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Could not remove completed file-consent activity {ActivityId}.",
+                activityId);
+        }
+    }
+
+    internal static string? GetFileConsentActivityId(IActivity activity) =>
+        string.IsNullOrWhiteSpace(activity.ReplyToId)
+            ? null
+            : activity.ReplyToId;
 
     private async Task SendAgentInfoAsync(
         ITurnContext turnContext,

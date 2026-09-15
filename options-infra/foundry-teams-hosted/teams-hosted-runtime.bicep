@@ -73,10 +73,6 @@ var foundryAgentConsumerRoleId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   'eed3b665-ab3a-47b6-8f48-c9382fb1dad6'
 )
-var foundryUserIdentityImpersonationRoleId = subscriptionResourceId(
-  'Microsoft.Authorization/roleDefinitions',
-  guid(subscription().id, 'Foundry Agent User Identity Impersonation')
-)
 var projectParts = split(foundryProjectId, '/')
 var foundryAccountName = projectParts[8]
 var foundryProjectName = last(projectParts)
@@ -416,16 +412,6 @@ resource hostedAgentFoundryUser 'Microsoft.Authorization/roleAssignments@2022-04
     principalId: agentPrincipalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: foundryUserRoleId
-  }
-}
-
-resource hostedAgentUserIdentityImpersonation 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: foundryProject
-  name: guid(agentPrincipalId, foundryUserIdentityImpersonationRoleId, foundryProject.id)
-  properties: {
-    principalId: agentPrincipalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: foundryUserIdentityImpersonationRoleId
   }
 }
 

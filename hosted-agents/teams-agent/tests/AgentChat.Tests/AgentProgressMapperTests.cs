@@ -12,12 +12,27 @@ public class AgentProgressMapperTests
     [Theory]
     [InlineData("load_skill")]
     [InlineData("read_skill_resource")]
-    public void Skill_tools_report_presentation_guidance(string toolName)
+    public void Unknown_skill_tools_report_task_guidance(string toolName)
         => Progress(new FunctionCallContent(
                 "call-1",
                 toolName,
                 new Dictionary<string, object?>()))
-            .Should().Be("Loading presentation guidance...");
+            .Should().Be("Loading task guidance...");
+
+    [Theory]
+    [InlineData("image-generation", "Loading image-generation guidance...")]
+    [InlineData("powerpoint", "Loading presentation guidance...")]
+    public void Skill_tools_report_known_guidance(
+        string skillName,
+        string expected)
+        => Progress(new FunctionCallContent(
+                "call-1",
+                "load_skill",
+                new Dictionary<string, object?>
+                {
+                    ["skill_name"] = skillName,
+                }))
+            .Should().Be(expected);
 
     [Fact]
     public void PowerPoint_code_reports_deck_construction_without_exposing_code()
@@ -72,6 +87,32 @@ public class AgentProgressMapperTests
                 "inspect_teams_sso_token",
                 new Dictionary<string, object?>()))
             .Should().Be("Starting Teams sign-in...");
+
+    [Fact]
+    public void Image_tool_reports_generation_without_exposing_prompt()
+    {
+        var progress = Progress(new FunctionCallContent(
+            "call-1",
+            "generate_image",
+            new Dictionary<string, object?>
+            {
+                ["prompt"] = "confidential product design",
+            }));
+
+        progress.Should().Be("Generating an image...");
+        progress.Should().NotContain("confidential");
+    }
+
+    [Fact]
+    public void Function_results_report_completion_without_exposing_result()
+    {
+        var progress = Progress(new FunctionResultContent(
+            "call-1",
+            "confidential tool result"));
+
+        progress.Should().Be("Tool completed; reviewing the result...");
+        progress.Should().NotContain("confidential");
+    }
 
     [Fact]
     public void Generated_files_report_preparation()

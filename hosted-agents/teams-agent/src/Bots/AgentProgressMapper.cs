@@ -20,6 +20,14 @@ internal static class AgentProgressMapper
                 WebSearchToolCallContent => "Researching content...",
                 ImageGenerationToolCallContent => "Creating visual assets...",
                 CodeInterpreterToolCallContent => "Working in the analysis workspace...",
+                FunctionResultContent result => result.Exception is null
+                    ? "Tool completed; reviewing the result..."
+                    : "Tool failed; adjusting the approach...",
+                WebSearchToolResultContent => "Research complete; reviewing sources...",
+                ImageGenerationToolResultContent => "Visual asset created; preparing it...",
+                CodeInterpreterToolResultContent => "Analysis workspace step completed...",
+                McpServerToolResultContent => "Tool completed; reviewing the result...",
+                ToolResultContent => "Tool completed; reviewing the result...",
                 AgentProgressContent progressContent => FromProgressStage(
                     progressContent.Stage),
                 _ => null,
@@ -60,15 +68,46 @@ internal static class AgentProgressMapper
 
         if (call.Name is LoadSkillTool or ReadSkillResourceTool)
         {
-            return "Loading presentation guidance...";
+            return FromSkillArguments(call.Arguments);
         }
 
         if (string.Equals(call.Name, "code", StringComparison.Ordinal))
         {
             return FromCode(call.Arguments);
         }
+        if (string.Equals(
+                call.Name,
+                "generate_image",
+                StringComparison.Ordinal))
+        {
+            return "Generating an image...";
+        }
 
         return FromToolName(call.Name);
+    }
+
+    private static string FromSkillArguments(
+        IDictionary<string, object?>? arguments)
+    {
+        var knownValues = arguments?.Values
+            .OfType<string>()
+            .ToArray() ?? [];
+        if (knownValues.Any(value =>
+                value.Contains(
+                    "image-generation",
+                    StringComparison.OrdinalIgnoreCase)))
+        {
+            return "Loading image-generation guidance...";
+        }
+        if (knownValues.Any(value =>
+                value.Contains(
+                    "powerpoint",
+                    StringComparison.OrdinalIgnoreCase)))
+        {
+            return "Loading presentation guidance...";
+        }
+
+        return "Loading task guidance...";
     }
 
     private static string FromCode(
