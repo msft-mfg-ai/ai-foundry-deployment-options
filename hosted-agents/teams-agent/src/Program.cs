@@ -51,6 +51,18 @@ builder.Services.AddHttpClient(nameof(TeamsFileService))
     {
         AllowAutoRedirect = false,
     });
+builder.Services.AddHttpClient(nameof(ImageGenerationClient))
+    .ConfigureHttpClient(client =>
+        client.Timeout = TimeSpan.FromMinutes(5))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = false,
+    });
+builder.Services.AddHttpClient($"{nameof(ImageGenerationClient)}.download")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = false,
+    });
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddHealthChecks();
 builder.Services.AddInvocationsServer();
@@ -96,6 +108,7 @@ builder.Services.AddSingleton<TeamsSsoService>();
 builder.Services.AddSingleton<TeamsSsoToolContext>();
 builder.Services.AddSingleton<AgentIdentityToolContext>();
 builder.Services.AddSingleton<AgentIdentityOboService>();
+builder.Services.AddSingleton<ImageGenerationClient>();
 
 builder.Services.AddDefaultMsalAuth(builder.Configuration);
 builder.Services.AddSingleton<IConnections>(sp =>

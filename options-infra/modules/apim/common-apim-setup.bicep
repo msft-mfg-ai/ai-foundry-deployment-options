@@ -82,13 +82,19 @@ var staticModels ModelType[] = [
     name: d.modelName
     properties: {
       model: {
-        name: d.modelName
+        name: d.?modelCatalogName ?? d.modelName
         version: d.?modelVersion ?? '2025-01-01-preview'
         format: d.?modelFormat ?? 'OpenAI'
       }
     }
   }
 ]
+var imageProfiles = map(
+  filter(allDeployments, deployment => !empty(deployment.?apiProfile ?? '')),
+  deployment => deployment.apiProfile
+)
+var hasGptImage = contains(imageProfiles, 'openai-v1-gpt-image')
+var hasMaiImage = contains(imageProfiles, 'mai-v1-image')
 
 // -- Realtime (WebSocket) routes ---------------------------------------------
 // Realtime deployments need a dedicated WebSocket API — HTTP per-model pools
@@ -343,6 +349,33 @@ module openaiV1Api 'v2/openai-api-v1.bicep' = if (contains(['Premium', 'Standard
     requireSubscriptionKey: gatewayAuthenticationType != 'ProjectManagedIdentity'
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
     appInsightsId: appInsightsResourceId
+  }
+}
+
+// Lower APIM tiers cannot import the full OpenAI v1 document because it has
+// more than 100 operations. Publish only the image generation operation.
+module imageGenerationApi 'v2/image-generation-api.bicep' = if (gatewayAuthenticationType == 'ProjectManagedIdentity' && hasGptImage && !contains(['Premium', 'StandardV2', 'Premiumv2'], apimSku)) {
+  name: 'openai-v1-image-api-deployment'
+  dependsOn: [inferenceApi]
+  params: {
+    apiManagementName: apimName
+    policyXml: policyPerModelXml
+    requireSubscriptionKey: gatewayAuthenticationType != 'ProjectManagedIdentity'
+    apiName: 'openai-image-v1'
+    apiPath: 'openai-v1'
+  }
+}
+
+// MAI Image has a distinct Microsoft-managed API surface and payload.
+module maiImageGenerationApi 'v2/image-generation-api.bicep' = if (gatewayAuthenticationType == 'ProjectManagedIdentity' && hasMaiImage) {
+  name: 'mai-v1-image-api-deployment'
+  dependsOn: [inferenceApi]
+  params: {
+    apiManagementName: apimName
+    policyXml: policyPerModelXml
+    requireSubscriptionKey: gatewayAuthenticationType != 'ProjectManagedIdentity'
+    apiName: 'mai-image-v1'
+    apiPath: 'mai-v1'
   }
 }
 

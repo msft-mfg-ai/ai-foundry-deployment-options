@@ -21,13 +21,24 @@
         <!--     and no api-version. Foundry's "Next-generation v1 API" (GA  -->
         <!--     2025) accepts this shape at /openai/v1/... — so we prepend  -->
         <!--     /v1 to land on that surface (final = /openai/v1/...).        -->
+        <!--                                                                  -->
+        <!--   /mai-v1/...            (Microsoft MAI Image alias)             -->
+        <!--     MAI backends use the account root rather than /openai, so    -->
+        <!--     restore the API prefix stripped by APIM.                     -->
         <!-- ================================================================ -->
         <choose>
             <when condition="@(context.Request.OriginalUrl.Path.StartsWith(&quot;/inference/openai/&quot;, StringComparison.OrdinalIgnoreCase))">
                 <rewrite-uri template="@(context.Request.OriginalUrl.Path.Substring(&quot;/inference/openai&quot;.Length))" />
             </when>
-            <when condition="@(context.Request.OriginalUrl.Path.StartsWith(&quot;/openai-v1/&quot;, StringComparison.OrdinalIgnoreCase))">
+            <when condition="@(
+                context.Request.OriginalUrl.Path.StartsWith(&quot;/openai-v1/&quot;, StringComparison.OrdinalIgnoreCase)
+                &amp;&amp; !context.Request.OriginalUrl.Path.Equals(&quot;/openai-v1/images/generations&quot;, StringComparison.OrdinalIgnoreCase)
+                || context.Request.OriginalUrl.Path.StartsWith(&quot;/openai/v1/&quot;, StringComparison.OrdinalIgnoreCase)
+            )">
                 <rewrite-uri template="@(&quot;/v1&quot; + context.Request.Url.Path)" />
+            </when>
+            <when condition="@(context.Request.OriginalUrl.Path.StartsWith(&quot;/mai-v1/&quot;, StringComparison.OrdinalIgnoreCase))">
+                <rewrite-uri template="@(&quot;/mai/v1&quot; + context.Request.Url.Path)" />
             </when>
         </choose>
 
@@ -123,6 +134,20 @@
         <!--                 else        → {model}-pool                       -->
         <!-- ================================================================ -->
         <include-fragment fragment-id="per-model-routing" />
+
+        <!-- GPT Image uses the deployment-scoped Azure OpenAI REST surface,
+             not the generic OpenAI v1 path used by other operations. This
+             rewrite runs after per-model-routing resolves requestedModel from
+             the JSON body. The selected backend base is the profile-specific
+             https://{account}.openai.{cloud}/openai endpoint. -->
+        <choose>
+            <when condition="@(context.Request.OriginalUrl.Path.Equals(&quot;/openai-v1/images/generations&quot;, StringComparison.OrdinalIgnoreCase))">
+                <rewrite-uri template="@(&quot;/deployments/&quot; + System.Uri.EscapeDataString((string)context.Variables[&quot;requestedModel&quot;]) + &quot;/images/generations&quot;)" />
+                <set-query-parameter name="api-version" exists-action="override">
+                    <value>2025-04-01-preview</value>
+                </set-query-parameter>
+            </when>
+        </choose>
 
         <!-- Anthropic backend requires anthropic-version. When the routed model
              is Claude-family and the caller did not provide the header, set default. -->

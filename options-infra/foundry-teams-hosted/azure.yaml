@@ -58,6 +58,16 @@ services:
         value: teams-user-tools
       - name: DirectAgent__UserToolboxEndpoint
         value: ${TOOLBOX_TEAMS_USER_TOOLS_MCP_ENDPOINT}
+      - name: ImageGeneration__Endpoint
+        value: ${APIM_GATEWAY_URL}/${IMAGE_MODEL_PATH}
+      - name: ImageGeneration__Model
+        value: ${IMAGE_MODEL_RESOLVED}
+      - name: ImageGeneration__Profile
+        value: ${IMAGE_MODEL_PROFILE}
+      - name: ImageGeneration__ApiVersion
+        value: ${IMAGE_MODEL_API_VERSION}
+      - name: ImageGeneration__GatewayAuthenticationType
+        value: ${GATEWAY_AUTHENTICATION_TYPE}
       - name: Cosmos__Endpoint
         value: ${COSMOS_ENDPOINT}
       - name: Cosmos__Database
@@ -129,9 +139,11 @@ services:
     uses:
       - teams-project
       - powerpoint
+      - image-generation
     description: Foundry Toolbox exposed to the Teams assistant for research and presentation generation.
     skills:
       - name: powerpoint
+      - name: image-generation
     tools:
       - type: mcp
         connection: teams-public-mcp
@@ -160,6 +172,18 @@ services:
                 throw 'Could not resolve the deployed powerpoint skill version.'
               }
               $attached = azd ai toolbox skill add teams-tools "powerpoint@$skillVersion" `
+                --from-version $version `
+                --output json | ConvertFrom-Json
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $version = $attached.version
+            }
+            $details = azd ai toolbox show teams-tools --version $version --output json | ConvertFrom-Json
+            if (-not ($details.version.skills | Where-Object { $_.name -eq 'image-generation' })) {
+              $skillVersion = azd env get-value SKILL_IMAGE_GENERATION_VERSION 2>$null
+              if ($LASTEXITCODE -ne 0 -or -not $skillVersion) {
+                throw 'Could not resolve the deployed image-generation skill version.'
+              }
+              $attached = azd ai toolbox skill add teams-tools "image-generation@$skillVersion" `
                 --from-version $version `
                 --output json | ConvertFrom-Json
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -195,6 +219,22 @@ services:
               version=$(printf '%s' "$attached" | jq -r '.version // empty')
               if [ -z "$version" ]; then
                 echo "Could not resolve the Toolbox version created by skill attachment." >&2
+                exit 1
+              fi
+            fi
+            details=$(azd ai toolbox show teams-tools --version "$version" --output json)
+            if ! printf '%s' "$details" | jq -e '.version.skills[]? | select(.name == "image-generation")' >/dev/null; then
+              skill_version=$(azd env get-value SKILL_IMAGE_GENERATION_VERSION 2>/dev/null) || skill_version=""
+              if [ -z "$skill_version" ]; then
+                echo "Could not resolve the deployed image-generation skill version." >&2
+                exit 1
+              fi
+              attached=$(azd ai toolbox skill add teams-tools "image-generation@$skill_version" \
+                --from-version "$version" \
+                --output json)
+              version=$(printf '%s' "$attached" | jq -r '.version // empty')
+              if [ -z "$version" ]; then
+                echo "Could not resolve the Toolbox version created by image-generation skill attachment." >&2
                 exit 1
               fi
             fi
@@ -238,6 +278,30 @@ services:
             sh ../scripts/sync-hosted-agents.sh \
               ../../hosted-agents/teams-agent/skills/powerpoint=.hosted-agent-build/powerpoint-skill
 
+  image-generation:
+    host: azure.ai.skill
+    project: .hosted-agent-build/image-generation-skill
+    uses:
+      - teams-project
+    archive: .
+    hooks:
+      prepackage:
+        windows:
+          shell: pwsh
+          dir: ../..
+          run: |
+            & '../scripts/sync-hosted-agents.ps1' @(
+              '../../hosted-agents/teams-agent/skills/image-generation=.hosted-agent-build/image-generation-skill'
+            )
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        posix:
+          shell: sh
+          dir: ../..
+          run: |
+            set -eu
+            sh ../scripts/sync-hosted-agents.sh \
+              ../../hosted-agents/teams-agent/skills/image-generation=.hosted-agent-build/image-generation-skill
+
   teams-project:
     host: azure.ai.project
     endpoint: ${FOUNDRY_PROJECT_ENDPOINT}
@@ -259,7 +323,14 @@ hooks:
             throw 'FOUNDRY_INSTANCES_JSON was not persisted by model discovery.'
           }
           $instances = $instancesJson | ConvertFrom-Json
-          $model = $instances[0].deployments[0].modelName
+          $imageDiscoveryJson = azd env get-value IMAGE_MODEL_DISCOVERY_JSON 2>$null
+          $imageModels = @()
+          if ($LASTEXITCODE -eq 0 -and $imageDiscoveryJson) {
+            $imageModels = @((ConvertFrom-Json $imageDiscoveryJson).compatibleModels)
+          }
+          $model = $instances.deployments.modelName |
+            Where-Object { $_ -and $_ -notin $imageModels } |
+            Select-Object -First 1
           if (-not $model) { throw 'No model deployment was discovered for CHAT_MODEL.' }
           azd env set CHAT_MODEL $model
         }
@@ -285,7 +356,11 @@ hooks:
             echo "FOUNDRY_INSTANCES_JSON was not persisted by model discovery." >&2
             exit 1
           fi
-          model=$(printf '%s' "$instances_json" | jq -r '.[0].deployments[0].modelName // empty')
+          image_discovery=$(azd env get-value IMAGE_MODEL_DISCOVERY_JSON 2>/dev/null) || image_discovery='{"compatibleModels":[]}'
+          model=$(jq -nr \
+            --argjson instances "$instances_json" \
+            --argjson image "$image_discovery" \
+            '$instances | [.[].deployments[].modelName | select(. as $m | ($image.compatibleModels | index($m) | not))][0] // empty')
           if [ -z "$model" ]; then
             echo "No model deployment was discovered for CHAT_MODEL." >&2
             exit 1

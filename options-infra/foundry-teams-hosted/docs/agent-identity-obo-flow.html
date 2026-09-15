@@ -573,6 +573,8 @@
               <li>MCP example: expose <code>mcp.access</code> on the MCP API registration.</li>
               <li>The blueprint receives and inherits each delegated permission.</li>
               <li>Tokens remain audience-bound: a Graph token cannot authorize the MCP API.</li>
+              <li>The standalone <a href="https://github.com/karpikpl/mcp-obo-graph">mcp-obo-graph</a> server is direct-client-only: trusted hosted-agent code sends the child MCP token plus a separate blueprint-audience user assertion before Graph OBO.</li>
+              <li>First-party Foundry Toolbox supplies one connection credential and cannot dynamically attach the separate per-user blueprint Tc, so it cannot call this service.</li>
             </ul>
           </article>
         </div>
@@ -582,6 +584,19 @@
           The hosted runtime requests <code>api://AzureADTokenExchange/.default</code>
           using the blueprint client ID; Foundry supplies the managed
           credential and binds the resulting assertion to the child identity.
+        </div>
+        <div class="callout">
+          Register <code>https://&lt;mcp-host&gt;/auth/consent-complete</code>
+          as a Web redirect URI on the blueprint when using an explicit
+          <code>response_type=none</code> consent-only browser flow. Start it
+          through authenticated <code>POST /auth/consent-start</code>; the
+          service mints an expiring, single-use state bound to an
+          <code>HttpOnly</code> browser session cookie. The page proves only
+          that the matching browser interaction completed. Runtime access is
+          proven separately by the signed, audience-bound token presented to
+          <code>POST /mcp</code>; the callback rejects unknown, expired,
+          replayed, or mismatched state and credential-like query parameters,
+          and never displays the state value.
         </div>
       </div>
 
@@ -734,7 +749,7 @@ The specific Foundry project</div>
       },
       {
         title: "APIM establishes trusted context",
-        copy: "APIM validates the Bot Framework JWT, authenticates to Foundry with managed identity, and forwards the verified Teams aadObjectId as x-ms-user-identity.",
+        copy: "APIM validates the Bot Framework JWT, authenticates to Foundry with managed identity, and forwards the verified Teams aadObjectId as x-ms-user-identity. On container protocol 2.0.0, Foundry injects both x-agent-user-id and x-agent-foundry-call-id on every request to the hosted agent's Responses and Invocations endpoints.",
         token: "Foundry invocation context",
         claims: {
           header: "x-ms-user-identity: <aadObjectId>",
@@ -778,7 +793,7 @@ The specific Foundry project</div>
       },
       {
         title: "Trusted code calls the resource",
-        copy: "Graph tools call Graph directly. A direct MCP transport adds the MCP token to Authorization. Foundry Toolbox can instead own token acquisition when its first-party Entra passthrough supports the caller.",
+        copy: "Trusted hosted-agent code that already has Tc performs Agent Identity OBO for the MCP token, then calls karpikpl/mcp-obo-graph directly with the MCP token in Authorization and Tc in X-Agent-User-Assertion. The service requires the MCP token to identify the actual child and configured parent blueprint, validates both assertions for the same tenant and user, and performs Graph OBO. Foundry Toolbox cannot supply this two-credential request. Neither assertion enters model context.",
         token: "Outbound request",
         claims: {
           authorization: "Bearer <resource-specific-token>",
@@ -798,7 +813,9 @@ The specific Foundry project</div>
       ["APIM identity roles", "Azure AI User, Agent Consumer, and the custom user-identity impersonation role are assigned."],
       ["Hosted identity roles", "Azure AI User, custom impersonation role, and Cosmos data contributor are assigned."],
       ["Graph proof", "get_my_graph_profile returns the signed-in Teams user's own profile."],
-      ["MCP proof", "inspect_my_mcp_access returns the MCP audience and mcp.access without returning the token."],
+      ["MCP proof", "graph_inspect_delegated_access returns safe MCP identity claims and configured Graph scopes without returning a token."],
+      ["MCP demo redirect", "Authenticated /auth/consent-start mints a single-use browser-bound state; the blueprint Web redirect points to /auth/consent-complete and response_type=none returns no code or token."],
+      ["MCP runtime proof", "Trusted hosted-agent code calls the standalone /mcp endpoint directly with a child MCP token and matching blueprint-audience Tc. Toolbox is unsupported because it cannot attach both credentials."],
       ["Two-user isolation", "Two users receive distinct oid/upn claims and isolated conversation state."]
     ];
 

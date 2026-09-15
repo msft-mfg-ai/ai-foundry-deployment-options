@@ -186,6 +186,75 @@ public class DirectHostedAgentTests
     }
 
     [Theory]
+    [InlineData(400, "Container is expired.", true)]
+    [InlineData(400, "invalid_request_error: CONTAINER IS EXPIRED", true)]
+    [InlineData(404, "Resource not found.", true)]
+    [InlineData(400, "The Python code is invalid.", false)]
+    [InlineData(500, "Container is expired.", false)]
+    public void Expired_code_interpreter_container_is_detected(
+        int status,
+        string message,
+        bool expected)
+        => DirectHostedAgent.IsExpiredContainerError(status, message)
+            .Should().Be(expected);
+
+    [Fact]
+    public async Task Generated_image_uses_powerpoint_working_container()
+    {
+        var session = new TestAgentSession();
+        var context = new DirectHostedAgent.CodeExecutionContext(
+            CancellationToken.None,
+            "call-1",
+            "user-1",
+            null);
+        var files = new RecordingContainerFiles();
+        var image = new GeneratedImage(
+            "png"u8.ToArray(),
+            "hero-12345678.png",
+            "image/png",
+            1024,
+            768);
+
+        var result = await DirectHostedAgent.StageGeneratedImageAsync(
+            session,
+            context,
+            files,
+            "pptx"u8.ToArray(),
+            image,
+            CancellationToken.None);
+
+        result.Path.Should().Be("/mnt/data/hero-12345678.png");
+        context.ContainerId.Should().Be("container-1");
+        DirectHostedAgent.GetPersistedContainerId(session, "user-1")
+            .Should().Be("container-1");
+        context.GeneratedFiles.Values.Should().ContainSingle()
+            .Which.Should().Be(
+                new DirectHostedAgent.ContainerFileReference(
+                    "container-1",
+                    "file-2",
+                    "hero-12345678.png"));
+        files.Uploads.Should().Equal(
+            ("container-1", "template.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+            ("container-1", "hero-12345678.png", "image/png"));
+    }
+
+    [Fact]
+    public void Uploaded_container_file_id_is_read_from_response()
+        => DirectHostedAgent.GetUploadedContainerFileId(
+                BinaryData.FromString(
+                    """{"id":"file-123","object":"container.file"}"""))
+            .Should().Be("file-123");
+
+    [Fact]
+    public void Uploaded_container_file_requires_an_id()
+    {
+        var act = () => DirectHostedAgent.GetUploadedContainerFileId(
+            BinaryData.FromString("""{"object":"container.file"}"""));
+
+        act.Should().Throw<InvalidDataException>();
+    }
+
+    [Theory]
     [InlineData("Piotr Karpala", "Piotr")]
     [InlineData("  Anne-Marie Example  ", "Anne-Marie")]
     [InlineData("O'Connor Example", "O'Connor")]
@@ -206,6 +275,30 @@ public class DirectHostedAgentTests
         public TestAgentSession(AgentSessionStateBag stateBag)
             : base(stateBag)
         {
+        }
+    }
+
+    private sealed class RecordingContainerFiles
+        : DirectHostedAgent.IContainerFileOperations
+    {
+        public List<(string ContainerId, string Filename, string MediaType)>
+            Uploads { get; } = [];
+
+        private int _fileCount;
+
+        public Task<string> CreateAsync(CancellationToken cancellationToken) =>
+            Task.FromResult("container-1");
+
+        public Task<string> UploadAsync(
+            string containerId,
+            string filename,
+            string mediaType,
+            byte[] data,
+            CancellationToken cancellationToken)
+        {
+            Uploads.Add((containerId, filename, mediaType));
+            _fileCount++;
+            return Task.FromResult($"file-{_fileCount}");
         }
     }
 }

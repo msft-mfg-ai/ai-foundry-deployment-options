@@ -68,6 +68,43 @@ get_env() {
   printf '%s' "$val"
 }
 
+persist_image_selection() {
+  instances=$1
+  override=${IMAGE_MODEL:-}
+  if [ -z "$override" ]; then
+    override=$(get_env IMAGE_MODEL)
+  fi
+  gateway_authentication_type=${GATEWAY_AUTHENTICATION_TYPE:-}
+  if [ -z "$gateway_authentication_type" ]; then
+    gateway_authentication_type=$(get_env GATEWAY_AUTHENTICATION_TYPE)
+  fi
+  gateway_authentication_type=${gateway_authentication_type:-ProjectManagedIdentity}
+  script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+  selection=$(python3 "$script_dir/select-image-model.py" \
+    --instances-json "$instances" \
+    --override "$override" \
+    --gateway-authentication-type "$gateway_authentication_type")
+  image_model=$(printf '%s' "$selection" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("selected") or {}).get("model",""))')
+  image_profile=$(printf '%s' "$selection" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("selected") or {}).get("profile",""))')
+  image_path=$(printf '%s' "$selection" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("selected") or {}).get("path",""))')
+  image_api_version=$(printf '%s' "$selection" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("selected") or {}).get("apiVersion",""))')
+  annotated_instances=$(printf '%s' "$selection" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["instances"],separators=(",",":")))')
+  azd env set FOUNDRY_INSTANCES_JSON "$annotated_instances" >/dev/null
+  azd env set GATEWAY_AUTHENTICATION_TYPE "$gateway_authentication_type" >/dev/null
+  azd env set IMAGE_MODEL_RESOLVED "$image_model" >/dev/null
+  azd env set IMAGE_MODEL_PROFILE "$image_profile" >/dev/null
+  azd env set IMAGE_MODEL_PATH "$image_path" >/dev/null
+  azd env set IMAGE_MODEL_API_VERSION "$image_api_version" >/dev/null
+  azd env set IMAGE_MODEL_DISCOVERY_JSON "$selection" >/dev/null
+  if [ "$gateway_authentication_type" != "ProjectManagedIdentity" ]; then
+    warn "Image generation is disabled because GATEWAY_AUTHENTICATION_TYPE='$gateway_authentication_type'; the hosted image tool supports ProjectManagedIdentity only."
+  elif [ -n "$image_model" ]; then
+    ok "Selected image deployment '$image_model' ($image_profile)"
+  else
+    warn "No compatible GPT Image or MAI Image deployment found; image generation is disabled."
+  fi
+}
+
 # Process a single resource id: query Azure for instance metadata + deployments
 # and append a foundryInstanceType JSON object to $instances_json. Sets
 # $total_deployments as a side-effect (accumulated across calls).
@@ -110,7 +147,7 @@ process_instance() {
   # in main.bicep.
   deps_json=$(az cognitiveservices account deployment list \
     --name "$name" --resource-group "$rg" --subscription "$sub" \
-    --query "[].{modelName:name, modelVersion:properties.model.version, modelFormat:properties.model.format}" \
+    --query "[].{modelName:name, modelCatalogName:properties.model.name, modelVersion:properties.model.version, modelFormat:properties.model.format}" \
     -o json 2>/dev/null | tr -d '\n') || deps_json="[]"
 
   dep_count=$(az cognitiveservices account deployment list \
@@ -208,6 +245,7 @@ src = json.load(sys.stdin).get("value", [])
 out = [
     {
         "modelName":    d["name"],
+        "modelCatalogName": d["properties"]["model"].get("name", d["name"]),
         "modelVersion": d["properties"]["model"].get("version", ""),
         "modelFormat":  d["properties"]["model"].get("format", "OpenAI"),
     }
@@ -290,7 +328,7 @@ if [ -z "$raw_ids" ] && [ -z "$apim_urls" ]; then
   printf '%s     • EXISTING_FOUNDRY_RESOURCE_ID  (single instance)%s\n'                  "$C_DIM" "$C_RESET"
   printf '%s     • OPENAI_RESOURCE_ID            (AI Gateway sample fallback)%s\n'       "$C_DIM" "$C_RESET"
   printf '%s     • EXISTING_APIM_URLS            (comma-separated AI Gateway URLs exposing /inference/deployments)%s\n' "$C_DIM" "$C_RESET"
-  azd env set FOUNDRY_INSTANCES_JSON "[]" >/dev/null
+  persist_image_selection "[]"
   printf '\n'
   ok "Wrote FOUNDRY_INSTANCES_JSON=[] (deployment will fail with a clear 'no instances' message)"
   exit 0
@@ -341,7 +379,7 @@ fi
 
 instances_json="${instances_json}]"
 
-azd env set FOUNDRY_INSTANCES_JSON "$instances_json" >/dev/null
+persist_image_selection "$instances_json"
 
 printf '\n'
 hr

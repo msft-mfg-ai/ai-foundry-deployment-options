@@ -51,6 +51,7 @@ public sealed class DirectHostedAgent : IAsyncDisposable
     private readonly TeamsSsoToolContext _teamsSsoToolContext;
     private readonly AgentIdentityOboService _agentIdentityObo;
     private readonly AgentIdentityToolContext _agentIdentityToolContext;
+    private readonly ImageGenerationClient _imageGeneration;
     private readonly SemaphoreSlim _initializationLock = new(1, 1);
     private readonly ConcurrentDictionary<AgentSession, CodeExecutionContext> _codeExecutions =
         new(ReferenceEqualityComparer.Instance);
@@ -63,7 +64,8 @@ public sealed class DirectHostedAgent : IAsyncDisposable
         TokenCredential credential,
         TeamsSsoToolContext teamsSsoToolContext,
         AgentIdentityOboService agentIdentityObo,
-        AgentIdentityToolContext agentIdentityToolContext)
+        AgentIdentityToolContext agentIdentityToolContext,
+        ImageGenerationClient imageGeneration)
     {
         _configuration = configuration;
         _loggerFactory = loggerFactory;
@@ -72,6 +74,7 @@ public sealed class DirectHostedAgent : IAsyncDisposable
         _teamsSsoToolContext = teamsSsoToolContext;
         _agentIdentityObo = agentIdentityObo;
         _agentIdentityToolContext = agentIdentityToolContext;
+        _imageGeneration = imageGeneration;
     }
 
     public bool Enabled => _configuration.GetValue("DirectAgent:Enabled", false);
@@ -391,8 +394,10 @@ public sealed class DirectHostedAgent : IAsyncDisposable
             var projectEndpoint = Required("Foundry:ProjectEndpoint").TrimEnd('/');
             var model = Required("DirectAgent:Model");
             var toolboxName = Required("DirectAgent:ToolboxName");
-            var instructions = _configuration["DirectAgent:Instructions"]
-                ?? "You are a concise Microsoft Teams assistant. Use the configured Toolbox when it can improve the answer.";
+            var instructions =
+                (_configuration["DirectAgent:Instructions"]
+                    ?? "You are a concise Microsoft Teams assistant. Use the configured Toolbox when it can improve the answer.")
+                + "\n\nWhen a tool creates a file, tell the user that the generated file is attached. Never expose internal container paths such as /mnt/data, container IDs, file IDs, base64 data, or temporary download URLs.";
 
             var toolboxEndpoint = _configuration["DirectAgent:ToolboxEndpoint"];
             if (string.IsNullOrWhiteSpace(toolboxEndpoint))
@@ -462,6 +467,46 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                     codeTool,
                     teamsSsoTool,
                 };
+                if (ShouldRegisterImageTool(_imageGeneration))
+                {
+                    localTools.Add(
+                        _imageGeneration.SupportsQuality
+                            ? AIFunctionFactory.Create(
+                                (
+                                    string prompt,
+                                    string? filename,
+                                    string? size,
+                                    string? quality) =>
+                                    GenerateImageAsync(
+                                        prompt,
+                                        filename,
+                                        size,
+                                        quality,
+                                        containerClient,
+                                        templateBytes),
+                                new AIFunctionFactoryOptions
+                                {
+                                    Name = "generate_image",
+                                    Description = "Generate one original image through the AI Gateway and upload it into the current user's Code Interpreter container. Returns an exact /mnt/data path; never returns base64.",
+                                })
+                            : AIFunctionFactory.Create(
+                                (
+                                    string prompt,
+                                    string? filename,
+                                    string? size) =>
+                                    GenerateImageAsync(
+                                        prompt,
+                                        filename,
+                                        size,
+                                        quality: null,
+                                        containerClient,
+                                        templateBytes),
+                                new AIFunctionFactoryOptions
+                                {
+                                    Name = "generate_image",
+                                    Description = "Generate one original image through the MAI Image API on the AI Gateway and upload it into the current user's Code Interpreter container. Supported sizes are 1024x1024, 1024x768, and 768x1024. Returns an exact /mnt/data path; never returns base64.",
+                                }));
+                }
                 if (_agentIdentityObo.Enabled)
                 {
                     localTools.Add(
@@ -555,6 +600,10 @@ public sealed class DirectHostedAgent : IAsyncDisposable
         }
     }
 
+    internal static bool ShouldRegisterImageTool(
+        ImageGenerationClient imageGeneration) =>
+        imageGeneration.Enabled;
+
     private async Task<string> ExecuteCodeAsync(
         string code,
         string model,
@@ -569,7 +618,6 @@ public sealed class DirectHostedAgent : IAsyncDisposable
             {
                 throw new ArgumentException("Code must not be empty.", nameof(code));
             }
-
             stage = "resolve-run-context";
             var runContext = AIAgent.CurrentRunContext;
             if (runContext?.Session is null
@@ -595,39 +643,13 @@ public sealed class DirectHostedAgent : IAsyncDisposable
             OutboundFoundryCallId.Value = context.CallId;
             try
             {
-                if (context.ContainerId is null)
-                {
-                    stage = "create-container";
-                    var container = await containerClient.CreateContainerAsync(
-                        new CreateContainerBody("teams-hosted-agent"),
-                        cancellationToken);
-                    context.ContainerId = container.Value.Id;
-
-                    stage = "upload-template";
-                    using var multipart = new MultipartFormDataContent();
-                    using var fileContent = new ByteArrayContent(templateBytes);
-                    fileContent.Headers.ContentType = new MediaTypeHeaderValue(
-                        "application/vnd.openxmlformats-officedocument.presentationml.presentation");
-                    multipart.Add(
-                        fileContent,
-                        "file",
-                        PowerPointTemplateFilename);
-                    var uploadBody = await multipart.ReadAsByteArrayAsync(
-                        cancellationToken);
-                    var options = new RequestOptions
-                    {
-                        CancellationToken = cancellationToken,
-                    };
-                    await containerClient.CreateContainerFileAsync(
-                        context.ContainerId,
-                        BinaryContent.Create(BinaryData.FromBytes(uploadBody)),
-                        multipart.Headers.ContentType!.ToString(),
-                        options);
-                    PersistContainerId(
-                        runContext.Session,
-                        context.UserId,
-                        context.ContainerId);
-                }
+                stage = "ensure-container";
+                await EnsureContainerAsync(
+                    runContext.Session,
+                    context,
+                    new ContainerFileOperations(containerClient),
+                    templateBytes,
+                    cancellationToken);
 
                 var executableCode = $$"""
                     from pathlib import Path
@@ -649,40 +671,71 @@ public sealed class DirectHostedAgent : IAsyncDisposable
 
                     {{code}}
                     """;
-                var responseOptions = new CreateResponseOptions(
-                    model,
-                    [ResponseItem.CreateUserMessageItem(executableCode)])
+                CreateResponseOptions CreateCodeResponseOptions(
+                    string containerId)
                 {
-                    Instructions =
-                        "Execute the supplied Python code exactly with Code Interpreter. Do not rewrite, summarize, or omit it. Return concise execution output and any error details.",
-                    ToolChoice = ResponseToolChoice.CreateRequiredChoice(),
-                    ParallelToolCallsEnabled = false,
-                };
-                responseOptions.Tools.Add(
-                    ResponseTool.CreateCodeInterpreterTool(
-                        new CodeInterpreterToolContainer(context.ContainerId)));
+                    var options = new CreateResponseOptions(
+                        model,
+                        [ResponseItem.CreateUserMessageItem(executableCode)])
+                    {
+                        Instructions =
+                            "Execute the supplied Python code exactly with Code Interpreter. Do not rewrite, summarize, or omit it. Return concise execution output and any error details.",
+                        ToolChoice = ResponseToolChoice.CreateRequiredChoice(),
+                        ParallelToolCallsEnabled = false,
+                    };
+                    options.Tools.Add(
+                        ResponseTool.CreateCodeInterpreterTool(
+                            new CodeInterpreterToolContainer(containerId)));
+                    return options;
+                }
 
                 stage = "execute-response";
                 ClientResult<ResponseResult> response;
                 try
                 {
                     response = await responsesClient.CreateResponseAsync(
-                        responseOptions,
+                        CreateCodeResponseOptions(context.ContainerId!),
                         cancellationToken);
                 }
                 catch (ClientResultException ex)
-                    when (reusedPersistedContainer && ex.Status == 404)
+                    when (reusedPersistedContainer
+                        && IsExpiredContainerError(ex.Status, ex.Message))
                 {
+                    _logger.LogWarning(
+                        "The persisted Code Interpreter container expired; creating a replacement and replaying the code tool once.");
                     ClearPersistedContainerId(runContext.Session);
-                    throw new InvalidOperationException(
-                        "The Code Interpreter working session expired. Its previous files are no longer available; start a new presentation before continuing.",
-                        ex);
+                    context.ContainerId = null;
+                    stage = "replace-expired-container";
+                    await EnsureContainerAsync(
+                        runContext.Session,
+                        context,
+                        new ContainerFileOperations(containerClient),
+                        templateBytes,
+                        cancellationToken);
+                    stage = "replay-response";
+                    try
+                    {
+                        response = await responsesClient.CreateResponseAsync(
+                            CreateCodeResponseOptions(context.ContainerId!),
+                            cancellationToken);
+                    }
+                    catch (ClientResultException replayException)
+                        when (IsExpiredContainerError(
+                            replayException.Status,
+                            replayException.Message))
+                    {
+                        ClearPersistedContainerId(runContext.Session);
+                        context.ContainerId = null;
+                        throw new InvalidOperationException(
+                            "The replacement Code Interpreter container also expired. Retry the request later.",
+                            replayException);
+                    }
                 }
                 stage = "collect-files";
                 CollectGeneratedResponseFiles(
                     response.Value,
                     context,
-                    context.ContainerId);
+                    context.ContainerId!);
                 await PromoteGeneratedFilesAsync(
                     containerClient,
                     context,
@@ -704,6 +757,159 @@ public sealed class DirectHostedAgent : IAsyncDisposable
             throw;
         }
     }
+
+    private async Task<StagedImageResult> GenerateImageAsync(
+        string prompt,
+        string? filename,
+        string? size,
+        string? quality,
+        ContainerClient containerClient,
+        byte[] templateBytes)
+    {
+        var runContext = AIAgent.CurrentRunContext;
+        if (runContext?.Session is null
+            || !_codeExecutions.TryGetValue(runContext.Session, out var context))
+        {
+            throw new InvalidOperationException(
+                "Image generation can only run during an active agent session.");
+        }
+        context.CallId ??=
+            GetHostedCallId()
+            ?? FoundryAgentRequestContext.Current.CallId;
+        if (string.IsNullOrWhiteSpace(context.CallId))
+        {
+            throw new InvalidOperationException(
+                "A Foundry call ID is required for image container isolation.");
+        }
+
+        var cancellationToken = context.CancellationToken;
+        var image = await _imageGeneration.GenerateAsync(
+            prompt,
+            filename,
+            size,
+            quality,
+            cancellationToken);
+        var reusedPersistedContainer = context.ContainerId is not null;
+        await context.Lock.WaitAsync(cancellationToken);
+        var previousCallId = OutboundFoundryCallId.Value;
+        OutboundFoundryCallId.Value = context.CallId;
+        try
+        {
+            try
+            {
+                return await StageGeneratedImageAsync(
+                    runContext.Session,
+                    context,
+                    new ContainerFileOperations(containerClient),
+                    templateBytes,
+                    image,
+                    cancellationToken);
+            }
+            catch (ClientResultException ex)
+                when (reusedPersistedContainer
+                    && IsExpiredContainerError(ex.Status, ex.Message))
+            {
+                _logger.LogWarning(
+                    "The persisted Code Interpreter container expired while staging an image; creating a replacement and replaying the upload once.");
+                ClearPersistedContainerId(runContext.Session);
+                context.ContainerId = null;
+                try
+                {
+                    return await StageGeneratedImageAsync(
+                        runContext.Session,
+                        context,
+                        new ContainerFileOperations(containerClient),
+                        templateBytes,
+                        image,
+                        cancellationToken);
+                }
+                catch (ClientResultException replayException)
+                    when (IsExpiredContainerError(
+                        replayException.Status,
+                        replayException.Message))
+                {
+                    ClearPersistedContainerId(runContext.Session);
+                    context.ContainerId = null;
+                    throw new InvalidOperationException(
+                        "The replacement Code Interpreter container also expired. Retry the request later.",
+                        replayException);
+                }
+            }
+        }
+        finally
+        {
+            OutboundFoundryCallId.Value = previousCallId;
+            context.Lock.Release();
+        }
+    }
+
+    internal static async Task<StagedImageResult> StageGeneratedImageAsync(
+        AgentSession session,
+        CodeExecutionContext context,
+        IContainerFileOperations containerFiles,
+        byte[] templateBytes,
+        GeneratedImage image,
+        CancellationToken cancellationToken)
+    {
+        await EnsureContainerAsync(
+            session,
+            context,
+            containerFiles,
+            templateBytes,
+            cancellationToken);
+        var fileId = await containerFiles.UploadAsync(
+            context.ContainerId!,
+            image.Filename,
+            image.MediaType,
+            image.Data,
+            cancellationToken);
+        context.GeneratedFiles.TryAdd(
+            fileId,
+            new ContainerFileReference(
+                context.ContainerId!,
+                fileId,
+                image.Filename));
+        return new StagedImageResult(
+            $"/mnt/data/{image.Filename}",
+            image.MediaType,
+            image.Width,
+            image.Height);
+    }
+
+    internal static async Task EnsureContainerAsync(
+        AgentSession session,
+        CodeExecutionContext context,
+        IContainerFileOperations containerFiles,
+        byte[] templateBytes,
+        CancellationToken cancellationToken)
+    {
+        if (context.ContainerId is not null)
+        {
+            return;
+        }
+
+        var containerId = await containerFiles.CreateAsync(cancellationToken);
+        _ = await containerFiles.UploadAsync(
+            containerId,
+            PowerPointTemplateFilename,
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            templateBytes,
+            cancellationToken);
+        context.ContainerId = containerId;
+        PersistContainerId(
+            session,
+            context.UserId,
+            context.ContainerId);
+    }
+
+    internal static bool IsExpiredContainerError(
+        int status,
+        string? message) =>
+        status == 404
+        || (status == 400
+            && message?.Contains(
+                "container is expired",
+                StringComparison.OrdinalIgnoreCase) == true);
 
     private async IAsyncEnumerable<AgentResponseUpdate>
         RunWithCodeExecutionContextStreamingAsync(
@@ -1371,12 +1577,83 @@ public sealed class DirectHostedAgent : IAsyncDisposable
         _initializationLock.Dispose();
     }
 
-    private sealed record ContainerFileReference(
+    internal sealed record ContainerFileReference(
         string ContainerId,
         string FileId,
         string Filename);
 
-    private sealed class CodeExecutionContext(
+    internal sealed record StagedImageResult(
+        string Path,
+        string MediaType,
+        int Width,
+        int Height);
+
+    internal interface IContainerFileOperations
+    {
+        Task<string> CreateAsync(CancellationToken cancellationToken);
+
+        Task<string> UploadAsync(
+            string containerId,
+            string filename,
+            string mediaType,
+            byte[] data,
+            CancellationToken cancellationToken);
+    }
+
+    private sealed class ContainerFileOperations(ContainerClient client)
+        : IContainerFileOperations
+    {
+        public async Task<string> CreateAsync(
+            CancellationToken cancellationToken)
+        {
+            var container = await client.CreateContainerAsync(
+                new CreateContainerBody("teams-hosted-agent"),
+                cancellationToken);
+            return container.Value.Id;
+        }
+
+        public async Task<string> UploadAsync(
+            string containerId,
+            string filename,
+            string mediaType,
+            byte[] data,
+            CancellationToken cancellationToken)
+        {
+            using var multipart = new MultipartFormDataContent();
+            using var fileContent = new ByteArrayContent(data);
+            fileContent.Headers.ContentType =
+                new MediaTypeHeaderValue(mediaType);
+            multipart.Add(fileContent, "file", filename);
+            var uploadBody = await multipart.ReadAsByteArrayAsync(
+                cancellationToken);
+            var file = await client.CreateContainerFileAsync(
+                containerId,
+                BinaryContent.Create(BinaryData.FromBytes(uploadBody)),
+                multipart.Headers.ContentType!.ToString(),
+                new RequestOptions
+                {
+                    CancellationToken = cancellationToken,
+                });
+            return GetUploadedContainerFileId(
+                file.GetRawResponse().Content);
+        }
+    }
+
+    internal static string GetUploadedContainerFileId(BinaryData content)
+    {
+        using var document = JsonDocument.Parse(content);
+        if (document.RootElement.TryGetProperty("id", out var idElement)
+            && idElement.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(idElement.GetString()))
+        {
+            return idElement.GetString()!;
+        }
+
+        throw new InvalidDataException(
+            "The Container File API response did not contain a file ID.");
+    }
+
+    internal sealed class CodeExecutionContext(
         CancellationToken cancellationToken,
         string? callId,
         string userId,
