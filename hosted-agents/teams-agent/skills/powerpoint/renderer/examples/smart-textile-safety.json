@@ -1,0 +1,43 @@
+{
+  "title": "Smart Textile Safety",
+  "audience": "Product and safety leaders",
+  "objective": "Align on design controls",
+  "slides": [
+    {
+      "id": "01",
+      "role": "cover",
+      "composition": "cover",
+      "title": "Smart Textile Safety",
+      "subtitle": "Controls from design through end of life",
+      "body": []
+    },
+    {
+      "id": "02",
+      "role": "summary",
+      "composition": "card_grid",
+      "title": "Four controls reduce risk",
+      "body": [
+        {
+          "kind": "bullet",
+          "title": "Materials",
+          "text": "Verify skin compatibility, wash durability, and abrasion resistance."
+        },
+        {
+          "kind": "bullet",
+          "title": "Power",
+          "text": "Limit current and temperature; isolate batteries and conductors."
+        },
+        {
+          "kind": "bullet",
+          "title": "Data",
+          "text": "Use secure pairing, encryption, and minimal telemetry collection."
+        },
+        {
+          "kind": "bullet",
+          "title": "Lifecycle",
+          "text": "Provide cleaning, repair, traceability, and disposal instructions."
+        }
+      ]
+    }
+  ]
+}
