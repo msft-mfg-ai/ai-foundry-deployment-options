@@ -102,6 +102,17 @@ brand colors, margins, footer style, and spacing rhythm.
 - Do not repeat the same named layout on consecutive slides.
 - Reject a named layout when the content exceeds the capacity defined in
   `deck-spec.md`; do not force extra content into smaller text.
+- The Zava `Content` layouts use oversized editorial title regions, not a
+  conventional title strip. For a full-width visual summary, use `Content 7
+  (Original)` only when the title is at most five words and keep every custom
+  foreground shape at or below `y = 3.1"`; its title occupies
+  `x = 0.34", y = 0.30", w = 12.66", h = 2.69"`.
+- Prefer `Title Only (Original)` for custom card grids. Its title occupies
+  `x = 0.34", y = 0.30", w = 10.34", h = 1.45"`; keep foreground content at
+  or below `y = 1.9"`.
+- Never cover, obscure, or draw through a populated title placeholder. If the
+  chosen layout's title region conflicts with the composition, switch layouts
+  rather than layering shapes over it.
 - After rendering, confirm every title is fully visible with at least
   0.5 inches of slide-edge clearance. If a title is clipped, touches an edge,
   or overwhelms a section-style placeholder, shorten it or switch to a

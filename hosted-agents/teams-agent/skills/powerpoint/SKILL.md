@@ -96,7 +96,10 @@ from scratch unless the user asks for a redesign.
   quote, or conclusion layouts. Never place a visual-summary composition on a
   section-divider layout.
 - Prefer four strong items over six weak ones. Remove unused shapes and
-  placeholders instead of leaving empty boxes.
+  placeholders instead of leaving empty boxes. Every non-system placeholder
+  on every final slide must either contain intentional content or be removed
+  from the slide XML; an empty subtitle, title, body, content, caption, or
+  picture placeholder makes the file invalid.
 - Use charts only for sourced data. Label illustrative or hypothetical values
   explicitly.
 - Avoid decorative lines under titles, dense bullet walls, tiny captions,
@@ -150,9 +153,14 @@ from scratch unless the user asks for a redesign.
 - Check text boxes for overflow risk using font size, line count, box height,
   and the selected layout's text budget.
 - Check unintended overlaps while allowing deliberate backgrounds and overlays.
+- For a custom composition, reserve the complete title-placeholder rectangle
+  before placing any cards, diagrams, or other foreground shapes. Do not place
+  content over a title because the title appears visually empty in an
+  intermediate render.
 - Search for leftover template text such as `Headline goes here`, `Card title`,
-  `Source label`, `stat label`, `Example Text`,
-  `pragmatic & bold visual identity`, and `Section header`.
+  `Source label`, `stat label`, `Example Text`, `Click to add title`, `Click to
+  add subtitle`, `Click to add text`, `pragmatic & bold visual identity`, and
+  `Section header`.
 - List the fonts used by the deck and compare them with fonts available in the
   rendering environment. Replace unavailable fonts with an intentional,
   metrically compatible fallback before visual QA.
