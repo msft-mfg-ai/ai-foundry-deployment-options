@@ -264,6 +264,8 @@ services:
             $env:HOSTED_TEAMS_BOT_APP_SECRET = $env:PPTX_RENDERER_SSO_APP_SECRET
             $env:HOSTED_TEAMS_BOT_APP_RESOURCE = $env:PPTX_RENDERER_SSO_APP_RESOURCE
             $env:HOSTED_TEAMS_BOT_SCOPES = $env:PPTX_RENDERER_SSO_SCOPES
+            $env:TEAMS_APP_ID = $env:SSO_APP_ID
+            $env:TEAMS_APP_VERSION = '1.0.3'
             $env:TEAMS_APP_DISPLAY_NAME = 'Teams PPTX Renderer'
             & ../../configure-teams-hosted.ps1
           interactive: false
@@ -278,6 +280,8 @@ services:
             HOSTED_TEAMS_BOT_APP_SECRET="${PPTX_RENDERER_SSO_APP_SECRET}" \
             HOSTED_TEAMS_BOT_APP_RESOURCE="${PPTX_RENDERER_SSO_APP_RESOURCE}" \
             HOSTED_TEAMS_BOT_SCOPES="${PPTX_RENDERER_SSO_SCOPES}" \
+            TEAMS_APP_ID="${SSO_APP_ID}" \
+            TEAMS_APP_VERSION="1.0.3" \
             TEAMS_APP_DISPLAY_NAME="Teams PPTX Renderer" \
               sh ../../configure-teams-hosted.sh
           interactive: false

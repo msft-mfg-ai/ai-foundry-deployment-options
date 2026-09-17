@@ -576,6 +576,12 @@ The generated Teams packages are:
 - `teams-app/build/teams-hosted-agent/appPackage.zip`
 - `teams-app/build/teams-pptx-renderer-agent/appPackage.zip`
 
+The PowerPoint package intentionally preserves the general-purpose package's
+Teams app ID while changing `bots[0].botId` and `webApplicationInfo` to the
+PowerPoint canary's app registration. Its manifest version is incremented so it
+can be uploaded as an update to the existing Teams app rather than installed as
+a second app.
+
 Generated packages and staged hosted-agent sources are ignored by git.
 
 The agent calls the local `return_file` tool to select completed user-facing

@@ -56,6 +56,8 @@ $agentIdentitySsoResource = "api://$blueprintClientId"
 $agentIdentitySsoScopes = "$agentIdentitySsoResource/access_as_user offline_access"
 
 $botAppId = $ssoAppId
+$teamsAppId = if ($env:TEAMS_APP_ID) { $env:TEAMS_APP_ID } else { $botAppId }
+$teamsAppVersion = $env:TEAMS_APP_VERSION
 $botIdentitySuffix = $botAppId.Replace('-', '').Substring(0, 8)
 $botName = "$agentName-bot-$botIdentitySuffix"
 $messagingEndpoint = "$($env:APIM_GATEWAY_URL.TrimEnd('/'))/teams/$agentName/api/messages"
@@ -157,7 +159,10 @@ New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
 $displayName = if ($env:TEAMS_APP_DISPLAY_NAME) { $env:TEAMS_APP_DISPLAY_NAME } else { 'Teams Hosted Agent' }
 $ssoResource = $ssoAppResource
 $manifest = Get-Content 'teams-app/manifest.template.json' -Raw | ConvertFrom-Json
-$manifest.id = $botAppId
+$manifest.id = $teamsAppId
+if ($teamsAppVersion) {
+  $manifest.version = $teamsAppVersion
+}
 $manifest.name.short = $displayName
 $manifest.name.full = $displayName
 $manifest.bots[0].botId = $botAppId

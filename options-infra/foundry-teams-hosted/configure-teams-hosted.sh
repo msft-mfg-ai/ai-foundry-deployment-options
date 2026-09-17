@@ -60,6 +60,8 @@ agent_identity_sso_resource="api://${blueprint_client_id}"
 agent_identity_sso_scopes="${agent_identity_sso_resource}/access_as_user offline_access"
 
 bot_app_id="$sso_app_id"
+teams_app_id="${TEAMS_APP_ID:-$bot_app_id}"
+teams_app_version="${TEAMS_APP_VERSION:-}"
 bot_identity_suffix=$(printf '%s' "$bot_app_id" | tr -d '-' | cut -c1-8)
 bot_name="${agent_name}-bot-${bot_identity_suffix}"
 messaging_endpoint="${APIM_GATEWAY_URL%/}/teams/${agent_name}/api/messages"
@@ -158,10 +160,13 @@ mkdir -p "$package_dir"
 if [ -n "$sso_app_id" ] && [ -n "$sso_resource" ]; then
   jq \
     --arg app_id "$bot_app_id" \
+    --arg teams_app_id "$teams_app_id" \
+    --arg teams_app_version "$teams_app_version" \
     --arg display_name "$display_name" \
     --arg sso_app_id "$sso_app_id" \
     --arg sso_resource "$sso_resource" \
-    '.id = $app_id
+    '.id = $teams_app_id
+     | if $teams_app_version != "" then .version = $teams_app_version else . end
      | .name.short = $display_name
      | .name.full = $display_name
      | .bots[0].botId = $app_id
@@ -173,8 +178,11 @@ if [ -n "$sso_app_id" ] && [ -n "$sso_resource" ]; then
 else
   jq \
     --arg app_id "$bot_app_id" \
+    --arg teams_app_id "$teams_app_id" \
+    --arg teams_app_version "$teams_app_version" \
     --arg display_name "$display_name" \
-    '.id = $app_id
+    '.id = $teams_app_id
+     | if $teams_app_version != "" then .version = $teams_app_version else . end
      | .name.short = $display_name
      | .name.full = $display_name
      | .bots[0].botId = $app_id' \
