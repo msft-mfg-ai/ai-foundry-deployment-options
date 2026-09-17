@@ -53,6 +53,18 @@
               "description": "Show redacted runtime and request diagnostics"
             },
             {
+              "title": "/image",
+              "description": "Generate and return a standalone image"
+            },
+            {
+              "title": "/pptx",
+              "description": "Create and return a PowerPoint presentation"
+            },
+            {
+              "title": "/research",
+              "description": "Research a question using configured tools"
+            },
+            {
               "title": "/help",
               "description": "List commands"
             }

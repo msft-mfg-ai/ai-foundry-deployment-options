@@ -27,6 +27,9 @@ param agentPrincipalId string
 @description('Existing Cosmos DB account used for Bot Framework conversation state.')
 param cosmosAccountName string
 
+@description('Storage account used to stage generated files before Teams consent upload.')
+param generatedFilesStorageAccountName string
+
 @description('Existing APIM Foundry User role assignment name, when migrating an existing environment.')
 param apimFoundryUserRoleAssignmentName string = ''
 
@@ -72,10 +75,6 @@ var foundryUserRoleId = subscriptionResourceId(
 var foundryAgentConsumerRoleId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   'eed3b665-ab3a-47b6-8f48-c9382fb1dad6'
-)
-var foundryUserIdentityImpersonationRoleId = subscriptionResourceId(
-  'Microsoft.Authorization/roleDefinitions',
-  guid(subscription().id, 'Foundry Agent User Identity Impersonation')
 )
 var projectParts = split(foundryProjectId, '/')
 var foundryAccountName = projectParts[8]
@@ -419,13 +418,26 @@ resource hostedAgentFoundryUser 'Microsoft.Authorization/roleAssignments@2022-04
   }
 }
 
-resource hostedAgentUserIdentityImpersonation 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: foundryProject
-  name: guid(agentPrincipalId, foundryUserIdentityImpersonationRoleId, foundryProject.id)
+resource generatedFilesStorageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+  name: generatedFilesStorageAccountName
+}
+
+var storageBlobDataContributorRoleId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+)
+
+resource hostedAgentGeneratedFilesContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: generatedFilesStorageAccount
+  name: guid(
+    agentPrincipalId,
+    storageBlobDataContributorRoleId,
+    generatedFilesStorageAccount.id
+  )
   properties: {
     principalId: agentPrincipalId
     principalType: 'ServicePrincipal'
-    roleDefinitionId: foundryUserIdentityImpersonationRoleId
+    roleDefinitionId: storageBlobDataContributorRoleId
   }
 }
 

@@ -236,7 +236,16 @@ public class FoundryBot(
         HostedInvocationContext? invocationContext,
         CancellationToken cancellationToken)
     {
-        switch (text.Split(' ', 2)[0].ToLowerInvariant())
+        var commandParts = text.Split(
+            ' ',
+            2,
+            StringSplitOptions.TrimEntries);
+        var command = commandParts[0].ToLowerInvariant();
+        var argument = commandParts.Length == 2
+            ? commandParts[1]
+            : null;
+
+        switch (command)
         {
             case "/help":
             case "/commands":
@@ -245,6 +254,9 @@ public class FoundryBot(
                     [
                         ("/agent", "Show hosted agent, Foundry, and Teams conversation details"),
                         ("/debug", "Show redacted runtime and request diagnostics"),
+                        ("/image <prompt>", "Generate and return a standalone image"),
+                        ("/pptx <topic>", "Create and return a PowerPoint presentation"),
+                        ("/research <question>", "Research a question with configured tools and sources"),
                         ("/new", "Start a fresh conversation"),
                         ("/help", "List commands"),
                     ])),
@@ -274,13 +286,69 @@ public class FoundryBot(
                     cancellationToken);
                 break;
 
+            case "/image":
+            case "/pptx":
+            case "/research":
+                if (string.IsNullOrWhiteSpace(argument))
+                {
+                    await turnContext.SendActivityAsync(
+                        MessageFactory.Text(CommandUsage(command)),
+                        cancellationToken);
+                    break;
+                }
+                if (invocationContext is null)
+                {
+                    throw new InvalidOperationException(
+                        "Foundry invocation context is unavailable for this Teams activity.");
+                }
+                await turnContext.SendActivityAsync(
+                    new Activity { Type = ActivityTypes.Typing },
+                    cancellationToken);
+                await RunAgentAsync(
+                    turnContext,
+                    conversationKey,
+                    conversation,
+                    BuildCommandPrompt(command, argument),
+                    invocationContext,
+                    cancellationToken);
+                break;
+
             default:
                 await turnContext.SendActivityAsync(
-                    MessageFactory.Text($"Unknown command `{text.Split(' ', 2)[0]}`. Try `/help`."),
+                    MessageFactory.Text($"Unknown command `{commandParts[0]}`. Try `/help`."),
                     cancellationToken);
                 break;
         }
     }
+
+    internal static string BuildCommandPrompt(
+        string command,
+        string argument) =>
+        command switch
+        {
+            "/image" =>
+                "Use the image-generation skill and the generate_image tool. Generate and return a standalone image file for the request below. Do not use the PowerPoint skill or create a presentation unless the request explicitly asks for one.\n\nUser request:\n"
+                + argument,
+            "/pptx" =>
+                "Use the PowerPoint skill and its complete create-render-inspect workflow. Create and return a .pptx file for the request below. Use generate_image when original visual assets would improve the deck.\n\nUser request:\n"
+                + argument,
+            "/research" =>
+                "Use the configured research tools before answering the question below. Prefer authoritative sources, distinguish sourced facts from inference, and include concise source links in the answer.\n\nUser question:\n"
+                + argument,
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(command),
+                command,
+                "Unsupported routed command."),
+        };
+
+    private static string CommandUsage(string command) =>
+        command switch
+        {
+            "/image" => "Usage: `/image <what you want to generate>`",
+            "/pptx" => "Usage: `/pptx <presentation topic and requirements>`",
+            "/research" => "Usage: `/research <question>`",
+            _ => "Try `/help` for available commands.",
+        };
 
     private async Task RunAgentAsync(
         ITurnContext turnContext,
@@ -290,7 +358,9 @@ public class FoundryBot(
         HostedInvocationContext invocationContext,
         CancellationToken cancellationToken)
     {
-        var streaming = new SdkStreamingMessageHelper(turnContext);
+        var streaming = new SdkStreamingMessageHelper(turnContext, logger);
+        var progressMapper = new AgentProgressMapper(
+            conversation.DirectAgentTodoProgress);
         var generatedFiles = new List<GeneratedFileContent>();
         OAuthConsentContent? oauthConsent = null;
         var ssoCompletionPending = false;
@@ -317,9 +387,17 @@ public class FoundryBot(
                 ssoCompletionPending = result.CompletionPending;
                 return result.ToolResult;
             });
-        streaming.StartHeartbeat();
+        streaming.StartHeartbeat(cancellationToken);
         try
         {
+            var initialProgress = BuildInitialProgress(message);
+            if (initialProgress is not null)
+            {
+                await streaming.ReportProgressAsync(
+                    initialProgress,
+                    cancellationToken);
+            }
+
             await foreach (var update in directAgent.RunStreamingAsync(
                 message,
                 conversation,
@@ -329,7 +407,7 @@ public class FoundryBot(
                     turnContext.Activity.From?.Name),
                 cancellationToken))
             {
-                var progress = AgentProgressMapper.GetProgress(update);
+                var progress = progressMapper.GetProgress(update);
                 if (progress is not null)
                 {
                     await streaming.ReportProgressAsync(
@@ -353,7 +431,10 @@ public class FoundryBot(
                 conversationKey,
                 conversation,
                 cancellationToken);
-            await streaming.FinalizeAsync(cancellationToken);
+            await streaming.FinalizeAsync(
+                cancellationToken,
+                markCompleted:
+                    !ssoCompletionPending && oauthConsent is null);
             if (ssoCompletionPending)
             {
                 return;
@@ -381,8 +462,10 @@ public class FoundryBot(
                 }
 
                 var activity = MessageFactory.Attachment(
-                    teamsFiles.CreateConsentCard(conversationKey, file));
-                activity.Text = $"Generated file: `{file.Name}`";
+                    await teamsFiles.CreateConsentCardAsync(
+                        conversationKey,
+                        file,
+                        cancellationToken));
                 await turnContext.SendActivityAsync(
                     activity,
                     cancellationToken);
@@ -392,7 +475,9 @@ public class FoundryBot(
         {
             try
             {
-                await streaming.FinalizeAsync(cancellationToken);
+                await streaming.FinalizeAsync(
+                    cancellationToken,
+                    markCompleted: false);
             }
             catch (Exception ex)
             {
@@ -401,6 +486,48 @@ public class FoundryBot(
             throw;
         }
     }
+
+    internal static string? BuildInitialProgress(string message)
+    {
+        if (ContainsAny(
+                message,
+                "powerpoint",
+                "presentation",
+                "slides",
+                "slide deck",
+                ".pptx",
+                "pptx"))
+        {
+            return "I'm creating your presentation. I'll research the topic, build the slides and visuals, then review the deck before returning the PowerPoint file.";
+        }
+
+        if (ContainsAny(
+                message,
+                "generate an image",
+                "create an image",
+                "make an image",
+                "image-generation",
+                "/image"))
+        {
+            return "I'm creating your image. I'll generate and validate it, then return the finished image file.";
+        }
+
+        if (ContainsAny(
+                message,
+                "configured research tools",
+                "/research"))
+        {
+            return "I'm researching your question. I'll gather relevant sources, verify the findings, and then provide a concise answer.";
+        }
+
+        return null;
+    }
+
+    private static bool ContainsAny(
+        string value,
+        params string[] candidates) =>
+        candidates.Any(candidate =>
+            value.Contains(candidate, StringComparison.OrdinalIgnoreCase));
 
     private async Task<SsoDiagnosticResult> RunSsoDiagnosticAsync(
         ITurnContext turnContext,
@@ -886,6 +1013,9 @@ public class FoundryBot(
         FileConsentCardResponse fileConsentCardResponse,
         CancellationToken cancellationToken)
     {
+        using var uploadTimeout = new CancellationTokenSource(
+            TimeSpan.FromMinutes(2));
+        var uploadToken = uploadTimeout.Token;
         try
         {
             var owner = UserConversationKey.FromActivity(
@@ -893,17 +1023,29 @@ public class FoundryBot(
             var attachment = await teamsFiles.UploadAsync(
                 owner,
                 fileConsentCardResponse,
-                cancellationToken);
+                uploadToken);
+            await RemoveFileConsentCardAsync(
+                turnContext,
+                uploadToken);
             var activity = MessageFactory.Attachment(attachment);
-            activity.Text = $"Generated file: `{attachment.Name}`";
             await turnContext.SendActivityAsync(
                 activity,
-                cancellationToken);
+                uploadToken);
         }
         catch (OperationCanceledException)
-            when (cancellationToken.IsCancellationRequested)
+            when (uploadToken.IsCancellationRequested)
         {
-            throw;
+            logger.LogWarning(
+                "Generated file upload exceeded the two-minute operation timeout.");
+            await turnContext.SendActivityAsync(
+                MessageFactory.Text(
+                    "The file upload timed out. Select Allow again to retry."),
+                CancellationToken.None);
+        }
+        catch (GeneratedFileUploadInProgressException)
+        {
+            logger.LogInformation(
+                "Ignored a duplicate Teams file-consent acceptance while the upload is in progress.");
         }
         catch (InvalidOperationException ex)
         {
@@ -933,11 +1075,65 @@ public class FoundryBot(
         CancellationToken cancellationToken)
     {
         var owner = UserConversationKey.FromActivity(turnContext.Activity);
-        teamsFiles.Discard(owner, fileConsentCardResponse);
+        var discardStatus = await teamsFiles.DiscardAsync(
+            owner,
+            fileConsentCardResponse,
+            cancellationToken);
+        if (discardStatus == GeneratedFileDiscardStatus.UploadInProgress)
+        {
+            await turnContext.SendActivityAsync(
+                MessageFactory.Text(
+                    "The file upload is already in progress and could not be canceled."),
+                cancellationToken);
+            return;
+        }
+        await RemoveFileConsentCardAsync(
+            turnContext,
+            cancellationToken);
         await turnContext.SendActivityAsync(
-            MessageFactory.Text("Generated file download canceled."),
+            MessageFactory.Text(
+                discardStatus == GeneratedFileDiscardStatus.Discarded
+                    ? "Generated file download canceled."
+                    : "The generated file is no longer available."),
             cancellationToken);
     }
+
+    private async Task RemoveFileConsentCardAsync(
+        ITurnContext turnContext,
+        CancellationToken cancellationToken)
+    {
+        var activityId = GetFileConsentActivityId(turnContext.Activity);
+        if (activityId is null)
+        {
+            logger.LogDebug(
+                "The file-consent invoke did not include the original activity ID.");
+            return;
+        }
+
+        try
+        {
+            await turnContext.DeleteActivityAsync(
+                activityId,
+                cancellationToken);
+        }
+        catch (OperationCanceledException)
+            when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Could not remove completed file-consent activity {ActivityId}.",
+                activityId);
+        }
+    }
+
+    internal static string? GetFileConsentActivityId(IActivity activity) =>
+        string.IsNullOrWhiteSpace(activity.ReplyToId)
+            ? null
+            : activity.ReplyToId;
 
     private async Task SendAgentInfoAsync(
         ITurnContext turnContext,

@@ -24,7 +24,9 @@ Teams
   -> Docker-hosted C# Teams agent
      - direct Agent Framework inference through the AI Gateway model connection
      - startup Toolbox: Microsoft Learn MCP, Web Search, Code Interpreter,
-       and the PowerPoint skill
+       the PowerPoint skill, and image-generation guidance
+     - conditional local `generate_image` tool through AI Gateway when a
+       compatible GPT Image or MAI Image deployment is discovered
      - per-invocation Toolbox: Cloud Helper MCP through a project connection
      - Toolbox PowerPoint skill with the packaged OTIS template
      - Teams SSO bootstrap plus Agent Identity OBO for Graph and direct MCP clients
@@ -39,6 +41,41 @@ Teams-specific behavior: streaming, Markdown, Adaptive Cards, commands,
 Cosmos-backed conversation state, and native Teams replies. APIM uses the path
 parameter to select which self-contained hosted agent receives the Activity;
 there is no second hosted-agent proxy hop.
+
+Tool workflows use the Teams SDK informative-response stream. Every 75 seconds,
+the bot ends the current stream cleanly before Teams' approximately two-minute
+lease expires, resets the SDK stream, and starts another progress stream with
+the latest plan and current step. After each rotation, the completed stream is
+edited down to `Working on it...` so prior copies of the plan do not accumulate
+in the conversation. If Teams rejects a restarted stream, progress falls back
+to one durable Teams message updated in place. Final answer text is
+buffered and sent as a normal message so a long image or presentation workflow
+cannot end with `This response was stopped`. When the harness creates todos, the
+safe todo titles are shown as a checklist and remain visible above the current
+tool step. Successful `todos_complete` results check the matching todo IDs.
+During a long-running tool call, the same durable activity receives a
+20-second elapsed-time heartbeat so the user can see that work is continuing.
+If Teams rejects an activity update, the next progress event creates a
+replacement progress message instead of permanently disabling updates.
+Successful workflows finish the progress message with `Current step:
+Completed.` before the final answer or file-consent card is sent.
+Todo descriptions, raw arguments, results, and hidden reasoning are never
+displayed.
+
+The Teams command menu includes deterministic workflow shortcuts:
+
+- `/image <prompt>` loads image-generation guidance, calls `generate_image`,
+  and returns a standalone image without invoking PowerPoint.
+- `/pptx <topic>` loads the complete PowerPoint create-render-inspect workflow
+  and returns a `.pptx`.
+- `/research <question>` directs the agent to use configured research tools,
+  prefer authoritative sources, and include source links.
+- `/agent`, `/debug`, `/new`, and `/help` retain their administrative behavior.
+
+The command menu is packaged in
+`teams-app/build/teams-hosted-agent/appPackage.zip`. Update or reinstall the
+Teams app package after adding commands so they appear in the compose box;
+typed commands work as soon as the hosted-agent version is active.
 
 The same `AIAgent` is exposed through both hosted protocols:
 
@@ -56,6 +93,16 @@ before model execution. The agent also uses the Agent Framework MCP skills provi
 and their packaged resources are advertised and loaded progressively. Teams
 conversation state remains in Cosmos, while Responses conversations use the
 Foundry Responses session semantics.
+
+The direct agent is built with the Microsoft Agent Framework Harness. Harness
+todos and execute/plan modes are enabled for long-running work, with execute
+as the default. The deployment disables the harness defaults that would
+duplicate or bypass the hosted architecture: local file memory, local file
+access, hosted web search, filesystem skills, automatic approvals, and
+duplicate OpenTelemetry. Web search remains enabled through the startup
+Toolbox's `web` tool, alongside the other MCP tools and Foundry skills. The
+user-scoped Foundry Code Interpreter container remains the only code and
+presentation workspace.
 
 The local `inspect_teams_sso_token` Agent Framework tool is independent of the
 Foundry connection. It asks Azure Bot Service for a cached Teams user token. If
@@ -80,7 +127,8 @@ environment-variable names.
 - Permission to create Foundry, APIM, Cosmos DB, Azure Bot, and role
   assignments.
 - At least one existing Foundry or Azure OpenAI account with a deployed chat
-  model.
+  model. Image generation is optional and requires a compatible GPT Image or
+  MAI Image deployment on a discovered account.
 - Permission to create Entra applications, service principals, credentials,
   API scopes, and federated credentials. Tenant administrator permission is
   needed to grant downstream delegated consent automatically.
@@ -92,8 +140,15 @@ azd env set EXISTING_FOUNDRY_RESOURCE_IDS \
   "/subscriptions/<subscription>/resourceGroups/<resource-group>/providers/Microsoft.CognitiveServices/accounts/<account>"
 ```
 
-The preprovision hook discovers its deployments and selects the first model as
-`CHAT_MODEL`. Set `CHAT_MODEL` explicitly to override that choice.
+The preprovision hook discovers deployment names and their underlying catalog
+model names. It selects `CHAT_MODEL` from non-image deployments and separately
+selects an image deployment when the catalog model belongs to the supported
+`gpt-image-*` or `MAI-Image-*` families. Set `CHAT_MODEL` or `IMAGE_MODEL`
+explicitly to override the deterministic choices. An incompatible
+`IMAGE_MODEL` override fails preprovision rather than silently selecting a
+different model. Discovery writes the selected deployment to
+`IMAGE_MODEL_RESOLVED`, keeping the optional `IMAGE_MODEL` input distinct so a
+previous automatic selection does not become a sticky override.
 
 ## Deploy
 
@@ -109,13 +164,13 @@ azd performs the following additional steps:
    `AcrPull`, creates the project `ContainerRegistry` connection, and allows
    the deploying machine's detected `MY_IP` to push images.
 3. Creates the public Microsoft Learn MCP connection, creates the Cloud Helper
-   private endpoint, and uploads the versioned PowerPoint skill with its
-   packaged template. The `cloud-helper` project connection must already exist;
+   private endpoint, and uploads the versioned PowerPoint and image-generation
+   skills. The `cloud-helper` project connection must already exist;
    automated OAuth2 connection creation is currently disabled because of the
    provisioning regression documented in
    [`OAUTH-CONNECTION-ICM-README.md`](OAUTH-CONNECTION-ICM-README.md).
 4. Deploys a startup Toolbox with Microsoft Learn, Web Search, Code
-   Interpreter, and the PowerPoint skill, plus a separate per-invocation
+   Interpreter, and both presentation skills, plus a separate per-invocation
    Toolbox containing Cloud Helper.
 5. Deploys `teams-hosted-runtime.bicep` with the generated gateway identity and
    version. This template owns the APIM API, backend, policy, named values,
@@ -132,6 +187,90 @@ azd performs the following additional steps:
 
 Sideload that package in Teams to test the agent.
 
+## Conditional image generation
+
+Image generation is disabled safely when discovery finds no compatible
+deployment: the hook persists empty `IMAGE_MODEL_RESOLVED`, `IMAGE_MODEL_PROFILE`,
+`IMAGE_MODEL_PATH`, and `IMAGE_MODEL_API_VERSION` values, and the hosted agent
+does not register `generate_image`. The current environment is expected to
+take this path until an image model is deployed.
+
+The image integration supports only
+`GATEWAY_AUTHENTICATION_TYPE=ProjectManagedIdentity` (the default). The hosted
+agent has no APIM subscription key and no key is placed in Bicep outputs,
+azd-hosted environment variables, or model-visible tool state. In `ApiKey`
+mode, discovery still identifies image deployments so they are not selected as
+`CHAT_MODEL`, but it clears the resolved image configuration, does not annotate
+an image routing profile, and the dedicated APIM image APIs are not deployed.
+The C# client independently checks the gateway authentication mode before
+registering the tool. Existing subscription-key-protected gateway surfaces
+remain unchanged; no anonymous fallback route is created.
+
+Supported profiles deliberately use different wire contracts:
+
+| Catalog family | AI Gateway route | Request options |
+| --- | --- | --- |
+| `gpt-image-*` | `/openai-v1/images/generations` | Routed to `https://<account>.openai.azure.com/openai/deployments/<deployment>/images/generations?api-version=2025-04-01-preview`; exposes `aspect_ratio` (`square`, `landscape`, or `portrait`) and `quality` (`low`, `medium`, or `high`) as JSON Schema string enums |
+| `MAI-Image-*` | `/mai-v1/images/generations` | Rewritten to backing `/mai/v1/images/generations`; exposes only the `aspect_ratio` string enum and does not expose the unsupported GPT `quality` field |
+
+The hosted tool maps those semantic values to provider-supported dimensions:
+GPT uses `1024x1024`, `1536x1024`, or `1024x1536`; MAI uses `1024x1024`,
+`1024x768`, or `768x1024`. The client retains defensive normalization for
+non-tool callers, but schema-compliant agent calls cannot send arbitrary
+dimensions or unsupported quality values.
+
+The agent authenticates to APIM with its managed identity for
+`https://cognitiveservices.azure.com/.default`. APIM then uses its own managed
+identity and the existing per-model backend pool. Discovery derives and stores
+a profile-specific endpoint only on the selected direct image deployment:
+GPT Image uses the account's `openai` host and deployment-scoped REST path,
+while MAI Image uses the account's `services.ai` host and `/mai/v1` path.
+Other deployments retain the original discovered endpoint. Image deployments
+reported only through a chained APIM remain excluded from `CHAT_MODEL`, but
+are not selected for this direct profile routing because their backing account
+hosts cannot be derived safely. Explicit
+`openAiEndpoint` and `aiServicesEndpoint` discovery fields can override suffix
+derivation for non-public Azure clouds. Chained APIM backends retain their
+existing gateway routing branch. The full OpenAI-v1 API is retained on
+supported APIM tiers, while lower tiers receive only the image-generation
+operation. No key or bearer token is exposed to the model.
+
+Transient image calls retry at most twice within a 60-second cumulative delay
+budget. The client honors standard `Retry-After` delta or HTTP-date values and
+Azure `x-ms-retry-after-ms` / `retry-after-ms` headers without shortening the
+server-requested delay. A delay exceeding the remaining budget fails with an
+actionable retry-later error instead of retrying prematurely.
+
+`generate_image` accepts a bounded prompt and profile-supported options,
+validates the returned PNG/JPEG signature, dimensions, and 15 MiB limit, and
+rejects redirects or download URLs outside HTTPS Azure Blob Storage. It then
+uploads the bytes with a sanitized unique filename into the same
+request-scoped, user-owned Code Interpreter container used by the `code` tool.
+Container creation, template staging, image upload, and code/file mutations
+share one session semaphore. The result contains only the exact
+`/mnt/data/<filename>` path, media type, and dimensions, so the PowerPoint
+workflow can embed it without exposing base64.
+
+The hosted child Agent Identity must retain the **Azure AI User (Foundry
+User)** project role used by Code Interpreter container operations. APIM must
+retain **Cognitive Services User** on every backing account, including an
+account hosting an image deployment.
+
+To validate after deploying a compatible image model:
+
+```bash
+AZD_DISABLE_AGENT_DETECT=1 azd provision
+azd env get-value IMAGE_MODEL
+azd env get-value IMAGE_MODEL_RESOLVED
+azd env get-value IMAGE_MODEL_PROFILE
+azd env get-value IMAGE_MODEL_PATH
+```
+
+Then ask the Teams agent to generate a landscape visual, create a PowerPoint
+using the returned `/mnt/data` path, and verify the final `.pptx` contains the
+image. This repository does not perform that live validation when no image
+deployment is available.
+
 ## Important authentication boundaries
 
 The flow contains several credentials that are intentionally not
@@ -140,15 +279,16 @@ interchangeable:
 1. Azure Bot sends a Bot Framework JWT to APIM.
 2. APIM uses its managed identity to invoke Foundry.
 3. APIM sends the verified Teams user's Entra object ID to Foundry as
-   `x-ms-user-identity`. Foundry converts it into trusted protocol
-   `x-agent-user-id` and `x-agent-foundry-call-id` context.
+   `x-ms-user-identity`. For container protocol 2.0.0, Foundry injects both
+   `x-agent-user-id` and `x-agent-foundry-call-id` on every request to the
+   hosted agent's Responses and Invocations protocol endpoints.
 4. The hosted C# agent uses its hosted instance identity for its own implicit
    Foundry runtime access, Toolbox calls, and the Bot Connector. Startup health
    checks enumerate only user-independent tools. During a real turn, its
    request-scoped Toolbox client forwards the call ID so Toolbox can resolve
-   the current protocol user. The hosted identity receives the same custom
-   user-identity impersonation action at project scope because it is the direct
-   caller from the container to Toolbox.
+   the current protocol user. The platform user ID remains inside the hosted
+   agent for user-scoped state partitioning and is not forwarded as a
+   replacement for `x-ms-user-identity`.
 5. Teams obtains an `access_as_user` assertion audienced to the hosted agent's
    parent Agent Identity blueprint through the `agent-blueprint-sso` Bot OAuth
    connection. The hosted runtime requests the blueprint's
@@ -191,7 +331,9 @@ The current `teams-sso` Bot Service OAuth connection requests the scope in
 `SSO_SCOPES` and returns a token for that scope's resource. The diagnostic can
 decode safe claims from that token because it runs inside the hosted bot.
 Foundry Toolbox does not receive the compact token: its request gets the
-Foundry call ID and user identity context only. Consequently, adding a Graph
+platform-issued `x-agent-foundry-call-id`, which lets Foundry resolve the
+already-established user context. The hosted agent does not forward
+`x-agent-user-id` or resend `x-ms-user-identity`. Consequently, adding a Graph
 MCP tool to the Toolbox does not automatically forward the Bot Service token
 to it.
 
@@ -217,8 +359,52 @@ service and attach the returned token in its HTTP authorization handler.
 Foundry Toolbox remains appropriate for application-authenticated tools and
 Foundry-managed user-authentication integrations. It does not currently expose
 a hook for this hosted agent to inject the already-acquired per-user bearer
-token into a custom MCP request. Use a direct MCP client configured in the
-hosted code when that token transport is required.
+token into a custom MCP request. A Toolbox MCP connection supplies only one
+connection credential and cannot dynamically add the separate per-user
+blueprint Tc required by the standalone Graph service. Use a direct MCP client
+in trusted hosted-agent code when that two-assertion transport is required.
+
+## Agent Identity MCP demonstration server
+
+[karpikpl/mcp-obo-graph](https://github.com/karpikpl/mcp-obo-graph) is the
+standalone TypeScript sample. It leaves the existing Cloud Helper service
+unchanged and demonstrates the full modern MCP surface:
+
+- stateless MCP `2026-07-28` Streamable HTTP;
+- safe delegated-identity inspection plus bounded, read-only Graph calendar
+  and OneDrive tools;
+- calendar and OneDrive resource templates plus an OBO troubleshooting prompt;
+- form elicitation for per-user calendar and OneDrive preferences;
+- the stable `io.modelcontextprotocol/tasks` extension with durable Azure
+  Table-backed Graph aggregation, status, result, and cancellation behavior;
+- `/health`, protected-resource metadata, and
+  authenticated `/auth/consent-start` plus `/auth/consent-complete` for a
+  blueprint `response_type=none` redirect.
+
+The MCP `Authorization` token is accepted only for the MCP API audience and
+`mcp.access`. It cannot be reused for Graph OBO because the Agent Identity
+protocol requires the user assertion Tc to target the blueprint. Trusted agent
+code that already has Tc must perform Agent Identity OBO to obtain the MCP
+token, then send both values through a direct MCP client: the MCP token in
+`Authorization` and the original blueprint-audience Tc in
+`X-Agent-User-Assertion`. First-party Foundry Toolbox cannot use this service
+because it cannot attach both dynamic credentials. The server validates that
+both assertions represent the same tenant and user, requires the MCP token's
+`appid`/`azp` and `xms_par_app_azp` to identify the actual child and configured
+blueprint, obtains T1 with its managed identity/FIC, and exchanges T1 plus Tc
+for a separate Graph token scoped only to `Calendars.Read` and `Files.Read`.
+
+The callback never accepts or displays tokens or authorization codes and
+validates an expiring, single-use state bound to the browser session that
+started consent. It states explicitly that browser consent completion is not
+proof of runtime authorization. The service validates signature, issuer,
+exact audience, expiry, tenant, and delegated scope on both incoming
+assertions. No compact MCP, blueprint, exchange, or Graph token is returned or
+persisted.
+
+See the standalone repository for its container build, Container Apps Bicep,
+exact blueprint/API registration and FIC prerequisites, environment variables,
+client compatibility, and tests.
 
 ## Configuration
 
@@ -347,6 +533,9 @@ See the visual walkthrough in
 [`docs/teams-sso-auth-flow.html`](docs/teams-sso-auth-flow.html) and edit the
 source diagram in
 [`docs/teams-sso-auth-flow.excalidraw`](docs/teams-sso-auth-flow.excalidraw).
+For the validated Entra Agent Identity OBO configuration, token sequence,
+permission inheritance, and Azure role assignments, open
+[`docs/agent-identity-obo-flow.html`](docs/agent-identity-obo-flow.html).
 
 The sample creates one Teams-facing hosted agent. To add another, declare
 another Invocations/Responses service and extend the runtime Bicep agent maps.
@@ -365,19 +554,35 @@ The hook saves these values in the azd environment:
 
 Generated packages and staged hosted-agent sources are ignored by git.
 
-When Code Interpreter cites a generated `.pptx`, `.pdf`, `.png`, or JPEG file,
-the Teams agent downloads it through the Foundry container-file API using the
+The agent calls the local `return_file` tool to select completed user-facing
+deliverables. Code Interpreter may create draft decks, renders, source images,
+and validation artifacts, but only explicitly selected `.pptx`, `.pdf`, `.png`,
+or JPEG files are returned. If no file is explicitly selected, the existing
+generated-file behavior remains as a compatibility fallback. The Teams agent
+downloads selected files through the Foundry container-file API using the
 current protocol call ID. The adapter rejects path traversal, unsupported
 types, invalid signatures, files larger than 20 MiB, and more than five files
 per run.
 
-In a personal Teams chat, the bot caches the validated bytes temporarily and
-sends a native `FileConsentCard`. On acceptance, it uploads the bytes to the
+In a personal Teams chat, the bot stages validated bytes in a private Blob
+container and stores only the consent manifest in the short-TTL
+`generated-files` Cosmos container. The Blob account disables public network
+access, uses a VNet private endpoint and private DNS, and grants the hosted
+agent identity `Storage Blob Data Contributor`. Blob names are random consent
+tokens rather than user filenames. This allows consent cards to survive hosted
+agent restarts, deployments, and requests routed to another replica without
+storing binary content in Cosmos. On acceptance, the bot streams the staged
+blob directly to the
 preauthenticated Teams upload session with the required `Content-Range`, then
 sends a `FileInfoCard` referencing the uploaded OneDrive or SharePoint item.
+After acceptance or decline, the bot removes the original consent activity so
+its single-use Allow and Decline actions are no longer displayed.
 Consent tokens expire after 30 minutes and are bound to the trusted Foundry
 user ID and Teams conversation ID. Group chats and channels do not support
-this native file-consent flow.
+this native file-consent flow. Upload claims use a five-minute lease so a
+crashed uploader can be retried, and duplicate accept invokes are ignored
+while the original upload is still running. Successful uploads and declines
+delete the staged blob; a one-day Blob lifecycle rule removes abandoned data.
 
 The session administration endpoint is protected by its dedicated APIM
 subscription. `GET` returns the session cached for the active agent version;

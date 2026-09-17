@@ -4,6 +4,8 @@ using AgentChat.Services;
 using FluentAssertions;
 using Microsoft.Agents.Core.Models;
 using Microsoft.Agents.Extensions.Teams.Models;
+using Microsoft.Agents.Storage;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Configuration;
 using Xunit;
 
@@ -30,9 +32,10 @@ public class TeamsFileServiceTests
         var handler = new RecordingHandler();
         var service = CreateService(handler);
         var owner = new UserConversationKey("user", "conversation");
-        var consentAttachment = service.CreateConsentCard(
+        var consentAttachment = await service.CreateConsentCardAsync(
             owner,
-            GeneratedFile("report.pptx", "pptx bytes"u8.ToArray()));
+            GeneratedFile("report.pptx", "pptx bytes"u8.ToArray()),
+            CancellationToken.None);
         var consent = consentAttachment.Content
             .Should().BeOfType<FileConsentCard>().Subject;
         var response = new FileConsentCardResponse(
@@ -78,9 +81,10 @@ public class TeamsFileServiceTests
         var handler = new RecordingHandler();
         var service = CreateService(handler);
         var owner = new UserConversationKey("user-a", "conversation-a");
-        var consent = service.CreateConsentCard(
+        var consent = await service.CreateConsentCardAsync(
             owner,
-            GeneratedFile("report.pptx", "pptx bytes"u8.ToArray()));
+            GeneratedFile("report.pptx", "pptx bytes"u8.ToArray()),
+            CancellationToken.None);
         var context = ((FileConsentCard)consent.Content).AcceptContext;
         var response = new FileConsentCardResponse(
             "accept",
@@ -116,9 +120,10 @@ public class TeamsFileServiceTests
         var handler = new RecordingHandler();
         var service = CreateService(handler);
         var owner = new UserConversationKey("user", "conversation");
-        var consent = service.CreateConsentCard(
+        var consent = await service.CreateConsentCardAsync(
             owner,
-            GeneratedFile("report.pptx", "pptx bytes"u8.ToArray()));
+            GeneratedFile("report.pptx", "pptx bytes"u8.ToArray()),
+            CancellationToken.None);
         var context = ((FileConsentCard)consent.Content).AcceptContext;
         var response = new FileConsentCardResponse(
             "accept",
@@ -148,9 +153,10 @@ public class TeamsFileServiceTests
             HttpStatusCode.OK);
         var service = CreateService(handler);
         var owner = new UserConversationKey("user", "conversation");
-        var consent = service.CreateConsentCard(
+        var consent = await service.CreateConsentCardAsync(
             owner,
-            GeneratedFile("report.pptx", "pptx bytes"u8.ToArray()));
+            GeneratedFile("report.pptx", "pptx bytes"u8.ToArray()),
+            CancellationToken.None);
         var context = ((FileConsentCard)consent.Content).AcceptContext;
         var response = new FileConsentCardResponse(
             "accept",
@@ -182,9 +188,10 @@ public class TeamsFileServiceTests
         var handler = new BlockingHandler();
         var service = CreateService(handler);
         var owner = new UserConversationKey("user", "conversation");
-        var consent = service.CreateConsentCard(
+        var consent = await service.CreateConsentCardAsync(
             owner,
-            GeneratedFile("report.pptx", "pptx bytes"u8.ToArray()));
+            GeneratedFile("report.pptx", "pptx bytes"u8.ToArray()),
+            CancellationToken.None);
         var context = ((FileConsentCard)consent.Content).AcceptContext;
         var response = new FileConsentCardResponse(
             "accept",
@@ -206,12 +213,131 @@ public class TeamsFileServiceTests
             owner,
             response,
             CancellationToken.None);
-        await duplicate.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*already uploading*");
+        await duplicate
+            .Should()
+            .ThrowAsync<GeneratedFileUploadInProgressException>();
 
         handler.Release.TrySetResult();
         await first;
         handler.RequestCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Consent_survives_a_new_service_instance()
+    {
+        var storage = new MemoryStorage();
+        var content = new InMemoryGeneratedFileContentStore();
+        var handler = new RecordingHandler();
+        var firstInstance = CreateService(handler, storage, content);
+        var owner = new UserConversationKey("user", "conversation");
+        var consent = await firstInstance.CreateConsentCardAsync(
+            owner,
+            GeneratedFile("report.pptx", "pptx bytes"u8.ToArray()),
+            CancellationToken.None);
+        var context = ((FileConsentCard)consent.Content).AcceptContext;
+
+        var restartedInstance = CreateService(
+            handler,
+            storage,
+            content);
+        var result = await restartedInstance.UploadAsync(
+            owner,
+            new FileConsentCardResponse(
+                "accept",
+                context,
+                new FileUploadInfo(
+                    "report.pptx",
+                    "https://sn3302.up.1drv.com/up/session",
+                    "https://tenant.sharepoint.com/files/report.pptx",
+                    "drive-item-id",
+                    "pptx")),
+            CancellationToken.None);
+
+        result.ContentType.Should().Be(FileInfoCard.ContentType);
+        handler.Body.Should().Equal("pptx bytes"u8.ToArray());
+    }
+
+    [Fact]
+    public async Task Chunked_file_survives_a_new_service_instance()
+    {
+        var storage = new MemoryStorage();
+        var content = new InMemoryGeneratedFileContentStore();
+        var handler = new RecordingHandler();
+        var bytes = Enumerable.Range(0, 1_200_000)
+            .Select(index => (byte)(index % 251))
+            .ToArray();
+        var owner = new UserConversationKey("user", "conversation");
+        var firstInstance = CreateService(handler, storage, content);
+        var consent = await firstInstance.CreateConsentCardAsync(
+            owner,
+            GeneratedFile("large-report.pptx", bytes),
+            CancellationToken.None);
+        var context = ((FileConsentCard)consent.Content).AcceptContext;
+
+        var restartedInstance = CreateService(
+            handler,
+            storage,
+            content);
+        await restartedInstance.UploadAsync(
+            owner,
+            new FileConsentCardResponse(
+                "accept",
+                context,
+                new FileUploadInfo(
+                    "large-report.pptx",
+                    "https://sn3302.up.1drv.com/up/session",
+                    "https://tenant.sharepoint.com/files/large-report.pptx",
+                    "drive-item-id",
+                    "pptx")),
+            CancellationToken.None);
+
+        handler.Body.Should().Equal(bytes);
+    }
+
+    [Fact]
+    public async Task Expired_uploader_cannot_release_a_newer_claim()
+    {
+        var storage = new MemoryStorage();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["Files:UploadLeaseSeconds"] = "0.01",
+                })
+            .Build();
+        var store = new GeneratedFileStore(
+            new GeneratedFileStorage(storage),
+            new InMemoryGeneratedFileContentStore(),
+            configuration,
+            NullLogger<GeneratedFileStore>.Instance);
+        var owner = new UserConversationKey("user", "conversation");
+        var cached = await store.AddAsync(
+            owner,
+            GeneratedFile("report.pptx", "pptx bytes"u8.ToArray()),
+            CancellationToken.None);
+        var first = await store.TryClaimAsync(
+            cached.Token,
+            owner,
+            CancellationToken.None);
+        await Task.Delay(30);
+        var second = await store.TryClaimAsync(
+            cached.Token,
+            owner,
+            CancellationToken.None);
+
+        await store.ReleaseAsync(
+            cached.Token,
+            owner,
+            first.Claim!.ClaimId!,
+            CancellationToken.None);
+        var third = await store.TryClaimAsync(
+            cached.Token,
+            owner,
+            CancellationToken.None);
+
+        second.Status.Should().Be(GeneratedFileClaimStatus.Claimed);
+        third.Status.Should().Be(
+            GeneratedFileClaimStatus.UploadInProgress);
     }
 
     [Fact]
@@ -220,18 +346,22 @@ public class TeamsFileServiceTests
         var handler = new RecordingHandler();
         var service = CreateService(handler);
         var owner = new UserConversationKey("user-a", "conversation");
-        var consent = service.CreateConsentCard(
+        var consent = await service.CreateConsentCardAsync(
             owner,
-            GeneratedFile("report.pptx", "pptx bytes"u8.ToArray()));
+            GeneratedFile("report.pptx", "pptx bytes"u8.ToArray()),
+            CancellationToken.None);
         var context = ((FileConsentCard)consent.Content).DeclineContext;
         var response = new FileConsentCardResponse(
             "decline",
             context,
             uploadInfo: null!);
 
-        service.Discard(
+        var discard = await service.DiscardAsync(
             new UserConversationKey("user-b", "conversation"),
-            response);
+            response,
+            CancellationToken.None);
+        discard.Should().Be(
+            GeneratedFileDiscardStatus.OwnerMismatch);
 
         var accept = new FileConsentCardResponse(
             "accept",
@@ -247,15 +377,23 @@ public class TeamsFileServiceTests
     }
 
     private static TeamsFileService CreateService(
-        HttpMessageHandler handler)
+        HttpMessageHandler handler,
+        IStorage? storage = null,
+        IGeneratedFileContentStore? content = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection()
             .Build();
         return new TeamsFileService(
             new HandlerHttpClientFactory(handler),
-            new GeneratedFileStore(configuration),
-            configuration);
+            new GeneratedFileStore(
+                new GeneratedFileStorage(
+                    storage ?? new MemoryStorage()),
+                content ?? new InMemoryGeneratedFileContentStore(),
+                configuration,
+                NullLogger<GeneratedFileStore>.Instance),
+            configuration,
+            NullLogger<TeamsFileService>.Instance);
     }
 
     private static GeneratedFileContent GeneratedFile(
@@ -283,6 +421,38 @@ public class TeamsFileServiceTests
     {
         public HttpClient CreateClient(string name)
             => new(handler, disposeHandler: false);
+    }
+
+    private sealed class InMemoryGeneratedFileContentStore
+        : IGeneratedFileContentStore
+    {
+        private readonly Dictionary<string, byte[]> _files =
+            new(StringComparer.Ordinal);
+
+        public Task SaveAsync(
+            string token,
+            ReadOnlyMemory<byte> content,
+            CancellationToken cancellationToken)
+        {
+            _files.Add(token, content.ToArray());
+            return Task.CompletedTask;
+        }
+
+        public Task<Stream> OpenReadAsync(
+            string token,
+            CancellationToken cancellationToken)
+            => Task.FromResult<Stream>(
+                new MemoryStream(
+                    _files[token],
+                    writable: false));
+
+        public Task DeleteAsync(
+            string token,
+            CancellationToken cancellationToken)
+        {
+            _files.Remove(token);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class RecordingHandler(

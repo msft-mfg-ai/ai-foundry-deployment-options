@@ -1,0 +1,886 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Identity OBO — Entra Configuration Map</title>
+  <style>
+    :root {
+      --night: #071c22;
+      --night-2: #0d2a31;
+      --paper: #f3eedf;
+      --paper-2: #e6deca;
+      --ink: #13272a;
+      --muted: #607478;
+      --mint: #69e6bd;
+      --cyan: #6dd9f2;
+      --amber: #ffbd59;
+      --coral: #ff765f;
+      --line: rgba(243, 238, 223, .2);
+      --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+      --serif: "Baskerville", "Palatino Linotype", Georgia, serif;
+      --sans: "Aptos", "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      color: var(--paper);
+      background:
+        radial-gradient(circle at 8% 3%, rgba(105, 230, 189, .16), transparent 28rem),
+        radial-gradient(circle at 92% 18%, rgba(109, 217, 242, .13), transparent 32rem),
+        linear-gradient(135deg, var(--night), #06161b 70%);
+      font-family: var(--sans);
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      opacity: .17;
+      background-image:
+        linear-gradient(var(--line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--line) 1px, transparent 1px);
+      background-size: 38px 38px;
+      mask-image: linear-gradient(to bottom, black, transparent 85%);
+    }
+
+    a { color: inherit; }
+    code, pre { font-family: var(--mono); }
+
+    .shell {
+      width: min(1280px, calc(100% - 28px));
+      margin: 18px auto 60px;
+      border: 1px solid rgba(243, 238, 223, .28);
+      box-shadow: 0 30px 90px rgba(0, 0, 0, .34);
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 12px 18px;
+      color: var(--mint);
+      border-bottom: 1px solid rgba(243, 238, 223, .28);
+      font: 700 11px/1.4 var(--mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(280px, .6fr);
+      min-height: 570px;
+      border-bottom: 1px solid rgba(243, 238, 223, .28);
+    }
+
+    .hero-copy {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: clamp(30px, 6vw, 78px);
+      border-right: 1px solid rgba(243, 238, 223, .28);
+    }
+
+    .kicker, .label, .tab, .step-index, .role-name, .status {
+      font-family: var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .09em;
+      font-weight: 700;
+    }
+
+    .kicker {
+      margin: 0 0 22px;
+      color: var(--amber);
+      font-size: 12px;
+    }
+
+    h1 {
+      max-width: 850px;
+      margin: 0;
+      font: 500 clamp(52px, 8vw, 112px)/.83 var(--serif);
+      letter-spacing: -.055em;
+    }
+
+    h1 em {
+      color: var(--mint);
+      font-style: italic;
+    }
+
+    .hero-summary {
+      max-width: 760px;
+      margin: 50px 0 0;
+      color: #c7d4d3;
+      font-size: clamp(18px, 2vw, 26px);
+      line-height: 1.45;
+    }
+
+    .hero-panel {
+      display: grid;
+      align-content: space-between;
+      padding: 30px;
+      background: rgba(13, 42, 49, .7);
+    }
+
+    .identity-seal {
+      display: grid;
+      place-items: center;
+      width: min(240px, 80%);
+      aspect-ratio: 1;
+      margin: 20px auto;
+      border: 2px solid var(--mint);
+      border-radius: 50%;
+      box-shadow:
+        0 0 0 12px rgba(105, 230, 189, .06),
+        0 0 0 24px rgba(105, 230, 189, .03);
+      text-align: center;
+      transform: rotate(-5deg);
+    }
+
+    .identity-seal strong {
+      display: block;
+      font: 500 34px/1 var(--serif);
+    }
+
+    .identity-seal span {
+      display: block;
+      margin-top: 8px;
+      color: var(--mint);
+      font: 700 10px/1.4 var(--mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .truth {
+      padding: 18px;
+      color: var(--night);
+      background: var(--amber);
+      font: 700 14px/1.5 var(--mono);
+    }
+
+    .tabs {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      overflow-x: auto;
+      border-bottom: 1px solid rgba(243, 238, 223, .28);
+      background: rgba(7, 28, 34, .95);
+      backdrop-filter: blur(12px);
+    }
+
+    .tab {
+      flex: 1;
+      min-width: 160px;
+      padding: 18px 20px;
+      color: #9db0b1;
+      border: 0;
+      border-right: 1px solid rgba(243, 238, 223, .18);
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .tab[aria-selected="true"] {
+      color: var(--night);
+      background: var(--mint);
+    }
+
+    .panel { display: none; }
+    .panel.active { display: block; animation: reveal .35s ease-out; }
+
+    @keyframes reveal {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .section {
+      padding: clamp(30px, 5vw, 68px);
+      border-bottom: 1px solid rgba(243, 238, 223, .28);
+    }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: 90px 1fr;
+      gap: 22px;
+      align-items: start;
+      margin-bottom: 38px;
+    }
+
+    .section-number {
+      color: var(--mint);
+      font: 500 64px/.8 var(--serif);
+    }
+
+    h2 {
+      margin: 0;
+      font: 500 clamp(34px, 5vw, 64px)/.95 var(--serif);
+      letter-spacing: -.035em;
+    }
+
+    .section-head p {
+      max-width: 760px;
+      margin: 14px 0 0;
+      color: #afc0c0;
+      line-height: 1.55;
+    }
+
+    .flow-grid {
+      display: grid;
+      grid-template-columns: minmax(270px, .72fr) minmax(0, 1.28fr);
+      gap: 26px;
+    }
+
+    .steps {
+      display: grid;
+      gap: 10px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 44px 1fr;
+      gap: 14px;
+      width: 100%;
+      padding: 17px;
+      color: var(--paper);
+      border: 1px solid rgba(243, 238, 223, .22);
+      background: rgba(255, 255, 255, .025);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .step:hover, .step[aria-selected="true"] {
+      border-color: var(--mint);
+      background: rgba(105, 230, 189, .09);
+    }
+
+    .step-index {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      color: var(--night);
+      background: var(--mint);
+      border-radius: 50%;
+      font-size: 12px;
+    }
+
+    .step strong { display: block; margin-bottom: 5px; }
+    .step small { color: #9eb1b1; line-height: 1.4; }
+
+    .scope {
+      min-height: 510px;
+      padding: clamp(24px, 4vw, 46px);
+      color: var(--ink);
+      background: var(--paper);
+      box-shadow: 10px 10px 0 var(--amber);
+    }
+
+    .scope .label { color: #a24830; font-size: 11px; }
+    .scope h3 {
+      margin: 12px 0 18px;
+      font: 500 clamp(30px, 4vw, 52px)/1 var(--serif);
+    }
+
+    .scope p { color: #40595c; line-height: 1.58; }
+
+    .token {
+      margin: 28px 0 0;
+      border: 2px solid var(--ink);
+    }
+
+    .token-head {
+      display: flex;
+      justify-content: space-between;
+      padding: 11px 14px;
+      color: var(--paper);
+      background: var(--ink);
+      font: 700 11px/1.4 var(--mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .claims { margin: 0; }
+    .claim {
+      display: grid;
+      grid-template-columns: 76px 1fr;
+      gap: 14px;
+      padding: 11px 14px;
+      border-top: 1px solid rgba(19, 39, 42, .22);
+    }
+    .claim:first-child { border-top: 0; }
+    .claim dt { color: #9a412d; font: 700 12px var(--mono); }
+    .claim dd {
+      min-width: 0;
+      margin: 0;
+      overflow-wrap: anywhere;
+      font: 13px/1.45 var(--mono);
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .card {
+      padding: 25px;
+      border: 1px solid rgba(243, 238, 223, .22);
+      background: rgba(255, 255, 255, .035);
+    }
+
+    .card.accent {
+      color: var(--ink);
+      background: var(--paper);
+    }
+
+    .card h3 {
+      margin: 8px 0 14px;
+      font: 500 30px/1.05 var(--serif);
+    }
+
+    .card p, .card li { color: #abc0c0; line-height: 1.55; }
+    .card.accent p, .card.accent li { color: #40595c; }
+    .card ul { margin: 15px 0 0; padding-left: 18px; }
+    .card li + li { margin-top: 8px; }
+
+    .label {
+      color: var(--amber);
+      font-size: 11px;
+    }
+
+    .mono-block {
+      position: relative;
+      margin: 18px 0 0;
+      padding: 18px;
+      overflow-x: auto;
+      color: var(--mint);
+      border: 1px solid rgba(105, 230, 189, .3);
+      background: #06171b;
+      font: 12px/1.65 var(--mono);
+      white-space: pre-wrap;
+    }
+
+    .role-table {
+      width: 100%;
+      border-collapse: collapse;
+      color: var(--ink);
+      background: var(--paper);
+    }
+
+    .role-table th, .role-table td {
+      padding: 16px;
+      border: 1px solid #9aa7a2;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .role-table th {
+      color: var(--paper);
+      background: var(--ink);
+      font: 700 11px var(--mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .role-name { color: #99442f; font-size: 11px; }
+    .role-table code { font-size: 11px; overflow-wrap: anywhere; }
+
+    .callout {
+      margin-top: 24px;
+      padding: 20px;
+      color: var(--night);
+      background: var(--cyan);
+      font-weight: 650;
+      line-height: 1.5;
+    }
+
+    .checklist {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .check {
+      display: flex;
+      gap: 13px;
+      align-items: flex-start;
+      padding: 16px;
+      border: 1px solid rgba(243, 238, 223, .22);
+      cursor: pointer;
+    }
+
+    .check input {
+      width: 20px;
+      height: 20px;
+      accent-color: var(--mint);
+    }
+
+    .check strong { display: block; margin-bottom: 4px; }
+    .check span { color: #a9bbbb; font-size: 14px; line-height: 1.45; }
+
+    footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 24px;
+      color: #98aaaa;
+      font: 11px/1.5 var(--mono);
+    }
+
+    @media (max-width: 850px) {
+      .hero, .flow-grid, .cards { grid-template-columns: 1fr; }
+      .hero-copy { border-right: 0; border-bottom: 1px solid rgba(243, 238, 223, .28); }
+      .section-head { grid-template-columns: 58px 1fr; }
+      .checklist { grid-template-columns: 1fr; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .panel.active { animation: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="topbar">
+      <span>OTIS / Foundry Hosted Agent</span>
+      <span>Entra Agent Identity OBO / Configuration Map</span>
+    </div>
+
+    <header class="hero">
+      <div class="hero-copy">
+        <div>
+          <p class="kicker">One user · one agent · multiple audiences</p>
+          <h1>The agent acts <em>with</em> you, not as you.</h1>
+        </div>
+        <p class="hero-summary">
+          Teams proves the human. The Foundry blueprint proves the agent
+          family. The child Agent Identity binds both proofs and receives a
+          narrowly scoped token for Graph, an MCP server, or another API.
+        </p>
+      </div>
+      <aside class="hero-panel">
+        <div class="identity-seal">
+          <div>
+            <strong>Tc + T1</strong>
+            <span>two proofs become one delegated token</span>
+          </div>
+        </div>
+        <div class="truth">
+          x-ms-user-identity selects the user partition. It is not an OAuth
+          token and cannot replace Teams SSO.
+        </div>
+      </aside>
+    </header>
+
+    <nav class="tabs" aria-label="Page sections">
+      <button class="tab" aria-selected="true" data-panel="flow">Token flow</button>
+      <button class="tab" aria-selected="false" data-panel="entra">Entra setup</button>
+      <button class="tab" aria-selected="false" data-panel="rbac">Azure RBAC</button>
+      <button class="tab" aria-selected="false" data-panel="checklist">Checklist</button>
+    </nav>
+
+    <section id="flow" class="panel active">
+      <div class="section">
+        <div class="section-head">
+          <div class="section-number">01</div>
+          <div>
+            <h2>Follow the two assertions.</h2>
+            <p>
+              Select a step to inspect who issues each token, what its audience
+              must be, and why it cannot be reused for another resource.
+            </p>
+          </div>
+        </div>
+        <div class="flow-grid">
+          <div class="steps" id="steps"></div>
+          <article class="scope" aria-live="polite">
+            <div class="label" id="step-label"></div>
+            <h3 id="step-title"></h3>
+            <p id="step-copy"></p>
+            <div class="token">
+              <div class="token-head">
+                <span id="token-name"></span>
+                <span>safe claims</span>
+              </div>
+              <dl class="claims" id="claims"></dl>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="entra" class="panel">
+      <div class="section">
+        <div class="section-head">
+          <div class="section-number">02</div>
+          <div>
+            <h2>Configure four Entra objects.</h2>
+            <p>
+              The interactive client, blueprint, child identity, and resource
+              API each have a distinct job. Combining their responsibilities
+              is the fastest route to an audience or consent failure.
+            </p>
+          </div>
+        </div>
+        <div class="cards">
+          <article class="card">
+            <div class="label">A · Teams bot SSO application</div>
+            <h3>Interactive client</h3>
+            <ul>
+              <li>Single-tenant app registration with a service principal.</li>
+              <li>Manifest resource: <code>api://botid-&lt;bot-app-id&gt;</code>.</li>
+              <li>Expose its own <code>access_as_user</code scope and preauthorize Teams desktop, web, Microsoft 365, and Outlook clients.</li>
+              <li>Redirect URI: <code>https://token.botframework.com/.auth/web/redirect</code>.</li>
+              <li>Enable access-token and ID-token issuance.</li>
+              <li>Client secret is stored only in hosted configuration and Azure Bot OAuth settings.</li>
+            </ul>
+          </article>
+
+          <article class="card accent">
+            <div class="label">B · Agent Identity blueprint</div>
+            <h3>Parent authorization policy</h3>
+            <ul>
+              <li>Identifier URI: <code>api://&lt;blueprint-client-id&gt;</code>.</li>
+              <li>Expose admin-consent scope <code>access_as_user</code>.</li>
+              <li>Preauthorize the Teams bot SSO application for that scope.</li>
+              <li>Declare Graph and MCP delegated permissions in <code>requiredResourceAccess</code>.</li>
+              <li>Grant administrator consent on the blueprint.</li>
+              <li>Add scope-only inheritable permissions for every downstream resource.</li>
+            </ul>
+          </article>
+
+          <article class="card accent">
+            <div class="label">C · Child Agent Identity</div>
+            <h3>Runtime actor</h3>
+            <ul>
+              <li>Created and managed by Foundry; do not create a secret.</li>
+              <li>Its app ID becomes <code>client_id</code in the final OBO request.</li>
+              <li>The blueprint T1 identifies it through the FMI path in <code>sub</code>.</li>
+              <li>The final resource token contains the child ID in <code>appid</code> and the human in <code>oid</code>.</li>
+            </ul>
+          </article>
+
+          <article class="card">
+            <div class="label">D · Downstream API</div>
+            <h3>Graph or custom MCP resource</h3>
+            <ul>
+              <li>Graph example: delegated <code>User.Read</code>.</li>
+              <li>MCP example: expose <code>mcp.access</code> on the MCP API registration.</li>
+              <li>The blueprint receives and inherits each delegated permission.</li>
+              <li>Tokens remain audience-bound: a Graph token cannot authorize the MCP API.</li>
+              <li>The standalone <a href="https://github.com/karpikpl/mcp-obo-graph">mcp-obo-graph</a> server is direct-client-only: trusted hosted-agent code sends the child MCP token plus a separate blueprint-audience user assertion before Graph OBO.</li>
+              <li>First-party Foundry Toolbox supplies one connection credential and cannot dynamically attach the separate per-user blueprint Tc, so it cannot call this service.</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="callout">
+          The Foundry-managed <code>fmi-fic</code> belongs to the blueprint.
+          The hosted runtime requests <code>api://AzureADTokenExchange/.default</code>
+          using the blueprint client ID; Foundry supplies the managed
+          credential and binds the resulting assertion to the child identity.
+        </div>
+        <div class="callout">
+          Register <code>https://&lt;mcp-host&gt;/auth/consent-complete</code>
+          as a Web redirect URI on the blueprint when using an explicit
+          <code>response_type=none</code> consent-only browser flow. Start it
+          through authenticated <code>POST /auth/consent-start</code>; the
+          service mints an expiring, single-use state bound to an
+          <code>HttpOnly</code> browser session cookie. The page proves only
+          that the matching browser interaction completed. Runtime access is
+          proven separately by the signed, audience-bound token presented to
+          <code>POST /mcp</code>; the callback rejects unknown, expired,
+          replayed, or mismatched state and credential-like query parameters,
+          and never displays the state value.
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head">
+          <div class="section-number">03</div>
+          <div>
+            <h2>Azure Bot OAuth connection.</h2>
+            <p>
+              This connection returns Tc: the signed-in user's assertion for
+              the blueprint. It does not return the final Graph or MCP token.
+            </p>
+          </div>
+        </div>
+        <div class="mono-block">Connection name: agent-blueprint-sso
+Provider: Azure Active Directory v2
+Client ID: &lt;Teams bot SSO application client ID&gt;
+Client secret: &lt;Teams bot SSO application secret&gt;
+Tenant ID: &lt;tenant ID&gt;
+Token exchange URL: api://&lt;blueprint-client-id&gt;
+Scopes: api://&lt;blueprint-client-id&gt;/access_as_user offline_access</div>
+      </div>
+    </section>
+
+    <section id="rbac" class="panel">
+      <div class="section">
+        <div class="section-head">
+          <div class="section-number">04</div>
+          <div>
+            <h2>RBAC is not OAuth consent.</h2>
+            <p>
+              Azure roles authorize calls to Foundry and state services.
+              Entra delegated permissions authorize access to Graph or MCP.
+              The deployment needs both layers.
+            </p>
+          </div>
+        </div>
+        <table class="role-table">
+          <thead>
+            <tr>
+              <th>Principal</th>
+              <th>Scope</th>
+              <th>Role</th>
+              <th>Why it exists</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="role-name">APIM managed identity</span></td>
+              <td>Foundry project</td>
+              <td>Azure AI User<br><code>53ca6127-db72-4b80-b1b0-d745d6d5456d</code></td>
+              <td>Invoke the hosted-agent data plane.</td>
+            </tr>
+            <tr>
+              <td><span class="role-name">APIM managed identity</span></td>
+              <td>Foundry project</td>
+              <td>Azure AI Agent Service Agent Consumer<br><code>eed3b665-ab3a-47b6-8f48-c9382fb1dad6</code></td>
+              <td>Create and use hosted-agent sessions.</td>
+            </tr>
+            <tr>
+              <td><span class="role-name">APIM managed identity</span></td>
+              <td>Foundry project</td>
+              <td>Foundry Agent User Identity Impersonation</td>
+              <td>Send the verified Teams <code>aadObjectId</code> as <code>x-ms-user-identity</code>.</td>
+            </tr>
+            <tr>
+              <td><span class="role-name">Child Agent Identity</span></td>
+              <td>Foundry project</td>
+              <td>Implicit hosted-agent access</td>
+              <td>Foundry grants the hosted agent implicit access to core capabilities in its own project, including project-endpoint inference and session storage. An explicit Foundry User assignment is required only for advanced scenarios where implicit access does not cover the API being called.</td>
+            </tr>
+            <tr>
+              <td><span class="role-name">Hosted container request context</span></td>
+              <td>Outbound Foundry call</td>
+              <td><code>x-agent-foundry-call-id</code> header</td>
+              <td>Forward the platform-issued call ID unchanged to Foundry services such as Toolbox. This is context propagation, not a new <code>x-ms-user-identity</code> delegation, so it does not require the child identity to hold the impersonation role.</td>
+            </tr>
+            <tr>
+              <td><span class="role-name">Child Agent Identity</span></td>
+              <td>Cosmos account</td>
+              <td>Cosmos DB Built-in Data Contributor</td>
+              <td>Read and write user-partitioned conversation state; never tokens. The current assignment is account-scoped and should be narrowed to the <code>botstate/conversations</code> container if the deployment API supports that scope consistently.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="mono-block">Custom role dataAction:
+Microsoft.CognitiveServices/accounts/AIServices/agents/endpoints/UserIdentityImpersonation/action
+
+Assignable scope:
+The Foundry account
+
+Assignment scope:
+The specific Foundry project</div>
+
+        <div class="callout">
+          Least-privilege review: assign the custom impersonation role only to
+          APIM, because APIM is the middle tier that sends
+          <code>x-ms-user-identity</code>. Remove the child Agent Identity's
+          explicit impersonation assignment. Also test removal of the child's
+          explicit <code>Foundry User</code> assignment because hosted agents
+          have implicit access to core project capabilities. Narrow Cosmos
+          from account scope to the conversation container when supported and
+          validated.
+        </div>
+      </div>
+    </section>
+
+    <section id="checklist" class="panel">
+      <div class="section">
+        <div class="section-head">
+          <div class="section-number">05</div>
+          <div>
+            <h2>Deployment acceptance checklist.</h2>
+            <p>
+              Checkboxes are stored only in this browser. They are a review
+              aid, not deployment state.
+            </p>
+          </div>
+        </div>
+        <div class="checklist" id="checklist-items"></div>
+
+        <div class="callout">
+          Expected proof: two Teams users receive different <code>oid</code>
+          and <code>upn</code> claims, while both resource tokens contain the
+          same child Agent Identity <code>appid</code> and blueprint
+          <code>xms_par_app_azp</code>.
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <span>Source of truth: configure-agent-identity-obo.py + teams-hosted-runtime.bicep</span>
+      <span>No compact tokens are displayed, logged, or persisted.</span>
+    </footer>
+  </main>
+
+  <script>
+    const steps = [
+      {
+        title: "Teams authenticates the human",
+        copy: "Teams and Azure Bot Service establish the signed-in user. The Bot OAuth connection requests a token for the Agent Identity blueprint, not Graph and not the MCP server.",
+        token: "Tc · user assertion",
+        claims: {
+          aud: "api://<blueprint-client-id>",
+          oid: "<signed-in-user-object-id>",
+          scp: "access_as_user",
+          idtyp: "user"
+        }
+      },
+      {
+        title: "APIM establishes trusted context",
+        copy: "APIM validates the Bot Framework JWT, authenticates to Foundry with managed identity, and forwards the verified Teams aadObjectId as x-ms-user-identity. On container protocol 2.0.0, Foundry injects both x-agent-user-id and x-agent-foundry-call-id on every request to the hosted agent's Responses and Invocations endpoints.",
+        token: "Foundry invocation context",
+        claims: {
+          header: "x-ms-user-identity: <aadObjectId>",
+          user: "x-agent-user-id",
+          call: "x-agent-foundry-call-id",
+          warning: "Identity context — not a bearer token"
+        }
+      },
+      {
+        title: "Blueprint obtains T1",
+        copy: "The hosted runtime addresses the managed identity endpoint with the parent blueprint client ID. Entra returns an AzureADTokenExchange assertion whose FMI subject ends with the child Agent Identity ID.",
+        token: "T1 · exchange assertion",
+        claims: {
+          aud: "AzureADTokenExchange",
+          azp: "<blueprint-client-id>",
+          sub: "/eid1/.../<child-agent-identity-id>",
+          idtyp: "app"
+        }
+      },
+      {
+        title: "Child performs OBO",
+        copy: "Trusted code submits Tc and T1 together. The requested scope is selected by code: Graph User.Read for the profile tool or mcp.access for the direct MCP client.",
+        token: "OBO request",
+        claims: {
+          client_id: "<child-agent-identity-id>",
+          assertion: "Tc",
+          client_assertion: "T1",
+          requested_token_use: "on_behalf_of"
+        }
+      },
+      {
+        title: "Entra issues a resource token",
+        copy: "The returned token represents both the child agent and the signed-in user. It can be accepted only by the resource in aud.",
+        token: "Tr · delegated resource token",
+        claims: {
+          appid: "<child-agent-identity-id>",
+          oid: "<signed-in-user-object-id>",
+          aud: "Graph OR <MCP-app-id>",
+          scp: "User.Read OR mcp.access"
+        }
+      },
+      {
+        title: "Trusted code calls the resource",
+        copy: "Trusted hosted-agent code that already has Tc performs Agent Identity OBO for the MCP token, then calls karpikpl/mcp-obo-graph directly with the MCP token in Authorization and Tc in X-Agent-User-Assertion. The service requires the MCP token to identify the actual child and configured parent blueprint, validates both assertions for the same tenant and user, and performs Graph OBO. Foundry Toolbox cannot supply this two-credential request. Neither assertion enters model context.",
+        token: "Outbound request",
+        claims: {
+          authorization: "Bearer <resource-specific-token>",
+          storage: "never persisted",
+          model_context: "never exposed",
+          isolation: "tenant + user + resource + scopes"
+        }
+      }
+    ];
+
+    const checklist = [
+      ["Teams app registration", "Single tenant, botid identifier URI, access_as_user, Teams preauthorization, Bot Framework redirect."],
+      ["Blueprint API scope", "api://<blueprint>/access_as_user exists and the bot app is preauthorized."],
+      ["Delegated permissions", "Graph and MCP scopes are declared on the blueprint and administrator consent is granted."],
+      ["Permission inheritance", "Each downstream resource is allAllowed for scopes and none for roles."],
+      ["Bot OAuth connection", "agent-blueprint-sso targets the blueprint URI and requests access_as_user plus offline_access."],
+      ["APIM identity roles", "Azure AI User, Agent Consumer, and the custom user-identity impersonation role are assigned."],
+      ["Hosted identity roles", "Azure AI User, custom impersonation role, and Cosmos data contributor are assigned."],
+      ["Graph proof", "get_my_graph_profile returns the signed-in Teams user's own profile."],
+      ["MCP proof", "graph_inspect_delegated_access returns safe MCP identity claims and configured Graph scopes without returning a token."],
+      ["MCP demo redirect", "Authenticated /auth/consent-start mints a single-use browser-bound state; the blueprint Web redirect points to /auth/consent-complete and response_type=none returns no code or token."],
+      ["MCP runtime proof", "Trusted hosted-agent code calls the standalone /mcp endpoint directly with a child MCP token and matching blueprint-audience Tc. Toolbox is unsupported because it cannot attach both credentials."],
+      ["Two-user isolation", "Two users receive distinct oid/upn claims and isolated conversation state."]
+    ];
+
+    const stepRoot = document.querySelector("#steps");
+    const claimsRoot = document.querySelector("#claims");
+
+    function renderStep(index) {
+      const step = steps[index];
+      document.querySelector("#step-label").textContent = `Step ${index + 1} of ${steps.length}`;
+      document.querySelector("#step-title").textContent = step.title;
+      document.querySelector("#step-copy").textContent = step.copy;
+      document.querySelector("#token-name").textContent = step.token;
+      claimsRoot.replaceChildren(
+        ...Object.entries(step.claims).map(([key, value]) => {
+          const row = document.createElement("div");
+          row.className = "claim";
+          const term = document.createElement("dt");
+          const detail = document.createElement("dd");
+          term.textContent = key;
+          detail.textContent = value;
+          row.append(term, detail);
+          return row;
+        })
+      );
+      document.querySelectorAll(".step").forEach((button, buttonIndex) => {
+        button.setAttribute("aria-selected", buttonIndex === index ? "true" : "false");
+      });
+    }
+
+    steps.forEach((step, index) => {
+      const button = document.createElement("button");
+      button.className = "step";
+      button.type = "button";
+      button.innerHTML = `<span class="step-index">${String(index + 1).padStart(2, "0")}</span><span><strong>${step.title}</strong><small>${step.token}</small></span>`;
+      button.addEventListener("click", () => renderStep(index));
+      stepRoot.append(button);
+    });
+    renderStep(0);
+
+    document.querySelectorAll(".tab").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach((item) => item.setAttribute("aria-selected", "false"));
+        document.querySelectorAll(".panel").forEach((panel) => panel.classList.remove("active"));
+        tab.setAttribute("aria-selected", "true");
+        document.querySelector(`#${tab.dataset.panel}`).classList.add("active");
+      });
+    });
+
+    const checklistRoot = document.querySelector("#checklist-items");
+    const saved = JSON.parse(localStorage.getItem("agent-id-obo-checklist") || "{}");
+    checklist.forEach(([title, copy], index) => {
+      const label = document.createElement("label");
+      label.className = "check";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = Boolean(saved[index]);
+      input.addEventListener("change", () => {
+        saved[index] = input.checked;
+        localStorage.setItem("agent-id-obo-checklist", JSON.stringify(saved));
+      });
+      const text = document.createElement("span");
+      text.innerHTML = `<strong>${title}</strong><span>${copy}</span>`;
+      label.append(input, text);
+      checklistRoot.append(label);
+    });
+  </script>
+</body>
+</html>

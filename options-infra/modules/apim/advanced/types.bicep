@@ -12,6 +12,15 @@ type foundryDeploymentType = {
   @description('Model/deployment name as used in the API URL (e.g., "gpt-4o", "gpt-4.1-mini"). This MUST match the actual deployment name in Azure OpenAI — all instances serving this model must use the same name.')
   modelName: string
 
+  @description('Underlying catalog model name reported by Azure (for example, "gpt-image-1" or "MAI-Image-2.5"). The deployment name remains modelName.')
+  modelCatalogName: string?
+
+  @description('Optional API routing profile discovered for model families that do not use the default Azure OpenAI deployment path.')
+  apiProfile: string?
+
+  @description('Profile-specific API endpoint discovered for this deployment. Image profiles use the OpenAI or services.ai host instead of the account default cognitiveservices host.')
+  apiEndpoint: string?
+
   @description('PTU capacity in tokens per minute for this deployment. Required on PTU instances. Multiple PTU deployments for the same model across instances are summed.')
   ptuCapacityTpm: int?
 

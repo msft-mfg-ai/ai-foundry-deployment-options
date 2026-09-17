@@ -5,6 +5,7 @@ using AgentChat.Services;
 using Azure.AI.AgentServer.Invocations;
 using Azure.Core;
 using Azure.Identity;
+using Azure.Storage.Blobs;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Agents.Authentication;
@@ -51,6 +52,18 @@ builder.Services.AddHttpClient(nameof(TeamsFileService))
     {
         AllowAutoRedirect = false,
     });
+builder.Services.AddHttpClient(nameof(ImageGenerationClient))
+    .ConfigureHttpClient(client =>
+        client.Timeout = TimeSpan.FromMinutes(5))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = false,
+    });
+builder.Services.AddHttpClient($"{nameof(ImageGenerationClient)}.download")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = false,
+    });
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddHealthChecks();
 builder.Services.AddInvocationsServer();
@@ -88,14 +101,45 @@ builder.Services.AddSingleton<IStorage>(sp =>
         CompatibilityMode = false,
     });
 });
+builder.Services.AddSingleton(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var endpoint = config["Cosmos:Endpoint"]
+        ?? throw new InvalidOperationException("Cosmos:Endpoint not configured.");
+    return new GeneratedFileStorage(
+        new CosmosDbPartitionedStorage(new CosmosDbPartitionedStorageOptions
+        {
+            CosmosDbEndpoint = endpoint,
+            TokenCredential = sp.GetRequiredService<TokenCredential>(),
+            DatabaseId = config["Cosmos:Database"] ?? "botstate",
+            ContainerId =
+                config["Files:CosmosContainer"] ?? "generated-files",
+            CompatibilityMode = false,
+        }));
+});
+builder.Services.AddSingleton(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var endpoint = config["Files:BlobServiceEndpoint"]
+        ?? throw new InvalidOperationException(
+            "Files:BlobServiceEndpoint not configured.");
+    var container = config["Files:BlobContainer"]
+        ?? "generated-files";
+    return new BlobContainerClient(
+        new Uri(new Uri(endpoint), container),
+        sp.GetRequiredService<TokenCredential>());
+});
+builder.Services.AddSingleton<
+    IGeneratedFileContentStore,
+    BlobGeneratedFileContentStore>();
 builder.Services.AddSingleton<ConversationStore>();
 builder.Services.AddSingleton<GeneratedFileStore>();
-builder.Services.AddSingleton<IHostedService, GeneratedFileCleanupService>();
 builder.Services.AddSingleton<ITeamsFileService, TeamsFileService>();
 builder.Services.AddSingleton<TeamsSsoService>();
 builder.Services.AddSingleton<TeamsSsoToolContext>();
 builder.Services.AddSingleton<AgentIdentityToolContext>();
 builder.Services.AddSingleton<AgentIdentityOboService>();
+builder.Services.AddSingleton<ImageGenerationClient>();
 
 builder.Services.AddDefaultMsalAuth(builder.Configuration);
 builder.Services.AddSingleton<IConnections>(sp =>
