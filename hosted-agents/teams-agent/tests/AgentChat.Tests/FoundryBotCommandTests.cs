@@ -46,6 +46,36 @@ public class FoundryBotCommandTests
         prompt.Should().Contain("How does Foundry user multiplexing work?");
     }
 
+    [Theory]
+    [InlineData("Create a four-slide presentation about rock climbing")]
+    [InlineData("Can you make a PPTX with images?")]
+    public void Presentation_requests_get_an_immediate_workflow_acknowledgment(
+        string request)
+    {
+        var progress = FoundryBot.BuildInitialProgress(request);
+
+        progress.Should().Contain("creating your presentation");
+        progress.Should().Contain("research the topic");
+        progress.Should().Contain("review the deck");
+        progress.Should().NotContain(request);
+    }
+
+    [Fact]
+    public void Standalone_image_requests_get_an_immediate_workflow_acknowledgment()
+    {
+        var progress = FoundryBot.BuildInitialProgress(
+            "Generate an image of a cute dog");
+
+        progress.Should().Contain("creating your image");
+        progress.Should().Contain("return the finished image file");
+    }
+
+    [Fact]
+    public void Ordinary_chat_does_not_add_a_synthetic_workflow_acknowledgment()
+        => FoundryBot.BuildInitialProgress("Hello, how are you?")
+            .Should()
+            .BeNull();
+
     [Fact]
     public void File_consent_invoke_uses_original_activity_id()
         => FoundryBot.GetFileConsentActivityId(

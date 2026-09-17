@@ -24,45 +24,56 @@ Do not return the first file that opens successfully.
 ## Required workflow
 
 1. Read `references/layouts.md`.
-2. Load `/mnt/data/template.pptx`. It is staged automatically in the current
+2. Read `references/deck-spec.md`.
+3. Load `/mnt/data/template.pptx`. It is staged automatically in the current
    user's Code Interpreter container. Never start from a blank
    `Presentation()` when this template is available.
-3. Inspect the template's slides, layouts, fonts, colors, dimensions, and
-   example compositions before editing it.
-4. Create a short storyboard before writing presentation code. For every
-   slide, define:
-   - its purpose and single takeaway;
-   - the content shape, such as hero image, comparison, timeline, process,
-     chart, metric, or recommendation;
-   - the selected named layout or custom composition;
-   - required evidence, visual assets, and source;
-   - a title and text budget.
-5. Choose a topic-specific visual direction:
+4. Inspect the template's slides, layouts, fonts, colors, dimensions, and
+   example compositions before editing it. The Zava template's 33 existing
+   slides are a gallery; remove them from the final deck and add only the
+   slides required by the specification.
+5. Create and validate a semantic `DeckSpec` JSON document using
+   `references/deck-spec.md` before writing presentation code. The plan shown
+   to the user should map to the deck's narrative phases, while the
+   specification records every slide's takeaway, composition, content budget,
+   evidence, and visual requirements.
+6. Choose a topic-specific visual direction:
    - one dominant color, one or two supporting tones, and one accent;
    - one repeated visual motif;
    - an intentional image style;
    - a light/dark rhythm appropriate to the story.
    Preserve the template's brand colors and typography as the base. Do not
    replace them with a generic blue palette.
-6. Research or create the required content and visual assets before laying out
+7. Research or create the required content and visual assets before laying out
    slides. Prefer the local `generate_image` tool for original hero imagery or
-   illustrations when it is available. It stages the asset in the same
-   Code Interpreter container and returns an exact `/mnt/data` path. If the
-   tool is absent, fall back gracefully to diagrams, charts, typography, or
-   user-provided assets. Never invent factual chart values.
-7. Use Code Interpreter for all PowerPoint and image manipulation. Install
+   illustrations when it is available. Use `aspect_ratio: landscape` for
+   normal slide imagery and choose `quality: high` for GPT Image when visual
+   detail matters. It stages the asset in the same Code Interpreter container
+   and returns an exact `/mnt/data` path. If the tool is absent, fall back
+   gracefully to diagrams, charts, typography, or user-provided assets. Never
+   invent factual chart values.
+8. Use Code Interpreter for all PowerPoint and image manipulation. Install
    `python-pptx` and `Pillow` when they are not importable.
-8. Build the deck using named layouts and placeholders when they fit the
+9. Compile slides from the `DeckSpec` through reusable layout functions keyed
+   by the allowed `composition` values. Keep content in the specification;
+   do not scatter slide copy through one-off drawing code.
+10. Build the deck using named layouts and placeholders when they fit the
    content. If the available layout would force the story into generic cards,
    create a custom composition on a suitable template layout while preserving
    the theme, margins, footer treatment, and visual language.
-9. Run structural and geometry checks.
-10. Render the deck to PDF and slide images with LibreOffice or another real
+11. Run structural, geometry, content-capacity, and font-availability checks.
+12. Render the deck to PDF and slide images with LibreOffice or another real
     presentation renderer. Inspect every rendered slide critically.
-11. Fix the issues found, render the affected slides again, and inspect them
+13. Fix the issues found, render the affected slides again, and inspect them
     again. At least one fix-and-verify cycle is required.
-12. Reopen the final file with `python-pptx`, save it under `/mnt/data`, and
+14. Reopen the final file with `python-pptx`, save it under `/mnt/data`, and
     return the `.pptx` as a generated file rather than only a path or base64.
+    Use one stable final filename throughout the fix-and-verify cycle and
+    overwrite it in place. Do not return draft decks, rendered slide images,
+    source images, PDFs, or other validation artifacts unless the user asks
+    for them explicitly.
+15. Call `return_file` with the final `.pptx` filename after all validation is
+    complete. Do not call `return_file` for working or supporting files.
 
 When revising an existing presentation, preserve its working container,
 story, and useful assets. Modify the existing file instead of rebuilding it
@@ -96,6 +107,8 @@ from scratch unless the user asks for a redesign.
   content blocks.
 - Keep paragraphs short. Aim for no more than 40 words in a body region and no
   more than six parallel items on a slide.
+- Enforce the composition-specific capacities in `references/deck-spec.md`
+  before rendering.
 - If content does not fit at the minimum font size, shorten it, change the
   layout, or split the slide. Do not solve overflow by shrinking text.
 
@@ -118,6 +131,8 @@ from scratch unless the user asks for a redesign.
 
 ### Structural checks
 
+- Validate the final `DeckSpec` against its required fields, enums, item
+  counts, and composition capacities.
 - Reopen the saved file with `python-pptx`.
 - Confirm that it contains the intended slide count and no empty placeholder-only slides.
 - Confirm that every referenced image is embedded in the package.
@@ -127,7 +142,11 @@ from scratch unless the user asks for a redesign.
   and the selected layout's text budget.
 - Check unintended overlaps while allowing deliberate backgrounds and overlays.
 - Search for leftover template text such as `Headline goes here`, `Card title`,
-  `Source label`, and `stat label`.
+  `Source label`, `stat label`, `Example Text`,
+  `pragmatic & bold visual identity`, and `Section header`.
+- List the fonts used by the deck and compare them with fonts available in the
+  rendering environment. Replace unavailable fonts with an intentional,
+  metrically compatible fallback before visual QA.
 
 ### Visual checks
 
@@ -150,4 +169,5 @@ from scratch unless the user asks for a redesign.
   that visual rendering could not be completed. Do not claim that visual QA
   passed.
 
-Return a short summary and the generated PowerPoint file.
+Return a short summary and only the final generated PowerPoint file selected
+with `return_file`.

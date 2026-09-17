@@ -139,6 +139,144 @@ public class DirectHostedAgentTests
             .Should().Be(expected);
 
     [Fact]
+    public void Agent_can_select_only_the_final_generated_file()
+    {
+        var context = new DirectHostedAgent.CodeExecutionContext(
+            CancellationToken.None,
+            "call-1",
+            "user-1",
+            "container-1");
+        context.GeneratedFiles.Add(
+            "draft-id",
+            new DirectHostedAgent.ContainerFileReference(
+                "container-1",
+                "draft-id",
+                "deck-draft.pptx"));
+        context.GeneratedFiles.Add(
+            "final-id",
+            new DirectHostedAgent.ContainerFileReference(
+                "container-1",
+                "final-id",
+                "deck.pptx"));
+
+        var result = DirectHostedAgent.SelectFileForReturn(
+            "deck.pptx",
+            context);
+
+        result.Should().Contain("deck.pptx");
+        context.SelectedFileIds.Should().Equal("final-id");
+    }
+
+    [Fact]
+    public void Only_agent_selected_deliverables_are_returned()
+    {
+        DirectHostedAgent.ContainerFileReference[] generatedFiles =
+        [
+            new("container-1", "image-id", "background.png"),
+            new("container-1", "draft-id", "deck-draft.pptx"),
+            new("container-1", "final-id", "deck.pptx"),
+        ];
+
+        var selected = DirectHostedAgent.SelectFilesForReturn(
+            generatedFiles,
+            new HashSet<string>(StringComparer.Ordinal)
+            {
+                "final-id",
+            });
+
+        selected.Should().ContainSingle()
+            .Which.Filename.Should().Be("deck.pptx");
+    }
+
+    [Fact]
+    public void Working_artifacts_do_not_count_against_selected_deliverable_limit()
+    {
+        var generatedFiles = Enumerable.Range(1, 6)
+            .Select(index => new DirectHostedAgent.ContainerFileReference(
+                "container-1",
+                $"file-{index}",
+                index == 6 ? "deck.pptx" : $"working-{index}.png"))
+            .ToArray();
+
+        var selected = DirectHostedAgent.SelectResponseFiles(
+            generatedFiles,
+            new HashSet<string>(StringComparer.Ordinal)
+            {
+                "file-6",
+            });
+
+        selected.Should().ContainSingle()
+            .Which.Filename.Should().Be("deck.pptx");
+    }
+
+    [Fact]
+    public void Unselected_generated_files_still_respect_response_limit()
+    {
+        var generatedFiles = Enumerable.Range(1, 6)
+            .Select(index => new DirectHostedAgent.ContainerFileReference(
+                "container-1",
+                $"file-{index}",
+                $"deliverable-{index}.png"))
+            .ToArray();
+
+        var act = () => DirectHostedAgent.SelectResponseFiles(
+            generatedFiles,
+            new HashSet<string>(StringComparer.Ordinal));
+
+        act.Should().Throw<InvalidDataException>()
+            .WithMessage("*selected 6 files*maximum per request is 5*");
+    }
+
+    [Fact]
+    public void Missing_selected_deliverable_is_rejected()
+    {
+        var act = () => DirectHostedAgent.SelectFilesForReturn(
+            Array.Empty<DirectHostedAgent.ContainerFileReference>(),
+            new HashSet<string>(StringComparer.Ordinal)
+            {
+                "missing-id",
+            });
+
+        act.Should().Throw<InvalidDataException>();
+    }
+
+    [Theory]
+    [InlineData("../deck.pptx")]
+    [InlineData("/mnt/data/deck.pptx")]
+    [InlineData("notes.txt")]
+    public void Final_file_selection_rejects_paths_and_unsupported_files(
+        string filename)
+    {
+        var context = new DirectHostedAgent.CodeExecutionContext(
+            CancellationToken.None,
+            "call-1",
+            "user-1",
+            "container-1");
+
+        var act = () => DirectHostedAgent.SelectFileForReturn(
+            filename,
+            context);
+
+        act.Should().Throw<InvalidDataException>();
+    }
+
+    [Fact]
+    public void Final_file_selection_requires_an_existing_generated_file()
+    {
+        var context = new DirectHostedAgent.CodeExecutionContext(
+            CancellationToken.None,
+            "call-1",
+            "user-1",
+            "container-1");
+
+        var act = () => DirectHostedAgent.SelectFileForReturn(
+            "missing.pptx",
+            context);
+
+        act.Should().Throw<FileNotFoundException>();
+    }
+
+    [Fact]
     public void Code_interpreter_container_survives_session_serialization()
     {
         var session = new TestAgentSession();

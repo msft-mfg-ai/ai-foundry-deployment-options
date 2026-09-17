@@ -42,11 +42,25 @@ Cosmos-backed conversation state, and native Teams replies. APIM uses the path
 parameter to select which self-contained hosted agent receives the Activity;
 there is no second hosted-agent proxy hop.
 
-Long-running tool workflows use one durable Teams progress message that is
-updated in place for tool starts and results, followed by a normal final
-message. They do not use the Teams SDK intermediate-response stream because
-Teams expires that stream after two minutes and image or presentation
-generation can legitimately take longer.
+Tool workflows use the Teams SDK informative-response stream. Every 75 seconds,
+the bot ends the current stream cleanly before Teams' approximately two-minute
+lease expires, resets the SDK stream, and starts another progress stream with
+the latest plan and current step. After each rotation, the completed stream is
+edited down to `Working on it...` so prior copies of the plan do not accumulate
+in the conversation. If Teams rejects a restarted stream, progress falls back
+to one durable Teams message updated in place. Final answer text is
+buffered and sent as a normal message so a long image or presentation workflow
+cannot end with `This response was stopped`. When the harness creates todos, the
+safe todo titles are shown as a checklist and remain visible above the current
+tool step. Successful `todos_complete` results check the matching todo IDs.
+During a long-running tool call, the same durable activity receives a
+20-second elapsed-time heartbeat so the user can see that work is continuing.
+If Teams rejects an activity update, the next progress event creates a
+replacement progress message instead of permanently disabling updates.
+Successful workflows finish the progress message with `Current step:
+Completed.` before the final answer or file-consent card is sent.
+Todo descriptions, raw arguments, results, and hidden reasoning are never
+displayed.
 
 The Teams command menu includes deterministic workflow shortcuts:
 
@@ -79,6 +93,16 @@ before model execution. The agent also uses the Agent Framework MCP skills provi
 and their packaged resources are advertised and loaded progressively. Teams
 conversation state remains in Cosmos, while Responses conversations use the
 Foundry Responses session semantics.
+
+The direct agent is built with the Microsoft Agent Framework Harness. Harness
+todos and execute/plan modes are enabled for long-running work, with execute
+as the default. The deployment disables the harness defaults that would
+duplicate or bypass the hosted architecture: local file memory, local file
+access, hosted web search, filesystem skills, automatic approvals, and
+duplicate OpenTelemetry. Web search remains enabled through the startup
+Toolbox's `web` tool, alongside the other MCP tools and Foundry skills. The
+user-scoped Foundry Code Interpreter container remains the only code and
+presentation workspace.
 
 The local `inspect_teams_sso_token` Agent Framework tool is independent of the
 Foundry connection. It asks Azure Bot Service for a cached Teams user token. If
@@ -186,8 +210,14 @@ Supported profiles deliberately use different wire contracts:
 
 | Catalog family | AI Gateway route | Request options |
 | --- | --- | --- |
-| `gpt-image-*` | `/openai-v1/images/generations` | Routed to `https://<account>.openai.azure.com/openai/deployments/<deployment>/images/generations?api-version=2025-04-01-preview`; supports `size` (`1024x1024`, `1536x1024`, or `1024x1536`) and `quality` (`low`, `medium`, or `high`) |
-| `MAI-Image-*` | `/mai-v1/images/generations` | Rewritten to backing `/mai/v1/images/generations`; uses `width`/`height`, exposed as safe `size` choices (`1024x1024`, `1024x768`, or `768x1024`), with no GPT `quality` field |
+| `gpt-image-*` | `/openai-v1/images/generations` | Routed to `https://<account>.openai.azure.com/openai/deployments/<deployment>/images/generations?api-version=2025-04-01-preview`; exposes `aspect_ratio` (`square`, `landscape`, or `portrait`) and `quality` (`low`, `medium`, or `high`) as JSON Schema string enums |
+| `MAI-Image-*` | `/mai-v1/images/generations` | Rewritten to backing `/mai/v1/images/generations`; exposes only the `aspect_ratio` string enum and does not expose the unsupported GPT `quality` field |
+
+The hosted tool maps those semantic values to provider-supported dimensions:
+GPT uses `1024x1024`, `1536x1024`, or `1024x1536`; MAI uses `1024x1024`,
+`1024x768`, or `768x1024`. The client retains defensive normalization for
+non-tool callers, but schema-compliant agent calls cannot send arbitrary
+dimensions or unsupported quality values.
 
 The agent authenticates to APIM with its managed identity for
 `https://cognitiveservices.azure.com/.default`. APIM then uses its own managed
@@ -524,21 +554,35 @@ The hook saves these values in the azd environment:
 
 Generated packages and staged hosted-agent sources are ignored by git.
 
-When Code Interpreter cites a generated `.pptx`, `.pdf`, `.png`, or JPEG file,
-the Teams agent downloads it through the Foundry container-file API using the
+The agent calls the local `return_file` tool to select completed user-facing
+deliverables. Code Interpreter may create draft decks, renders, source images,
+and validation artifacts, but only explicitly selected `.pptx`, `.pdf`, `.png`,
+or JPEG files are returned. If no file is explicitly selected, the existing
+generated-file behavior remains as a compatibility fallback. The Teams agent
+downloads selected files through the Foundry container-file API using the
 current protocol call ID. The adapter rejects path traversal, unsupported
 types, invalid signatures, files larger than 20 MiB, and more than five files
 per run.
 
-In a personal Teams chat, the bot caches the validated bytes temporarily and
-sends a native `FileConsentCard`. On acceptance, it uploads the bytes to the
+In a personal Teams chat, the bot stages validated bytes in a private Blob
+container and stores only the consent manifest in the short-TTL
+`generated-files` Cosmos container. The Blob account disables public network
+access, uses a VNet private endpoint and private DNS, and grants the hosted
+agent identity `Storage Blob Data Contributor`. Blob names are random consent
+tokens rather than user filenames. This allows consent cards to survive hosted
+agent restarts, deployments, and requests routed to another replica without
+storing binary content in Cosmos. On acceptance, the bot streams the staged
+blob directly to the
 preauthenticated Teams upload session with the required `Content-Range`, then
 sends a `FileInfoCard` referencing the uploaded OneDrive or SharePoint item.
 After acceptance or decline, the bot removes the original consent activity so
 its single-use Allow and Decline actions are no longer displayed.
 Consent tokens expire after 30 minutes and are bound to the trusted Foundry
 user ID and Teams conversation ID. Group chats and channels do not support
-this native file-consent flow.
+this native file-consent flow. Upload claims use a five-minute lease so a
+crashed uploader can be retried, and duplicate accept invokes are ignored
+while the original upload is still running. Successful uploads and declines
+delete the staged blob; a one-day Blob lifecycle rule removes abandoned data.
 
 The session administration endpoint is protected by its dedicated APIM
 subscription. `GET` returns the session cached for the active agent version;

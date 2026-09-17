@@ -3,9 +3,24 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Azure.Core;
 
 namespace AgentChat.Services;
+
+public enum ImageAspectRatio
+{
+    Square,
+    Landscape,
+    Portrait,
+}
+
+public enum ImageQuality
+{
+    Low,
+    Medium,
+    High,
+}
 
 public sealed record GeneratedImage(
     byte[] Data,
@@ -83,6 +98,28 @@ public sealed class ImageGenerationClient
 
     public bool SupportsQuality => _profile == "openai-v1-gpt-image";
 
+    public string GetSize(ImageAspectRatio aspectRatio)
+        => (_profile, aspectRatio) switch
+        {
+            ("openai-v1-gpt-image", ImageAspectRatio.Square) =>
+                "1024x1024",
+            ("openai-v1-gpt-image", ImageAspectRatio.Landscape) =>
+                "1536x1024",
+            ("openai-v1-gpt-image", ImageAspectRatio.Portrait) =>
+                "1024x1536",
+            ("mai-v1-image", ImageAspectRatio.Square) =>
+                "1024x1024",
+            ("mai-v1-image", ImageAspectRatio.Landscape) =>
+                "1024x768",
+            ("mai-v1-image", ImageAspectRatio.Portrait) =>
+                "768x1024",
+            _ => throw new InvalidOperationException(
+                "Image generation is not configured with a compatible deployment."),
+        };
+
+    public static string GetQuality(ImageQuality quality)
+        => quality.ToString().ToLowerInvariant();
+
     public async Task<GeneratedImage> GenerateAsync(
         string prompt,
         string? filename,
@@ -102,9 +139,7 @@ public sealed class ImageGenerationClient
                 nameof(prompt));
         }
 
-        var selectedSize = string.IsNullOrWhiteSpace(size)
-            ? "1024x1024"
-            : size.Trim().ToLowerInvariant();
+        var selectedSize = NormalizeSize(size, _profile!);
         var request = new Dictionary<string, object?>
         {
             ["model"] = _model,
@@ -112,12 +147,6 @@ public sealed class ImageGenerationClient
         };
         if (_profile == "openai-v1-gpt-image")
         {
-            if (!GptSizes.Contains(selectedSize))
-            {
-                throw new ArgumentException(
-                    "GPT Image size must be 1024x1024, 1536x1024, or 1024x1536.",
-                    nameof(size));
-            }
             var selectedQuality = string.IsNullOrWhiteSpace(quality)
                 ? "high"
                 : quality.Trim().ToLowerInvariant();
@@ -133,12 +162,6 @@ public sealed class ImageGenerationClient
         }
         else
         {
-            if (!MaiSizes.Contains(selectedSize))
-            {
-                throw new ArgumentException(
-                    "MAI Image size must be 1024x1024, 1024x768, or 768x1024.",
-                    nameof(size));
-            }
             if (!string.IsNullOrWhiteSpace(quality))
             {
                 throw new ArgumentException(
@@ -249,6 +272,83 @@ public sealed class ImageGenerationClient
             mediaType,
             width,
             height);
+    }
+
+    internal static string NormalizeSize(
+        string? requestedSize,
+        string profile)
+    {
+        var sizes = profile switch
+        {
+            "openai-v1-gpt-image" => GptSizes,
+            "mai-v1-image" => MaiSizes,
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(profile),
+                profile,
+                "Unsupported image generation profile."),
+        };
+        if (string.IsNullOrWhiteSpace(requestedSize))
+        {
+            return "1024x1024";
+        }
+
+        var normalized = requestedSize.Trim().ToLowerInvariant();
+        if (sizes.Contains(normalized))
+        {
+            return normalized;
+        }
+
+        var requestedRatio = normalized switch
+        {
+            "square" or "1:1" => 1d,
+            "landscape" or "wide" or "16:9" => 16d / 9d,
+            "portrait" or "9:16" => 9d / 16d,
+            _ => ParseAspectRatio(normalized),
+        };
+        if (requestedRatio is null)
+        {
+            throw new ArgumentException(
+                "Image size must be a supported width-by-height value or square, landscape, or portrait.",
+                nameof(requestedSize));
+        }
+
+        return sizes
+            .Select(candidate => new
+            {
+                Size = candidate,
+                Difference = Math.Abs(
+                    Math.Log(ParseAspectRatio(candidate)!.Value)
+                    - Math.Log(requestedRatio.Value)),
+            })
+            .OrderBy(candidate => candidate.Difference)
+            .ThenBy(candidate => candidate.Size, StringComparer.Ordinal)
+            .First()
+            .Size;
+    }
+
+    private static double? ParseAspectRatio(string value)
+    {
+        var match = Regex.Match(
+            value,
+            @"^(?<width>\d{1,5})\s*[x×:]\s*(?<height>\d{1,5})$",
+            RegexOptions.CultureInvariant);
+        if (!match.Success
+            || !double.TryParse(
+                match.Groups["width"].Value,
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var width)
+            || !double.TryParse(
+                match.Groups["height"].Value,
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var height)
+            || width <= 0
+            || height <= 0)
+        {
+            return null;
+        }
+        return width / height;
     }
 
     internal static (string MediaType, string Extension, int Width, int Height)

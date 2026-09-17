@@ -358,7 +358,9 @@ public class FoundryBot(
         HostedInvocationContext invocationContext,
         CancellationToken cancellationToken)
     {
-        var streaming = new SdkStreamingMessageHelper(turnContext);
+        var streaming = new SdkStreamingMessageHelper(turnContext, logger);
+        var progressMapper = new AgentProgressMapper(
+            conversation.DirectAgentTodoProgress);
         var generatedFiles = new List<GeneratedFileContent>();
         OAuthConsentContent? oauthConsent = null;
         var ssoCompletionPending = false;
@@ -385,9 +387,17 @@ public class FoundryBot(
                 ssoCompletionPending = result.CompletionPending;
                 return result.ToolResult;
             });
-        streaming.StartHeartbeat();
+        streaming.StartHeartbeat(cancellationToken);
         try
         {
+            var initialProgress = BuildInitialProgress(message);
+            if (initialProgress is not null)
+            {
+                await streaming.ReportProgressAsync(
+                    initialProgress,
+                    cancellationToken);
+            }
+
             await foreach (var update in directAgent.RunStreamingAsync(
                 message,
                 conversation,
@@ -397,7 +407,7 @@ public class FoundryBot(
                     turnContext.Activity.From?.Name),
                 cancellationToken))
             {
-                var progress = AgentProgressMapper.GetProgress(update);
+                var progress = progressMapper.GetProgress(update);
                 if (progress is not null)
                 {
                     await streaming.ReportProgressAsync(
@@ -421,7 +431,10 @@ public class FoundryBot(
                 conversationKey,
                 conversation,
                 cancellationToken);
-            await streaming.FinalizeAsync(cancellationToken);
+            await streaming.FinalizeAsync(
+                cancellationToken,
+                markCompleted:
+                    !ssoCompletionPending && oauthConsent is null);
             if (ssoCompletionPending)
             {
                 return;
@@ -449,7 +462,10 @@ public class FoundryBot(
                 }
 
                 var activity = MessageFactory.Attachment(
-                    teamsFiles.CreateConsentCard(conversationKey, file));
+                    await teamsFiles.CreateConsentCardAsync(
+                        conversationKey,
+                        file,
+                        cancellationToken));
                 await turnContext.SendActivityAsync(
                     activity,
                     cancellationToken);
@@ -459,7 +475,9 @@ public class FoundryBot(
         {
             try
             {
-                await streaming.FinalizeAsync(cancellationToken);
+                await streaming.FinalizeAsync(
+                    cancellationToken,
+                    markCompleted: false);
             }
             catch (Exception ex)
             {
@@ -468,6 +486,48 @@ public class FoundryBot(
             throw;
         }
     }
+
+    internal static string? BuildInitialProgress(string message)
+    {
+        if (ContainsAny(
+                message,
+                "powerpoint",
+                "presentation",
+                "slides",
+                "slide deck",
+                ".pptx",
+                "pptx"))
+        {
+            return "I'm creating your presentation. I'll research the topic, build the slides and visuals, then review the deck before returning the PowerPoint file.";
+        }
+
+        if (ContainsAny(
+                message,
+                "generate an image",
+                "create an image",
+                "make an image",
+                "image-generation",
+                "/image"))
+        {
+            return "I'm creating your image. I'll generate and validate it, then return the finished image file.";
+        }
+
+        if (ContainsAny(
+                message,
+                "configured research tools",
+                "/research"))
+        {
+            return "I'm researching your question. I'll gather relevant sources, verify the findings, and then provide a concise answer.";
+        }
+
+        return null;
+    }
+
+    private static bool ContainsAny(
+        string value,
+        params string[] candidates) =>
+        candidates.Any(candidate =>
+            value.Contains(candidate, StringComparison.OrdinalIgnoreCase));
 
     private async Task<SsoDiagnosticResult> RunSsoDiagnosticAsync(
         ITurnContext turnContext,
@@ -953,6 +1013,9 @@ public class FoundryBot(
         FileConsentCardResponse fileConsentCardResponse,
         CancellationToken cancellationToken)
     {
+        using var uploadTimeout = new CancellationTokenSource(
+            TimeSpan.FromMinutes(2));
+        var uploadToken = uploadTimeout.Token;
         try
         {
             var owner = UserConversationKey.FromActivity(
@@ -960,19 +1023,29 @@ public class FoundryBot(
             var attachment = await teamsFiles.UploadAsync(
                 owner,
                 fileConsentCardResponse,
-                cancellationToken);
+                uploadToken);
             await RemoveFileConsentCardAsync(
                 turnContext,
-                cancellationToken);
+                uploadToken);
             var activity = MessageFactory.Attachment(attachment);
             await turnContext.SendActivityAsync(
                 activity,
-                cancellationToken);
+                uploadToken);
         }
         catch (OperationCanceledException)
-            when (cancellationToken.IsCancellationRequested)
+            when (uploadToken.IsCancellationRequested)
         {
-            throw;
+            logger.LogWarning(
+                "Generated file upload exceeded the two-minute operation timeout.");
+            await turnContext.SendActivityAsync(
+                MessageFactory.Text(
+                    "The file upload timed out. Select Allow again to retry."),
+                CancellationToken.None);
+        }
+        catch (GeneratedFileUploadInProgressException)
+        {
+            logger.LogInformation(
+                "Ignored a duplicate Teams file-consent acceptance while the upload is in progress.");
         }
         catch (InvalidOperationException ex)
         {
@@ -1002,12 +1075,26 @@ public class FoundryBot(
         CancellationToken cancellationToken)
     {
         var owner = UserConversationKey.FromActivity(turnContext.Activity);
-        teamsFiles.Discard(owner, fileConsentCardResponse);
+        var discardStatus = await teamsFiles.DiscardAsync(
+            owner,
+            fileConsentCardResponse,
+            cancellationToken);
+        if (discardStatus == GeneratedFileDiscardStatus.UploadInProgress)
+        {
+            await turnContext.SendActivityAsync(
+                MessageFactory.Text(
+                    "The file upload is already in progress and could not be canceled."),
+                cancellationToken);
+            return;
+        }
         await RemoveFileConsentCardAsync(
             turnContext,
             cancellationToken);
         await turnContext.SendActivityAsync(
-            MessageFactory.Text("Generated file download canceled."),
+            MessageFactory.Text(
+                discardStatus == GeneratedFileDiscardStatus.Discarded
+                    ? "Generated file download canceled."
+                    : "The generated file is no longer available."),
             cancellationToken);
     }
 

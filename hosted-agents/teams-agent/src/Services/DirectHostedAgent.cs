@@ -1,5 +1,7 @@
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using AgentChat.Bots;
 using Azure.AI.AgentServer.Core;
 using Azure.AI.Projects;
@@ -22,6 +24,7 @@ namespace AgentChat.Services;
 
 public sealed class DirectHostedAgent : IAsyncDisposable
 {
+    private const int AgentSessionFormatVersion = 2;
     private const string FoundryScope = "https://ai.azure.com/.default";
     private const int MaxGeneratedFilesPerRun = 5;
     private const int MaxGeneratedFileBytes = 20 * 1024 * 1024;
@@ -31,6 +34,8 @@ public sealed class DirectHostedAgent : IAsyncDisposable
     private const string CodeInterpreterOwnerStateKey =
         "agentchat.code-interpreter.user-id";
     private static readonly AsyncLocal<string?> OutboundFoundryCallId = new();
+    internal static JsonSerializerOptions ImageToolSerializerOptions { get; } =
+        CreateImageToolSerializerOptions();
     private static readonly PropertyInfo HostedCallIdProperty =
         typeof(HostedSessionContext).Assembly
             .GetType(
@@ -92,6 +97,17 @@ public sealed class DirectHostedAgent : IAsyncDisposable
         try
         {
             generation = await GetGenerationAsync(cancellationToken);
+            if (state.DirectAgentSessionVersion != AgentSessionFormatVersion)
+            {
+                if (!string.IsNullOrWhiteSpace(state.DirectAgentSession))
+                {
+                    _logger.LogInformation(
+                        "Starting a new Agent Framework session because the persisted session format changed from version {PreviousVersion} to {CurrentVersion}.",
+                        state.DirectAgentSessionVersion,
+                        AgentSessionFormatVersion);
+                }
+                state.DirectAgentSession = null;
+            }
             session = await RestoreSessionAsync(
                 generation.Agent,
                 state.DirectAgentSession,
@@ -119,7 +135,6 @@ public sealed class DirectHostedAgent : IAsyncDisposable
             throw new InvalidOperationException(
                 "Code Interpreter state already exists for this agent session.");
         }
-
         try
         {
             Exception? streamFailure = null;
@@ -181,6 +196,16 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                 var key = $"{file.ContainerId}/{file.FileId}";
                 containerFiles.TryAdd(key, file);
             }
+            if (codeExecution.SelectedFileIds.Count > 0)
+            {
+                containerFiles = SelectFilesForReturn(
+                        containerFiles.Values,
+                        codeExecution.SelectedFileIds)
+                    .ToDictionary(
+                        file => $"{file.ContainerId}/{file.FileId}",
+                        file => file,
+                        StringComparer.Ordinal);
+            }
 
             if (containerFiles.Count > MaxGeneratedFilesPerRun)
             {
@@ -209,6 +234,7 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                 session,
                 cancellationToken: cancellationToken);
             state.DirectAgentSession = serialized.GetRawText();
+            state.DirectAgentSessionVersion = AgentSessionFormatVersion;
         }
         finally
         {
@@ -397,7 +423,14 @@ public sealed class DirectHostedAgent : IAsyncDisposable
             var instructions =
                 (_configuration["DirectAgent:Instructions"]
                     ?? "You are a concise Microsoft Teams assistant. Use the configured Toolbox when it can improve the answer.")
-                + "\n\nWhen a tool creates a file, tell the user that the generated file is attached. Never expose internal container paths such as /mnt/data, container IDs, file IDs, base64 data, or temporary download URLs.";
+                + """
+
+For multi-step work, create and maintain a concise todo plan. Start executing immediately unless the user explicitly asks to review or approve the plan first. Keep the user informed through tool progress, but do not expose hidden reasoning, raw tool arguments, or raw tool results.
+
+When creating files, distinguish final deliverables from working artifacts. Create exactly one final user-facing file for each requested deliverable unless the user asks for alternatives. Reuse and overwrite the same final filename during revision instead of creating draft and final copies. Supporting assets used inside a presentation are not separate deliverables unless the user requests them.
+
+When a tool creates a final file, tell the user that it is attached. Never expose internal container paths such as /mnt/data, container IDs, file IDs, base64 data, or temporary download URLs.
+""";
 
             var toolboxEndpoint = _configuration["DirectAgent:ToolboxEndpoint"];
             if (string.IsNullOrWhiteSpace(toolboxEndpoint))
@@ -451,7 +484,7 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                     new AIFunctionFactoryOptions
                     {
                         Name = "code",
-                        Description = "Execute Python in a user-isolated Code Interpreter container. The PowerPoint template is available at /mnt/data/template.pptx. Files saved under /mnt/data are returned to the user.",
+                        Description = "Execute Python in a user-isolated Code Interpreter container. The Zava corporate PowerPoint template is available at /mnt/data/template.pptx. Files saved under /mnt/data are working artifacts; call return_file after validating each intentional user-facing deliverable.",
                     });
                 var teamsSsoTool = AIFunctionFactory.Create(
                     (CancellationToken toolCancellationToken) =>
@@ -462,10 +495,24 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                         Name = "inspect_teams_sso_token",
                         Description = "Trigger Microsoft Teams silent SSO and inspect a safe allowlist of claims from the resulting user token. The raw token is never returned.",
                     });
+                var returnFileTool = AIFunctionFactory.Create(
+                    (
+                        string filename,
+                        CancellationToken toolCancellationToken) =>
+                        SelectFileForReturnAsync(
+                            filename,
+                            containerClient,
+                            toolCancellationToken),
+                    new AIFunctionFactoryOptions
+                    {
+                        Name = "return_file",
+                        Description = "Select a generated file as an intentional user-facing deliverable. Call this only after the file is complete and validated. Working files and supporting assets are not returned unless selected.",
+                    });
                 var localTools = new List<AITool>
                 {
                     codeTool,
                     teamsSsoTool,
+                    returnFileTool,
                 };
                 if (ShouldRegisterImageTool(_imageGeneration))
                 {
@@ -475,36 +522,40 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                                 (
                                     string prompt,
                                     string? filename,
-                                    string? size,
-                                    string? quality) =>
+                                    ImageAspectRatio aspect_ratio,
+                                    ImageQuality quality) =>
                                     GenerateImageAsync(
                                         prompt,
                                         filename,
-                                        size,
-                                        quality,
+                                        _imageGeneration.GetSize(aspect_ratio),
+                                        ImageGenerationClient.GetQuality(quality),
                                         containerClient,
                                         templateBytes),
                                 new AIFunctionFactoryOptions
                                 {
                                     Name = "generate_image",
-                                    Description = "Generate one original image through the AI Gateway and upload it into the current user's Code Interpreter container. Returns an exact /mnt/data path; never returns base64.",
+                                    Description = "Generate one original image through the AI Gateway and upload it into the current user's Code Interpreter container. Choose aspect_ratio from square, landscape, or portrait and quality from low, medium, or high. Returns an exact /mnt/data path; never returns base64.",
+                                    SerializerOptions =
+                                        ImageToolSerializerOptions,
                                 })
                             : AIFunctionFactory.Create(
                                 (
                                     string prompt,
                                     string? filename,
-                                    string? size) =>
+                                    ImageAspectRatio aspect_ratio) =>
                                     GenerateImageAsync(
                                         prompt,
                                         filename,
-                                        size,
+                                        _imageGeneration.GetSize(aspect_ratio),
                                         quality: null,
                                         containerClient,
                                         templateBytes),
                                 new AIFunctionFactoryOptions
                                 {
                                     Name = "generate_image",
-                                    Description = "Generate one original image through the MAI Image API on the AI Gateway and upload it into the current user's Code Interpreter container. Supported sizes are 1024x1024, 1024x768, and 768x1024. Returns an exact /mnt/data path; never returns base64.",
+                                    Description = "Generate one original image through the MAI Image API on the AI Gateway and upload it into the current user's Code Interpreter container. Choose aspect_ratio from square, landscape, or portrait. Returns an exact /mnt/data path; never returns base64.",
+                                    SerializerOptions =
+                                        ImageToolSerializerOptions,
                                 }));
                 }
                 if (_agentIdentityObo.Enabled)
@@ -545,11 +596,22 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                     .Concat(localTools)
                     .ToArray();
 
-                agent = projectClient.AsAIAgent(
-                    new ChatClientAgentOptions
+                agent = responsesClient
+                    .AsIChatClient(model)
+                    .AsHarnessAgent(
+                    new HarnessAgentOptions
                     {
                         Name = _configuration["DirectAgent:Name"] ?? "teams-hosted-agent",
                         Description = "Microsoft Teams hosted agent with direct Foundry inference, Toolbox tools, and Toolbox skills.",
+                        DisableFileMemory = true,
+                        DisableWebSearch = true,
+                        DisableAgentSkillsProvider = true,
+                        DisableToolAutoApproval = true,
+                        DisableOpenTelemetry = true,
+                        AgentModeProviderOptions = new AgentModeProviderOptions
+                        {
+                            DefaultMode = "execute",
+                        },
                         ChatOptions = new ChatOptions
                         {
                             ModelId = model,
@@ -973,13 +1035,10 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                 yield return update;
             }
 
-            if (context.GeneratedFiles.Count > MaxGeneratedFilesPerRun)
-            {
-                throw new InvalidDataException(
-                    $"The agent generated {context.GeneratedFiles.Count} files; the maximum per request is {MaxGeneratedFilesPerRun}.");
-            }
-
-            foreach (var file in context.GeneratedFiles.Values)
+            var responseFiles = SelectResponseFiles(
+                context.GeneratedFiles.Values,
+                context.SelectedFileIds);
+            foreach (var file in responseFiles)
             {
                 var text =
                     $"Generated file: [{file.Filename}](sandbox:/mnt/data/{Uri.EscapeDataString(file.Filename)})";
@@ -1133,7 +1192,7 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                 generatedFile.Name);
             var uploadBody = await multipart.ReadAsByteArrayAsync(
                 cancellationToken);
-            await containerClient.CreateContainerFileAsync(
+            await containerClient.UploadContainerFileAsync(
                 file.ContainerId,
                 BinaryContent.Create(BinaryData.FromBytes(uploadBody)),
                 multipart.Headers.ContentType!.ToString(),
@@ -1147,6 +1206,140 @@ public sealed class DirectHostedAgent : IAsyncDisposable
     internal static bool IsSupportedGeneratedArtifact(string filename)
         => Path.GetExtension(filename).ToLowerInvariant()
             is ".pptx" or ".pdf" or ".png" or ".jpg" or ".jpeg";
+
+    private static JsonSerializerOptions CreateImageToolSerializerOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
+        };
+        options.Converters.Add(
+            new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower));
+        return options;
+    }
+
+    internal static string SelectFileForReturn(
+        string filename,
+        CodeExecutionContext context)
+    {
+        var safeFilename = ValidateSelectedFilename(filename);
+
+        var file = context.GeneratedFiles.Values.LastOrDefault(candidate =>
+            string.Equals(
+                candidate.Filename,
+                safeFilename,
+                StringComparison.Ordinal));
+        if (file is null)
+        {
+            throw new FileNotFoundException(
+                $"Generated file '{safeFilename}' is not available in the current workspace.");
+        }
+
+        context.SelectedFileIds.Add(file.FileId);
+        return $"Selected '{safeFilename}' as a final deliverable.";
+    }
+
+    private static string ValidateSelectedFilename(string filename)
+    {
+        var safeFilename = Path.GetFileName(filename);
+        if (string.IsNullOrWhiteSpace(safeFilename)
+            || !string.Equals(
+                safeFilename,
+                filename.Trim(),
+                StringComparison.Ordinal)
+            || !IsSupportedGeneratedArtifact(safeFilename))
+        {
+            throw new InvalidDataException(
+                "Select a supported generated filename without a directory path.");
+        }
+        return safeFilename;
+    }
+
+    internal static IReadOnlyList<ContainerFileReference> SelectFilesForReturn(
+        IEnumerable<ContainerFileReference> generatedFiles,
+        IReadOnlySet<string> selectedFileIds)
+    {
+        var selected = generatedFiles
+            .Where(file => selectedFileIds.Contains(file.FileId))
+            .ToArray();
+        if (selected.Length != selectedFileIds.Count)
+        {
+            throw new InvalidDataException(
+                "One or more selected generated files are unavailable.");
+        }
+        return selected;
+    }
+
+    internal static IReadOnlyList<ContainerFileReference> SelectResponseFiles(
+        IEnumerable<ContainerFileReference> generatedFiles,
+        IReadOnlySet<string> selectedFileIds)
+    {
+        var responseFiles = selectedFileIds.Count > 0
+            ? SelectFilesForReturn(generatedFiles, selectedFileIds)
+            : generatedFiles.ToArray();
+        if (responseFiles.Count > MaxGeneratedFilesPerRun)
+        {
+            throw new InvalidDataException(
+                $"The agent selected {responseFiles.Count} files; the maximum per request is {MaxGeneratedFilesPerRun}.");
+        }
+        return responseFiles;
+    }
+
+    private async Task<string> SelectFileForReturnAsync(
+        string filename,
+        ContainerClient containerClient,
+        CancellationToken cancellationToken)
+    {
+        var runContext = AIAgent.CurrentRunContext;
+        if (runContext?.Session is null
+            || !_codeExecutions.TryGetValue(runContext.Session, out var context))
+        {
+            throw new InvalidOperationException(
+                "Generated-file selection is unavailable outside an active agent session.");
+        }
+
+        var safeFilename = ValidateSelectedFilename(filename);
+        if (!context.GeneratedFiles.Values.Any(file =>
+                string.Equals(
+                    file.Filename,
+                    safeFilename,
+                    StringComparison.Ordinal)))
+        {
+            if (string.IsNullOrWhiteSpace(context.ContainerId))
+            {
+                throw new FileNotFoundException(
+                    $"Generated file '{safeFilename}' is not available in the current workspace.");
+            }
+
+            var options = new ContainerFileCollectionOptions(
+                context.ContainerId)
+            {
+                Order = ContainerFileCollectionOrder.Descending,
+                PageSizeLimit = 100,
+            };
+            await foreach (var file in containerClient.GetContainerFilesAsync(
+                options,
+                cancellationToken))
+            {
+                if (!string.Equals(
+                        Path.GetFileName(file.Path),
+                        safeFilename,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                context.GeneratedFiles[file.Id] =
+                    new ContainerFileReference(
+                        context.ContainerId,
+                        file.Id,
+                        safeFilename);
+                break;
+            }
+        }
+
+        return SelectFileForReturn(filename, context);
+    }
 
     internal static string? NormalizeFirstName(string? displayName)
     {
@@ -1607,7 +1800,7 @@ public sealed class DirectHostedAgent : IAsyncDisposable
             CancellationToken cancellationToken)
         {
             var container = await client.CreateContainerAsync(
-                new CreateContainerBody("teams-hosted-agent"),
+                new ContainerCreationOptions("teams-hosted-agent"),
                 cancellationToken);
             return container.Value.Id;
         }
@@ -1626,7 +1819,7 @@ public sealed class DirectHostedAgent : IAsyncDisposable
             multipart.Add(fileContent, "file", filename);
             var uploadBody = await multipart.ReadAsByteArrayAsync(
                 cancellationToken);
-            var file = await client.CreateContainerFileAsync(
+            var file = await client.UploadContainerFileAsync(
                 containerId,
                 BinaryContent.Create(BinaryData.FromBytes(uploadBody)),
                 multipart.Headers.ContentType!.ToString(),
@@ -1667,6 +1860,8 @@ public sealed class DirectHostedAgent : IAsyncDisposable
         public Dictionary<string, ContainerFileReference> GeneratedFiles { get; } =
             new(StringComparer.Ordinal);
         public HashSet<string> PromotedFileIds { get; } =
+            new(StringComparer.Ordinal);
+        public HashSet<string> SelectedFileIds { get; } =
             new(StringComparer.Ordinal);
     }
 

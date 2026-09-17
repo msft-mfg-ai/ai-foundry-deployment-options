@@ -74,6 +74,12 @@ services:
         value: ${COSMOS_DATABASE}
       - name: Cosmos__Container
         value: ${COSMOS_CONTAINER}
+      - name: Files__CosmosContainer
+        value: ${GENERATED_FILES_COSMOS_CONTAINER}
+      - name: Files__BlobServiceEndpoint
+        value: ${GENERATED_FILES_BLOB_SERVICE_ENDPOINT}
+      - name: Files__BlobContainer
+        value: ${GENERATED_FILES_BLOB_CONTAINER}
       - name: MicrosoftAppTenantId
         value: ${AZURE_TENANT_ID}
       - name: TeamsSso__ConnectionName

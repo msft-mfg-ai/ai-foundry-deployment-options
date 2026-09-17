@@ -6,6 +6,7 @@ using AgentChat.Services;
 using Azure.Core;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.AI;
 using Xunit;
 
 namespace AgentChat.Tests;
@@ -101,6 +102,86 @@ public sealed class ImageGenerationClientTests
         body.RootElement.GetProperty("height").GetInt32().Should().Be(768);
         body.RootElement.TryGetProperty("size", out _).Should().BeFalse();
         body.RootElement.TryGetProperty("quality", out _).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("1792x1024", "openai-v1-gpt-image", "1536x1024")]
+    [InlineData("16:9", "openai-v1-gpt-image", "1536x1024")]
+    [InlineData("portrait", "openai-v1-gpt-image", "1024x1536")]
+    [InlineData("1920x1080", "mai-v1-image", "1024x768")]
+    [InlineData("square", "mai-v1-image", "1024x1024")]
+    public void Unsupported_dimensions_are_normalized_to_the_closest_profile_size(
+        string requested,
+        string profile,
+        string expected)
+        => ImageGenerationClient.NormalizeSize(requested, profile)
+            .Should()
+            .Be(expected);
+
+    [Fact]
+    public void Unrecognized_image_size_is_rejected_actionably()
+    {
+        var act = () => ImageGenerationClient.NormalizeSize(
+            "extra-large",
+            "openai-v1-gpt-image");
+
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("*width-by-height*");
+    }
+
+    [Theory]
+    [InlineData(
+        "openai-v1-gpt-image",
+        ImageAspectRatio.Square,
+        "1024x1024")]
+    [InlineData(
+        "openai-v1-gpt-image",
+        ImageAspectRatio.Landscape,
+        "1536x1024")]
+    [InlineData(
+        "openai-v1-gpt-image",
+        ImageAspectRatio.Portrait,
+        "1024x1536")]
+    [InlineData(
+        "mai-v1-image",
+        ImageAspectRatio.Landscape,
+        "1024x768")]
+    public void Semantic_aspect_ratio_maps_to_profile_dimensions(
+        string profile,
+        ImageAspectRatio aspectRatio,
+        string expected)
+    {
+        var configuration = EnabledConfiguration();
+        configuration["ImageGeneration:Profile"] = profile;
+        var client = CreateClient(configuration);
+
+        client.GetSize(aspectRatio).Should().Be(expected);
+    }
+
+    [Fact]
+    public void Image_tool_schema_exposes_string_enums()
+    {
+        var tool = AIFunctionFactory.Create(
+            (
+                ImageAspectRatio aspect_ratio,
+                ImageQuality quality) => "ok",
+            new AIFunctionFactoryOptions
+            {
+                Name = "generate_image",
+                SerializerOptions =
+                    DirectHostedAgent.ImageToolSerializerOptions,
+            });
+
+        var schema = tool.JsonSchema.GetRawText();
+
+        schema.Should().Contain("\"aspect_ratio\"");
+        schema.Should().Contain("\"square\"");
+        schema.Should().Contain("\"landscape\"");
+        schema.Should().Contain("\"portrait\"");
+        schema.Should().Contain("\"quality\"");
+        schema.Should().Contain("\"low\"");
+        schema.Should().Contain("\"medium\"");
+        schema.Should().Contain("\"high\"");
     }
 
     [Fact]

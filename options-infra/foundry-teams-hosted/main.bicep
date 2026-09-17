@@ -61,6 +61,8 @@ module vnet '../modules/networking/vnet.bicep' = {
 var cosmosAccountName = 'cosmos-${resourceToken}'
 var cosmosDatabaseName = 'botstate'
 var cosmosContainerName = 'conversations'
+var generatedFilesContainerName = 'generated-files'
+var generatedFilesStorageAccountName = 'stfiles${resourceToken}'
 var cosmosDataContributorRoleId = '00000000-0000-0000-0000-000000000002'
 var acrName = 'acr${resourceToken}'
 var apimName = 'apim-ai-${resourceToken}'
@@ -129,9 +131,115 @@ module cosmos 'br/public:avm/res/document-db/database-account:0.21.1' = {
             }
             defaultTtl: 7776000
           }
+          {
+            name: generatedFilesContainerName
+            paths: [
+              '/id'
+            ]
+            indexingPolicy: {
+              indexingMode: 'consistent'
+              automatic: true
+            }
+            defaultTtl: 3600
+          }
         ]
       }
     ]
+  }
+}
+
+module generatedFilesBlobDnsZone 'br/public:avm/res/network/private-dns-zone:0.8.1' = {
+  name: 'generated-files-blob-private-dns-zone'
+  params: {
+    tags: tags
+    name: 'privatelink.blob.core.windows.net'
+    location: 'global'
+    virtualNetworkLinks: [
+      {
+        virtualNetworkResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
+      }
+    ]
+  }
+}
+
+module generatedFilesStorage 'br/public:avm/res/storage/storage-account:0.32.0' = {
+  name: 'generated-files-storage'
+  params: {
+    name: generatedFilesStorageAccountName
+    location: location
+    tags: tags
+    skuName: 'Standard_LRS'
+    kind: 'StorageV2'
+    allowBlobPublicAccess: false
+    publicNetworkAccess: 'Disabled'
+    networkAcls: {
+      bypass: 'AzureServices'
+      defaultAction: 'Deny'
+    }
+    blobServices: {
+      containers: [
+        {
+          name: generatedFilesContainerName
+          publicAccess: 'None'
+        }
+      ]
+      deleteRetentionPolicyDays: 1
+      deleteRetentionPolicyEnabled: true
+    }
+    privateEndpoints: [
+      {
+        name: 'pe-generated-files-${resourceToken}'
+        service: 'blob'
+        subnetResourceId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
+        privateDnsZoneGroup: {
+          privateDnsZoneGroupConfigs: [
+            {
+              privateDnsZoneResourceId: generatedFilesBlobDnsZone.outputs.resourceId
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
+
+resource generatedFilesStorageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+  name: generatedFilesStorageAccountName
+  dependsOn: [
+    generatedFilesStorage
+  ]
+}
+
+resource generatedFilesLifecyclePolicy 'Microsoft.Storage/storageAccounts/managementPolicies@2023-05-01' = {
+  parent: generatedFilesStorageAccount
+  name: 'default'
+  properties: {
+    policy: {
+      rules: [
+        {
+          enabled: true
+          name: 'delete-abandoned-generated-files'
+          type: 'Lifecycle'
+          definition: {
+            actions: {
+              baseBlob: {
+                delete: {
+                  daysAfterModificationGreaterThan: 1
+                }
+              }
+            }
+            filters: {
+              blobTypes: [
+                'blockBlob'
+              ]
+              prefixMatch: [
+                '${generatedFilesContainerName}/'
+              ]
+            }
+          }
+        }
+      ]
+    }
   }
 }
 
@@ -471,6 +579,10 @@ output COSMOS_ACCOUNT_NAME string = cosmosAccountName
 output COSMOS_ENDPOINT string = cosmos.outputs.endpoint
 output COSMOS_DATABASE string = cosmosDatabaseName
 output COSMOS_CONTAINER string = cosmosContainerName
+output GENERATED_FILES_COSMOS_CONTAINER string = generatedFilesContainerName
+output GENERATED_FILES_STORAGE_ACCOUNT_NAME string = generatedFilesStorageAccountName
+output GENERATED_FILES_BLOB_SERVICE_ENDPOINT string = generatedFilesStorageAccount.properties.primaryEndpoints.blob
+output GENERATED_FILES_BLOB_CONTAINER string = generatedFilesContainerName
 output COSMOS_DATA_CONTRIBUTOR_ROLE_ID string = cosmosDataContributorRoleId
 output AI_GATEWAY_CONNECTION_DYNAMIC string = 'apim-${resourceToken}-openai-d-for-${projectNames[0]}'
 output APIM_BACKEND_NAMES array = common_ai_gateway_setup.outputs.backendNames

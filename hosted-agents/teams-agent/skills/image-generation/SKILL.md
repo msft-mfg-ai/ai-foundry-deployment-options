@@ -7,13 +7,20 @@ description: Generate and return standalone original images, or create visual as
 
 Use this skill whenever the user asks to generate an image, illustration,
 visual, or picture. For a standalone image request, call `generate_image` and
-return the generated image file directly; do not load the PowerPoint skill or
-create a presentation unless the user explicitly requests slides or a deck.
+then call `return_file` with the generated filename so the image is returned
+directly. Do not load the PowerPoint skill or create a presentation unless the
+user explicitly requests slides or a deck. When an image is a supporting asset
+for another deliverable, do not call `return_file` for the image unless the
+user also asks to receive it separately.
 The tool is deployment-dependent and is absent when no compatible GPT Image
 or MAI Image deployment was discovered.
 
 ## Prompting
 
+- Set `aspect_ratio` to exactly one of `square`, `landscape`, or `portrait`.
+- For GPT Image, set `quality` to exactly one of `low`, `medium`, or `high`.
+  Prefer `medium` for normal requests and `high` when presentation-quality
+  detail matters. MAI Image does not expose a quality parameter.
 - Describe the subject, setting, composition, camera or illustration style,
   lighting, color palette, and intended slide role.
 - State the desired negative space for titles or labels.
@@ -21,9 +28,9 @@ or MAI Image deployment was discovered.
   scenes.
 - Do not request logos, trademarks, signatures, watermarks, or imitation of a
   living artist.
-- Use landscape dimensions for slide heroes, portrait dimensions for side
-  panels, and square dimensions for tiles only when the active model profile
-  supports them.
+- Use `landscape` for slide heroes, `portrait` for side panels, and `square`
+  for tiles or standalone square images. The tool maps these semantic choices
+  to dimensions supported by the active image deployment.
 
 ## Files and PowerPoint
 

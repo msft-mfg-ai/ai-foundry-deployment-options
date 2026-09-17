@@ -10,17 +10,23 @@ namespace AgentChat.Services;
 public interface ITeamsFileService
 {
     bool SupportsNativeFiles(IActivity activity);
-    Attachment CreateConsentCard(
+    Task<Attachment> CreateConsentCardAsync(
         UserConversationKey owner,
-        GeneratedFileContent file);
+        GeneratedFileContent file,
+        CancellationToken cancellationToken);
     Task<Attachment> UploadAsync(
         UserConversationKey owner,
         FileConsentCardResponse response,
         CancellationToken cancellationToken);
-    void Discard(
+    Task<GeneratedFileDiscardStatus> DiscardAsync(
         UserConversationKey owner,
-        FileConsentCardResponse response);
+        FileConsentCardResponse response,
+        CancellationToken cancellationToken);
 }
+
+public sealed class GeneratedFileUploadInProgressException()
+    : InvalidOperationException(
+        "The generated file upload is already in progress.");
 
 public sealed class TeamsFileService : ITeamsFileService
 {
@@ -37,15 +43,18 @@ public sealed class TeamsFileService : ITeamsFileService
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly GeneratedFileStore _files;
+    private readonly ILogger<TeamsFileService> _logger;
     private readonly string[] _allowedHosts;
 
     public TeamsFileService(
         IHttpClientFactory httpClientFactory,
         GeneratedFileStore files,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        ILogger<TeamsFileService> logger)
     {
         _httpClientFactory = httpClientFactory;
         _files = files;
+        _logger = logger;
         _allowedHosts = DefaultAllowedHosts
             .Concat(
                 configuration
@@ -69,11 +78,15 @@ public sealed class TeamsFileService : ITeamsFileService
                 "personal",
                 StringComparison.OrdinalIgnoreCase);
 
-    public Attachment CreateConsentCard(
+    public async Task<Attachment> CreateConsentCardAsync(
         UserConversationKey owner,
-        GeneratedFileContent file)
+        GeneratedFileContent file,
+        CancellationToken cancellationToken)
     {
-        var cached = _files.Add(owner, file);
+        var cached = await _files.AddAsync(
+            owner,
+            file,
+            cancellationToken);
         var context = new TeamsGeneratedFileContext(cached.Token);
         return new Attachment
         {
@@ -93,11 +106,28 @@ public sealed class TeamsFileService : ITeamsFileService
         CancellationToken cancellationToken)
     {
         var token = ReadToken(response.Context);
-        if (token is null || !_files.TryClaim(token, owner, out var file))
+        var attempt = token is null
+            ? new GeneratedFileClaimAttempt(
+                GeneratedFileClaimStatus.NotFoundOrExpired)
+            : await _files.TryClaimAsync(
+                token,
+                owner,
+                cancellationToken);
+        if (attempt.Status == GeneratedFileClaimStatus.UploadInProgress)
+        {
+            throw new GeneratedFileUploadInProgressException();
+        }
+        if (attempt.Status == GeneratedFileClaimStatus.OwnerMismatch)
         {
             throw new InvalidOperationException(
-                "The generated file has expired, is already uploading, or belongs to another conversation. Run the request again.");
+                "This file request belongs to another user or conversation.");
         }
+        if (attempt.Claim is null)
+        {
+            throw new InvalidOperationException(
+                "This file request has expired or is no longer available. Run the request again.");
+        }
+        var file = attempt.Claim;
         if (file.Completed is not null)
         {
             return CreateFileInfoCard(file.Completed);
@@ -106,6 +136,7 @@ public sealed class TeamsFileService : ITeamsFileService
             ?? throw new InvalidOperationException(
                 "The generated file cache entry is invalid.");
 
+        var remoteUploadCompleted = false;
         try
         {
             var upload = response.UploadInfo
@@ -118,21 +149,22 @@ public sealed class TeamsFileService : ITeamsFileService
                     "Teams returned an unsupported file host.");
             }
 
+            await using var content = download.Content;
             using var request = new HttpRequestMessage(
                 HttpMethod.Put,
                 upload.UploadUrl)
             {
-                Content = new ByteArrayContent(download.Content),
+                Content = new StreamContent(content),
             };
             request.Content.Headers.ContentType =
                 new MediaTypeHeaderValue(download.MediaType);
             request.Content.Headers.ContentLength =
-                download.Content.LongLength;
+                download.Size;
             request.Content.Headers.ContentRange =
                 new ContentRangeHeaderValue(
                     0,
-                    download.Content.LongLength - 1,
-                    download.Content.LongLength);
+                    download.Size - 1,
+                    download.Size);
 
             using var client =
                 _httpClientFactory.CreateClient(nameof(TeamsFileService));
@@ -148,17 +180,42 @@ public sealed class TeamsFileService : ITeamsFileService
                     inner: null,
                     result.StatusCode);
             }
+            remoteUploadCompleted = true;
             var completed = new CompletedGeneratedFile(
                 upload.Name ?? download.Name,
                 upload.ContentUrl,
                 upload.UniqueId,
                 upload.FileType);
-            _files.Complete(token, owner, completed);
+            try
+            {
+                using var completionTimeout =
+                    new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                await _files.CompleteAsync(
+                    token!,
+                    owner,
+                    file.ClaimId!,
+                    completed,
+                    completionTimeout.Token);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Teams accepted generated file {FileName}, but its completion marker could not be persisted. The active upload lease will prevent an immediate duplicate.",
+                    completed.Name);
+            }
             return CreateFileInfoCard(completed);
         }
         catch
         {
-            _files.Release(token, owner);
+            if (!remoteUploadCompleted)
+            {
+                await _files.ReleaseAsync(
+                    token!,
+                    owner,
+                    file.ClaimId!,
+                    CancellationToken.None);
+            }
             throw;
         }
     }
@@ -177,15 +234,20 @@ public sealed class TeamsFileService : ITeamsFileService
             },
         };
 
-    public void Discard(
+    public async Task<GeneratedFileDiscardStatus> DiscardAsync(
         UserConversationKey owner,
-        FileConsentCardResponse response)
+        FileConsentCardResponse response,
+        CancellationToken cancellationToken)
     {
         var token = ReadToken(response.Context);
         if (token is not null)
         {
-            _files.Discard(token, owner);
+            return await _files.DiscardAsync(
+                token,
+                owner,
+                cancellationToken);
         }
+        return GeneratedFileDiscardStatus.NotAvailable;
     }
 
     private static string? ReadToken(object? context)

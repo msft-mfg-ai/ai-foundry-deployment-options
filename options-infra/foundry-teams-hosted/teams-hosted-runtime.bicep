@@ -27,6 +27,9 @@ param agentPrincipalId string
 @description('Existing Cosmos DB account used for Bot Framework conversation state.')
 param cosmosAccountName string
 
+@description('Storage account used to stage generated files before Teams consent upload.')
+param generatedFilesStorageAccountName string
+
 @description('Existing APIM Foundry User role assignment name, when migrating an existing environment.')
 param apimFoundryUserRoleAssignmentName string = ''
 
@@ -412,6 +415,29 @@ resource hostedAgentFoundryUser 'Microsoft.Authorization/roleAssignments@2022-04
     principalId: agentPrincipalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: foundryUserRoleId
+  }
+}
+
+resource generatedFilesStorageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+  name: generatedFilesStorageAccountName
+}
+
+var storageBlobDataContributorRoleId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+)
+
+resource hostedAgentGeneratedFilesContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: generatedFilesStorageAccount
+  name: guid(
+    agentPrincipalId,
+    storageBlobDataContributorRoleId,
+    generatedFilesStorageAccount.id
+  )
+  properties: {
+    principalId: agentPrincipalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: storageBlobDataContributorRoleId
   }
 }
 
