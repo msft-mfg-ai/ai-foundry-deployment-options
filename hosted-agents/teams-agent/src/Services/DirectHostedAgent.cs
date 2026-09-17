@@ -17,8 +17,10 @@ using OpenAI.Responses;
 using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Collections.Concurrent;
+using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Reflection;
+using System.Xml.Linq;
 
 namespace AgentChat.Services;
 
@@ -1701,7 +1703,7 @@ When a tool creates a final file, tell the user that it is attached. Never expos
         var mediaType = extension switch
         {
             ".pptx" when HasZipSignature(data) =>
-                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                ValidatePowerPointPackage(data),
             ".pdf" when data.AsSpan().StartsWith("%PDF"u8) =>
                 "application/pdf",
             ".png" when data.AsSpan().StartsWith(
@@ -1720,6 +1722,113 @@ When a tool creates a final file, tell the user that it is attached. Never expos
             safeFilename,
             mediaType,
             data);
+    }
+
+    private static string ValidatePowerPointPackage(byte[] data)
+    {
+        try
+        {
+            using var archive = new ZipArchive(
+                new MemoryStream(data, writable: false),
+                ZipArchiveMode.Read);
+            var presentationEntry = archive.GetEntry("ppt/presentation.xml")
+                ?? throw new InvalidDataException(
+                    "The PowerPoint package is missing ppt/presentation.xml.");
+            var relationshipsEntry = archive.GetEntry(
+                    "ppt/_rels/presentation.xml.rels")
+                ?? throw new InvalidDataException(
+                    "The PowerPoint package is missing its presentation relationships.");
+
+            XNamespace presentationNamespace =
+                "http://schemas.openxmlformats.org/presentationml/2006/main";
+            XNamespace officeRelationshipNamespace =
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+            XNamespace packageRelationshipNamespace =
+                "http://schemas.openxmlformats.org/package/2006/relationships";
+
+            using var presentationStream = presentationEntry.Open();
+            var presentation = XDocument.Load(presentationStream);
+            var activeSlideIds = presentation
+                .Descendants(presentationNamespace + "sldId")
+                .Select(element =>
+                    (string?)element.Attribute(
+                        officeRelationshipNamespace + "id"))
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Cast<string>()
+                .ToArray();
+            if (activeSlideIds.Length == 0
+                || activeSlideIds.Distinct(StringComparer.Ordinal).Count()
+                    != activeSlideIds.Length)
+            {
+                throw new InvalidDataException(
+                    "The PowerPoint package must contain uniquely referenced slides.");
+            }
+
+            using var relationshipsStream = relationshipsEntry.Open();
+            var relationships = XDocument.Load(relationshipsStream);
+            var slideRelationships = relationships
+                .Descendants(packageRelationshipNamespace + "Relationship")
+                .Where(element =>
+                    ((string?)element.Attribute("Type"))?.EndsWith(
+                        "/slide",
+                        StringComparison.Ordinal) == true)
+                .Select(element => new
+                {
+                    Id = (string?)element.Attribute("Id"),
+                    Target = (string?)element.Attribute("Target"),
+                })
+                .ToArray();
+            var relationshipsById = slideRelationships
+                .Where(relationship =>
+                    !string.IsNullOrWhiteSpace(relationship.Id))
+                .ToDictionary(
+                    relationship => relationship.Id!,
+                    relationship => relationship.Target,
+                    StringComparer.Ordinal);
+            if (slideRelationships.Length != activeSlideIds.Length
+                || activeSlideIds.Any(id =>
+                    !relationshipsById.ContainsKey(id)))
+            {
+                throw new InvalidDataException(
+                    "The PowerPoint package contains missing or orphaned slide relationships.");
+            }
+            if (slideRelationships
+                .Select(relationship => relationship.Target)
+                .Any(string.IsNullOrWhiteSpace)
+                || slideRelationships
+                    .Select(relationship => relationship.Target!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count() != slideRelationships.Length)
+            {
+                throw new InvalidDataException(
+                    "The PowerPoint package contains duplicate slide targets.");
+            }
+
+            foreach (var relationship in slideRelationships)
+            {
+                var target = relationship.Target!.Replace('\\', '/');
+                if (target.StartsWith(
+                        "../",
+                        StringComparison.Ordinal)
+                    || archive.GetEntry($"ppt/{target}") is null)
+                {
+                    throw new InvalidDataException(
+                        "The PowerPoint package references an unavailable slide.");
+                }
+            }
+
+            return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+        }
+        catch (InvalidDataException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidDataException(
+                "The generated PowerPoint package is invalid.",
+                ex);
+        }
     }
 
     private static bool HasZipSignature(ReadOnlySpan<byte> data)

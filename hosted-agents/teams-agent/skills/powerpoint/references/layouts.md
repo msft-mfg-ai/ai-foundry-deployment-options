@@ -1,10 +1,10 @@
 # Zava corporate template layouts
 
 The packaged `assets/template.pptx` is the 16:9 Zava corporate template. It
-contains 33 example slides, 36 named layouts, and one master. Treat the
-existing slides as a layout gallery, not as content for the generated deck.
-Inspect them for spacing, typography, image treatment, and shape placement,
-then remove all unused examples from the final presentation.
+contains 36 named layouts and one master. It intentionally contains no
+existing slides, so start adding final slides immediately. The layout names
+and intended uses below were derived from the original 33-slide Zava layout
+gallery.
 
 The theme uses:
 
@@ -22,17 +22,6 @@ prs = Presentation("template.pptx")
 layout = next(item for item in prs.slide_layouts if item.name == "Title 1")
 slide = prs.slides.add_slide(layout)
 ```
-
-Remove the gallery slides before adding final content:
-
-```python
-for slide_id in list(prs.slides._sldIdLst):
-    prs.part.drop_rel(slide_id.rId)
-    prs.slides._sldIdLst.remove(slide_id)
-```
-
-Perform this once, immediately after inspecting the examples and before adding
-new slides. Reopen the saved file afterward and confirm the final slide count.
 
 Available named layouts:
 
@@ -96,8 +85,9 @@ brand colors, margins, footer style, and spacing rhythm.
 - Reuse the template's existing fonts, colors, and placeholder positions.
 - Use layout names exactly as listed; never infer names from slide numbers.
 - Prefer one message per slide and short supporting text.
-- Remove all 33 gallery slides before final delivery, then add only the slides
-  required by the `DeckSpec`.
+- The template starts with zero slides. Do not copy slides from another
+  presentation or manipulate the private `_sldIdLst`; add slides only through
+  `prs.slides.add_slide(layout)`.
 - Do not hard-code a numeric layout index because indexes can change when the template evolves.
 - Do not repeat the same named layout on consecutive slides.
 - Reject a named layout when the content exceeds the capacity defined in

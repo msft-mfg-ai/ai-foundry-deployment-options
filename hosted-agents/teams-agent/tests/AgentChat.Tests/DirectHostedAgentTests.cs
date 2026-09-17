@@ -1,6 +1,8 @@
 using AgentChat.Services;
 using FluentAssertions;
 using Microsoft.Agents.AI;
+using System.IO.Compression;
+using System.Text;
 using System.Net;
 using Xunit;
 
@@ -87,17 +89,30 @@ public class DirectHostedAgentTests
             .Should().BeFalse();
 
     [Fact]
-    public void PowerPoint_artifact_requires_a_zip_signature()
+    public void PowerPoint_artifact_requires_a_valid_package()
     {
         var file = DirectHostedAgent.ValidateGeneratedFile(
             "container",
             "file",
             "briefing.pptx",
-            [0x50, 0x4B, 0x03, 0x04, 0x00]);
+            CreatePowerPointPackage());
 
         file.Name.Should().Be("briefing.pptx");
         file.MediaType.Should().Be(
             "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+    }
+
+    [Fact]
+    public void PowerPoint_artifact_rejects_orphaned_slide_relationships()
+    {
+        var act = () => DirectHostedAgent.ValidateGeneratedFile(
+            "container",
+            "file",
+            "briefing.pptx",
+            CreatePowerPointPackage(includeOrphanedRelationship: true));
+
+        act.Should().Throw<InvalidDataException>()
+            .WithMessage("*orphaned slide relationships*");
     }
 
     [Fact]
@@ -122,6 +137,60 @@ public class DirectHostedAgentTests
             "%PDF-1.7"u8.ToArray());
 
         act.Should().Throw<InvalidDataException>();
+    }
+
+    private static byte[] CreatePowerPointPackage(
+        bool includeOrphanedRelationship = false)
+    {
+        using var output = new MemoryStream();
+        using (var archive = new ZipArchive(
+            output,
+            ZipArchiveMode.Create,
+            leaveOpen: true))
+        {
+            WriteEntry(
+                archive,
+                "ppt/presentation.xml",
+                """
+                <p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+                  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+                  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+                </p:presentation>
+                """);
+            WriteEntry(
+                archive,
+                "ppt/_rels/presentation.xml.rels",
+                $$"""
+                <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                  <Relationship Id="rId1"
+                    Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide"
+                    Target="slides/slide1.xml"/>
+                  {{(includeOrphanedRelationship
+                      ? """
+                        <Relationship Id="rId2"
+                          Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide"
+                          Target="slides/slide1.xml"/>
+                        """
+                      : string.Empty)}}
+                </Relationships>
+                """);
+            WriteEntry(
+                archive,
+                "ppt/slides/slide1.xml",
+                """
+                <p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>
+                """);
+        }
+        return output.ToArray();
+    }
+
+    private static void WriteEntry(
+        ZipArchive archive,
+        string name,
+        string content)
+    {
+        using var stream = archive.CreateEntry(name).Open();
+        stream.Write(Encoding.UTF8.GetBytes(content));
     }
 
     [Theory]

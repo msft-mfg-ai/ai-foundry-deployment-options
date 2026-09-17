@@ -28,10 +28,10 @@ Do not return the first file that opens successfully.
 3. Load `/mnt/data/template.pptx`. It is staged automatically in the current
    user's Code Interpreter container. Never start from a blank
    `Presentation()` when this template is available.
-4. Inspect the template's slides, layouts, fonts, colors, dimensions, and
-   example compositions before editing it. The Zava template's 33 existing
-   slides are a gallery; remove them from the final deck and add only the
-   slides required by the specification.
+4. Inspect the template's layouts, fonts, colors, dimensions, and master
+   before editing it. The clean Zava template intentionally starts with zero
+   slides. Add slides only with `prs.slides.add_slide(layout)`; do not
+   manipulate private slide-list or relationship APIs.
 5. Create and validate a semantic `DeckSpec` JSON document using
    `references/deck-spec.md` before writing presentation code. The plan shown
    to the user should map to the deck's narrative phases, while the
@@ -135,6 +135,10 @@ from scratch unless the user asks for a redesign.
   counts, and composition capacities.
 - Reopen the saved file with `python-pptx`.
 - Confirm that it contains the intended slide count and no empty placeholder-only slides.
+- Inspect `ppt/_rels/presentation.xml.rels` and confirm there is exactly one
+  slide relationship for every active slide, with no orphan relationships or
+  duplicate slide targets. A file that merely reopens with `python-pptx` is
+  not sufficient.
 - Confirm that every referenced image is embedded in the package.
 - Confirm that the file begins with the ZIP signature expected for a valid `.pptx`.
 - Check that shapes stay within slide bounds.
