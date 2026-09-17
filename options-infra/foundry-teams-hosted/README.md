@@ -537,10 +537,24 @@ For the validated Entra Agent Identity OBO configuration, token sequence,
 permission inheritance, and Azure role assignments, open
 [`docs/agent-identity-obo-flow.html`](docs/agent-identity-obo-flow.html).
 
-The sample creates one Teams-facing hosted agent. To add another, declare
-another Invocations/Responses service and extend the runtime Bicep agent maps.
-Each Teams-facing hosted agent owns its model and tools and needs its own
-azd-created Bot identity, version map entry, APIM path, and manifest.
+The sample creates two Teams-facing hosted agents:
+
+- `teams-hosted-agent` is the general-purpose agent.
+- `teams-pptx-renderer-agent` is an isolated PowerPoint canary that converts a
+  constrained DeckSpec into the packaged Zava template with a deterministic
+  renderer.
+
+The runtime hook reads the current APIM Bot-ID and version named values, merges
+the deployed agent into each map, and writes the complete maps back. Deploying
+the PowerPoint canary therefore preserves the general-purpose agent route.
+Each agent has its own SSO/Bot application, APIM path, and Teams manifest. The
+PowerPoint canary app registration uses the `PPTX_RENDERER_SSO_*` azd
+environment values; tenant admin consent may need to be granted separately:
+
+```bash
+az ad app permission admin-consent \
+  --id "$(azd env get-value PPTX_RENDERER_SSO_APP_ID)"
+```
 
 ## Generated outputs
 
@@ -551,6 +565,16 @@ The hook saves these values in the azd environment:
 - `HOSTED_TEAMS_MESSAGING_ENDPOINT`
 - `HOSTED_TEAMS_SESSION_ADMIN_ENDPOINT`
 - `HOSTED_TEAMS_SESSION_ADMIN_SUBSCRIPTION`
+- `PPTX_RENDERER_TEAMS_BOT_NAME`
+- `PPTX_RENDERER_TEAMS_BOT_APP_ID`
+- `PPTX_RENDERER_TEAMS_MESSAGING_ENDPOINT`
+- `PPTX_RENDERER_TEAMS_SESSION_ADMIN_ENDPOINT`
+- `PPTX_RENDERER_TEAMS_SESSION_ADMIN_SUBSCRIPTION`
+
+The generated Teams packages are:
+
+- `teams-app/build/teams-hosted-agent/appPackage.zip`
+- `teams-app/build/teams-pptx-renderer-agent/appPackage.zip`
 
 Generated packages and staged hosted-agent sources are ignored by git.
 

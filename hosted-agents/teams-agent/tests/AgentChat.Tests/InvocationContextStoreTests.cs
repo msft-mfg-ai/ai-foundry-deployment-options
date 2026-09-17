@@ -75,4 +75,28 @@ public class InvocationContextStoreTests
 
         found.Should().BeFalse();
     }
+
+    [Fact]
+    public void Context_can_be_added_from_deserialized_activity()
+    {
+        var store = new InvocationContextStore();
+        var activity = new Activity
+        {
+            Id = "activity",
+            ChannelId = "msteams",
+            Conversation = new ConversationAccount(id: "conversation"),
+        };
+        var context = new HostedInvocationContext(
+            "agent",
+            "42",
+            "session",
+            "invocation",
+            "user",
+            "call");
+
+        store.Add(activity, context);
+
+        store.TryGet(activity, out var restored).Should().BeTrue();
+        restored.Should().Be(context);
+    }
 }

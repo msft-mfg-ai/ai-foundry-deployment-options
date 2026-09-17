@@ -8,8 +8,10 @@
 # Contract:
 #   inputs  : env AZURE_ENV_NAME (set by azd)
 #             optional SSO_DOWNSTREAM_CLIENT_ID + SSO_DOWNSTREAM_SCOPE
-#   outputs : azd env vars SSO_APP_ID, SSO_APP_SECRET
-#             SSO_APP_RESOURCE, SSO_SCOPES
+#             optional SSO_APP_DISPLAY_NAME + SSO_APP_ENV_PREFIX
+#   outputs : azd env vars <prefix>_APP_ID, <prefix>_APP_SECRET
+#             <prefix>_APP_RESOURCE, <prefix>_SCOPES
+#             where prefix defaults to SSO
 #             (consumed by main.bicepparam)
 #
 # Idempotency:
@@ -30,7 +32,8 @@ if [ -z "${AZURE_ENV_NAME:-}" ]; then
   exit 1
 fi
 
-display_name="sso-foundry-teams-${AZURE_ENV_NAME}"
+display_name="${SSO_APP_DISPLAY_NAME:-sso-foundry-teams-${AZURE_ENV_NAME}}"
+env_prefix="${SSO_APP_ENV_PREFIX:-SSO}"
 echo "→ Ensuring SSO AAD app '$display_name' exists..."
 
 app_id=$(az ad app list --display-name "$display_name" --query "[0].appId" -o tsv 2>/dev/null || true)
@@ -275,8 +278,8 @@ client_secret=$(az ad app credential reset \
   --years 1 \
   --query password -o tsv)
 
-azd env set SSO_APP_ID "$app_id"
-azd env set SSO_APP_SECRET "$client_secret"
-azd env set SSO_APP_RESOURCE "$identifier_uri"
-azd env set SSO_SCOPES "$downstream_scope offline_access"
-echo "✓ SSO app id, secret, resource, and delegated scopes written to azd env"
+azd env set "${env_prefix}_APP_ID" "$app_id"
+azd env set "${env_prefix}_APP_SECRET" "$client_secret"
+azd env set "${env_prefix}_APP_RESOURCE" "$identifier_uri"
+azd env set "${env_prefix}_SCOPES" "$downstream_scope offline_access"
+echo "✓ SSO app id, secret, resource, and delegated scopes written to azd env with prefix $env_prefix"

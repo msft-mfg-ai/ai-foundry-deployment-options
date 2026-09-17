@@ -9,7 +9,12 @@ if (-not $env:AZURE_ENV_NAME) {
   Write-Error 'AZURE_ENV_NAME is not set; aborting.'
 }
 
-$displayName = "sso-foundry-teams-$($env:AZURE_ENV_NAME)"
+$displayName = if ($env:SSO_APP_DISPLAY_NAME) {
+  $env:SSO_APP_DISPLAY_NAME
+} else {
+  "sso-foundry-teams-$($env:AZURE_ENV_NAME)"
+}
+$envPrefix = if ($env:SSO_APP_ENV_PREFIX) { $env:SSO_APP_ENV_PREFIX } else { 'SSO' }
 Write-Host "→ Ensuring SSO AAD app '$displayName' exists..."
 
 $appId = az ad app list --display-name $displayName --query "[0].appId" -o tsv
@@ -254,8 +259,8 @@ $clientSecret = az ad app credential reset `
   --years 1 `
   --query password -o tsv
 
-azd env set SSO_APP_ID $appId
-azd env set SSO_APP_SECRET $clientSecret
-azd env set SSO_APP_RESOURCE $identifierUri
-azd env set SSO_SCOPES "$downstreamScope offline_access"
-Write-Host "✓ SSO app id, secret, resource, and delegated scopes written to azd env"
+azd env set "${envPrefix}_APP_ID" $appId
+azd env set "${envPrefix}_APP_SECRET" $clientSecret
+azd env set "${envPrefix}_APP_RESOURCE" $identifierUri
+azd env set "${envPrefix}_SCOPES" "$downstreamScope offline_access"
+Write-Host "✓ SSO app id, secret, resource, and delegated scopes written to azd env with prefix $envPrefix"

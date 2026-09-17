@@ -1,9 +1,11 @@
 using System.Runtime.ExceptionServices;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using AgentChat.Bots;
 using Azure.AI.AgentServer.Core;
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.Core;
 using Azure.Identity;
@@ -31,6 +33,7 @@ public sealed class DirectHostedAgent : IAsyncDisposable
     private const int MaxGeneratedFilesPerRun = 5;
     private const int MaxGeneratedFileBytes = 20 * 1024 * 1024;
     private const string PowerPointTemplateFilename = "template.pptx";
+    private const string PowerPointRendererFilename = "zava_renderer.py";
     private const string CodeInterpreterContainerStateKey =
         "agentchat.code-interpreter.container-id";
     private const string CodeInterpreterOwnerStateKey =
@@ -433,6 +436,47 @@ When creating files, distinguish final deliverables from working artifacts. Crea
 
 When a tool creates a final file, tell the user that it is attached. Never expose internal container paths such as /mnt/data, container IDs, file IDs, base64 data, or temporary download URLs.
 """;
+            var deterministicPowerPointEnabled =
+                _configuration.GetValue<bool>(
+                    "DirectAgent:DeterministicPowerPointEnabled");
+            if (deterministicPowerPointEnabled)
+            {
+                instructions += """
+
+For every PowerPoint request, create a valid DeckSpec object and call render_powerpoint. Do not use the generic code tool to create or modify PowerPoint files. The deterministic renderer owns layouts, geometry, typography, placeholder cleanup, and final-file selection.
+
+DeckSpec must use this exact shape:
+{
+  "title": "Deck title",
+  "audience": "Intended audience",
+  "objective": "Deck objective",
+  "slides": [
+    {
+      "id": "01",
+      "role": "cover",
+      "composition": "cover",
+      "title": "Cover title",
+      "subtitle": "Optional subtitle",
+      "body": []
+    },
+    {
+      "id": "02",
+      "role": "summary",
+      "composition": "card_grid",
+      "title": "Content title",
+      "body": [
+        {
+          "kind": "bullet",
+          "title": "Card title",
+          "text": "Card text"
+        }
+      ]
+    }
+  ]
+}
+Use at most four body cards on a card_grid slide. Every body item requires kind, title, and text. Do not wrap the DeckSpec in another property.
+""";
+            }
 
             var toolboxEndpoint = _configuration["DirectAgent:ToolboxEndpoint"];
             if (string.IsNullOrWhiteSpace(toolboxEndpoint))
@@ -468,6 +512,8 @@ When a tool creates a final file, tell the user that it is attached. Never expos
                 var openAIClient = projectClient.GetProjectOpenAIClient();
                 containerClient = openAIClient.GetContainerClient();
                 var responsesClient = openAIClient.GetResponsesClient();
+                var projectResponsesClient =
+                    openAIClient.GetProjectResponsesClientForModel(model);
                 var templatePath = Path.Combine(
                     AppContext.BaseDirectory,
                     "assets",
@@ -516,6 +562,28 @@ When a tool creates a final file, tell the user that it is attached. Never expos
                     teamsSsoTool,
                     returnFileTool,
                 };
+                if (deterministicPowerPointEnabled)
+                {
+                    localTools.Add(
+                        AIFunctionFactory.Create(
+                            (
+                                JsonElement deck_spec,
+                                string filename,
+                                CancellationToken toolCancellationToken) =>
+                                RenderPowerPointAsync(
+                                    deck_spec,
+                                    filename,
+                                    model,
+                                    responsesClient,
+                                    containerClient,
+                                    templateBytes,
+                                    toolCancellationToken),
+                            new AIFunctionFactoryOptions
+                            {
+                                Name = "render_powerpoint",
+                                Description = "Render one final editable Zava PowerPoint from a DeckSpec object with root fields title, audience, objective, and slides. Each slide requires id, role, composition, title, and body. A cover slide may include subtitle and must use an empty body. A card_grid body contains one to four objects with kind='bullet', title, and text. Supported compositions are cover and card_grid. The filename must end in .pptx. Do not wrap DeckSpec in another property.",
+                            }));
+                }
                 if (ShouldRegisterImageTool(_imageGeneration))
                 {
                     localTools.Add(
@@ -598,8 +666,8 @@ When a tool creates a final file, tell the user that it is attached. Never expos
                     .Concat(localTools)
                     .ToArray();
 
-                agent = responsesClient
-                    .AsIChatClient(model)
+                agent = projectResponsesClient
+                    .AsIChatClientWithStoredOutputDisabled()
                     .AsHarnessAgent(
                     new HarnessAgentOptions
                     {
@@ -668,12 +736,84 @@ When a tool creates a final file, tell the user that it is attached. Never expos
         ImageGenerationClient imageGeneration) =>
         imageGeneration.Enabled;
 
+    private async Task<string> RenderPowerPointAsync(
+        JsonElement deckSpec,
+        string filename,
+        string model,
+        ResponsesClient responsesClient,
+        ContainerClient containerClient,
+        byte[] templateBytes,
+        CancellationToken cancellationToken)
+    {
+        if (deckSpec.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException(
+                "DeckSpec must be a JSON object.",
+                nameof(deckSpec));
+        }
+
+        var safeFilename = ValidateSelectedFilename(filename);
+        if (!string.Equals(
+                Path.GetExtension(safeFilename),
+                ".pptx",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                "The deterministic renderer only creates .pptx files.",
+                nameof(filename));
+        }
+
+        var encodedSpec = Convert.ToBase64String(
+            Encoding.UTF8.GetBytes(deckSpec.GetRawText()));
+        var encodedFilename = Convert.ToBase64String(
+            Encoding.UTF8.GetBytes(safeFilename));
+        var code = $$"""
+            import base64
+            import json
+            import subprocess
+            import sys
+
+            try:
+                import pptx
+            except ImportError:
+                subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "python-pptx>=1.0.2"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+
+            sys.path.insert(0, "/mnt/data")
+            from zava_renderer import render_deck
+
+            _spec = json.loads(base64.b64decode("{{encodedSpec}}").decode("utf-8"))
+            _filename = base64.b64decode("{{encodedFilename}}").decode("utf-8")
+            _output = f"/mnt/data/{_filename}"
+            render_deck(_spec, "/mnt/data/{{PowerPointTemplateFilename}}", _output)
+            print(f"Rendered {_filename}")
+            """;
+
+        await ExecuteCodeAsync(
+            code,
+            model,
+            responsesClient,
+            containerClient,
+            templateBytes,
+            stagePowerPointRenderer: true);
+        var selection = await SelectFileForReturnAsync(
+            safeFilename,
+            containerClient,
+            cancellationToken);
+        return $"Rendered and selected '{safeFilename}'. {selection}";
+    }
+
     private async Task<string> ExecuteCodeAsync(
         string code,
         string model,
         ResponsesClient responsesClient,
         ContainerClient containerClient,
-        byte[] templateBytes)
+        byte[] templateBytes,
+        bool stagePowerPointRenderer = false)
     {
         var stage = "validate-code";
         try
@@ -713,7 +853,8 @@ When a tool creates a final file, tell the user that it is attached. Never expos
                     context,
                     new ContainerFileOperations(containerClient),
                     templateBytes,
-                    cancellationToken);
+                    cancellationToken,
+                    stagePowerPointRenderer);
 
                 var executableCode = $$"""
                     from pathlib import Path
@@ -746,6 +887,7 @@ When a tool creates a final file, tell the user that it is attached. Never expos
                             "Execute the supplied Python code exactly with Code Interpreter. Do not rewrite, summarize, or omit it. Return concise execution output and any error details.",
                         ToolChoice = ResponseToolChoice.CreateRequiredChoice(),
                         ParallelToolCallsEnabled = false,
+                        StoredOutputEnabled = false,
                     };
                     options.Tools.Add(
                         ResponseTool.CreateCodeInterpreterTool(
@@ -775,7 +917,8 @@ When a tool creates a final file, tell the user that it is attached. Never expos
                         context,
                         new ContainerFileOperations(containerClient),
                         templateBytes,
-                        cancellationToken);
+                        cancellationToken,
+                        stagePowerPointRenderer);
                     stage = "replay-response";
                     try
                     {
@@ -945,25 +1088,43 @@ When a tool creates a final file, tell the user that it is attached. Never expos
         CodeExecutionContext context,
         IContainerFileOperations containerFiles,
         byte[] templateBytes,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool stagePowerPointRenderer = false)
     {
-        if (context.ContainerId is not null)
+        if (context.ContainerId is null)
+        {
+            var containerId = await containerFiles.CreateAsync(cancellationToken);
+            _ = await containerFiles.UploadAsync(
+                containerId,
+                PowerPointTemplateFilename,
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                templateBytes,
+                cancellationToken);
+            context.ContainerId = containerId;
+            PersistContainerId(
+                session,
+                context.UserId,
+                context.ContainerId);
+        }
+
+        if (!stagePowerPointRenderer)
         {
             return;
         }
 
-        var containerId = await containerFiles.CreateAsync(cancellationToken);
-        _ = await containerFiles.UploadAsync(
-            containerId,
-            PowerPointTemplateFilename,
-            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            templateBytes,
+        var rendererPath = Path.Combine(
+            AppContext.BaseDirectory,
+            "assets",
+            PowerPointRendererFilename);
+        var rendererBytes = await File.ReadAllBytesAsync(
+            rendererPath,
             cancellationToken);
-        context.ContainerId = containerId;
-        PersistContainerId(
-            session,
-            context.UserId,
-            context.ContainerId);
+        _ = await containerFiles.UploadAsync(
+            context.ContainerId,
+            PowerPointRendererFilename,
+            "text/x-python",
+            rendererBytes,
+            cancellationToken);
     }
 
     internal static bool IsExpiredContainerError(
@@ -1324,7 +1485,7 @@ When a tool creates a final file, tell the user that it is attached. Never expos
                 cancellationToken))
             {
                 if (!string.Equals(
-                        Path.GetFileName(file.Path),
+                        NormalizeContainerFilename(file.Path),
                         safeFilename,
                         StringComparison.Ordinal))
                 {
@@ -1341,6 +1502,20 @@ When a tool creates a final file, tell the user that it is attached. Never expos
         }
 
         return SelectFileForReturn(filename, context);
+    }
+
+    internal static string NormalizeContainerFilename(string path)
+    {
+        var filename = Path.GetFileName(path);
+        var separator = filename.IndexOf('-');
+        if (separator <= 0
+            || filename[..separator].Any(character =>
+                !Uri.IsHexDigit(character)))
+        {
+            return filename;
+        }
+
+        return filename[(separator + 1)..];
     }
 
     internal static string? NormalizeFirstName(string? displayName)

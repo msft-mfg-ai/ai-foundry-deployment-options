@@ -446,11 +446,46 @@ public class DirectHostedAgentTests
     }
 
     [Fact]
+    public async Task Deterministic_renderer_is_staged_only_when_requested()
+    {
+        var session = new TestAgentSession();
+        var context = new DirectHostedAgent.CodeExecutionContext(
+            CancellationToken.None,
+            "call-1",
+            "user-1",
+            null);
+        var files = new RecordingContainerFiles();
+
+        await DirectHostedAgent.EnsureContainerAsync(
+            session,
+            context,
+            files,
+            "pptx"u8.ToArray(),
+            CancellationToken.None,
+            stagePowerPointRenderer: true);
+
+        files.Uploads.Should().HaveCount(2);
+        files.Uploads[0].Filename.Should().Be("template.pptx");
+        files.Uploads[1].Filename.Should().Be("zava_renderer.py");
+        files.Uploads[1].MediaType.Should().Be("text/x-python");
+    }
+
+    [Fact]
     public void Uploaded_container_file_id_is_read_from_response()
         => DirectHostedAgent.GetUploadedContainerFileId(
                 BinaryData.FromString(
                     """{"id":"file-123","object":"container.file"}"""))
             .Should().Be("file-123");
+
+    [Theory]
+    [InlineData("/mnt/data/abc123-report.pptx", "report.pptx")]
+    [InlineData("/mnt/data/file-123-report.pptx", "file-123-report.pptx")]
+    [InlineData("/mnt/data/report.pptx", "report.pptx")]
+    public void Container_filename_prefix_is_normalized(
+        string path,
+        string expected)
+        => DirectHostedAgent.NormalizeContainerFilename(path)
+            .Should().Be(expected);
 
     [Fact]
     public void Uploaded_container_file_requires_an_id()

@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
 $agentName = if ($env:HOSTED_TEAMS_AGENT_NAME) { $env:HOSTED_TEAMS_AGENT_NAME } else { 'teams-hosted-agent' }
+$envPrefix = if ($env:HOSTED_TEAMS_ENV_PREFIX) { $env:HOSTED_TEAMS_ENV_PREFIX } else { 'HOSTED_TEAMS' }
 $runtimeTemplate = 'teams-hosted-runtime.bicep'
 
 $required = @(
@@ -25,10 +26,10 @@ $agentVersion = $agent.version
 $hostedIdentityClientId = $agent.instance_identity.client_id
 $agentPrincipalId = $agent.instance_identity.principal_id
 $blueprintClientId = $agent.blueprint.client_id
-$ssoAppId = $env:SSO_APP_ID
-$ssoAppSecret = $env:SSO_APP_SECRET
-$ssoAppResource = $env:SSO_APP_RESOURCE
-$ssoScopes = $env:SSO_SCOPES
+$ssoAppId = if ($env:HOSTED_TEAMS_BOT_APP_ID) { $env:HOSTED_TEAMS_BOT_APP_ID } else { $env:SSO_APP_ID }
+$ssoAppSecret = if ($env:HOSTED_TEAMS_BOT_APP_SECRET) { $env:HOSTED_TEAMS_BOT_APP_SECRET } else { $env:SSO_APP_SECRET }
+$ssoAppResource = if ($env:HOSTED_TEAMS_BOT_APP_RESOURCE) { $env:HOSTED_TEAMS_BOT_APP_RESOURCE } else { $env:SSO_APP_RESOURCE }
+$ssoScopes = if ($env:HOSTED_TEAMS_BOT_SCOPES) { $env:HOSTED_TEAMS_BOT_SCOPES } else { $env:SSO_SCOPES }
 if (-not $agentVersion -or -not $hostedIdentityClientId -or -not $agentPrincipalId -or -not $blueprintClientId) {
   throw "azd did not return version, instance identity, and blueprint metadata for $agentName."
 }
@@ -81,6 +82,23 @@ $gatewayCosmosAssignment = if ($gatewayCosmosAssignmentId) {
   ''
 }
 
+function Get-AgentMap([string]$Name) {
+  $encoded = az apim nv show `
+    --resource-group $env:AZURE_RESOURCE_GROUP `
+    --service-name $env:APIM_NAME `
+    --named-value-id $Name `
+    --query value `
+    --output tsv 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not $encoded) {
+    return '{}'
+  }
+  return [Text.Encoding]::UTF8.GetString(
+    [Convert]::FromBase64String($encoded))
+}
+
+$existingBotIdMap = Get-AgentMap 'teams-agent-bot-ids'
+$existingAgentVersionMap = Get-AgentMap 'teams-agent-versions'
+
 az deployment group create `
   --name "teams-hosted-runtime-$agentName-$agentVersion" `
   --resource-group $env:AZURE_RESOURCE_GROUP `
@@ -91,6 +109,8 @@ az deployment group create `
     foundryProjectEndpoint=$env:FOUNDRY_PROJECT_ENDPOINT `
     agentName=$agentName `
     agentVersion=$agentVersion `
+    existingBotIdMap=$existingBotIdMap `
+    existingAgentVersionMap=$existingAgentVersionMap `
     botAppId=$botAppId `
     botName=$botName `
     agentPrincipalId=$agentPrincipalId `
@@ -157,11 +177,11 @@ $appPackage = Join-Path $outputDir 'appPackage.zip'
 Remove-Item $appPackage -Force -ErrorAction SilentlyContinue
 Compress-Archive -Path (Join-Path $packageDir '*') -DestinationPath $appPackage
 
-azd env set HOSTED_TEAMS_BOT_NAME $botName
-azd env set HOSTED_TEAMS_BOT_APP_ID $botAppId
-azd env set HOSTED_TEAMS_MESSAGING_ENDPOINT $messagingEndpoint
-azd env set HOSTED_TEAMS_SESSION_ADMIN_ENDPOINT $sessionAdminEndpoint
-azd env set HOSTED_TEAMS_SESSION_ADMIN_SUBSCRIPTION $sessionAdminSubscription
+azd env set "${envPrefix}_BOT_NAME" $botName
+azd env set "${envPrefix}_BOT_APP_ID" $botAppId
+azd env set "${envPrefix}_MESSAGING_ENDPOINT" $messagingEndpoint
+azd env set "${envPrefix}_SESSION_ADMIN_ENDPOINT" $sessionAdminEndpoint
+azd env set "${envPrefix}_SESSION_ADMIN_SUBSCRIPTION" $sessionAdminSubscription
 
 Write-Host "Teams package: $outputDir/appPackage.zip"
 Write-Host "Messaging endpoint: $messagingEndpoint"

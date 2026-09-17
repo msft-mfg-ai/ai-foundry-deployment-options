@@ -22,11 +22,31 @@ public sealed class InvocationContextStore
     public void Add(
         JObject activity,
         HostedInvocationContext context)
-    {
-        var key = CreateKey(
+        => Add(
             activity["channelId"]?.Value<string>(),
             activity.SelectToken("conversation.id")?.Value<string>(),
-            activity["id"]?.Value<string>());
+            activity["id"]?.Value<string>(),
+            context);
+
+    public void Add(
+        IActivity activity,
+        HostedInvocationContext context)
+        => Add(
+            activity.ChannelId,
+            activity.Conversation?.Id,
+            activity.Id,
+            context);
+
+    private void Add(
+        string? channelId,
+        string? conversationId,
+        string? activityId,
+        HostedInvocationContext context)
+    {
+        var key = CreateKey(
+            channelId,
+            conversationId,
+            activityId);
         CleanupExpired();
         _entries[key] = new Entry(
             context,

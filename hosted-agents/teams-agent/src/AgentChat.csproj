@@ -37,5 +37,6 @@
   <ItemGroup>
     <InternalsVisibleTo Include="AgentChat.Tests" />
     <Content Include="../skills/powerpoint/assets/template.pptx" Link="assets/powerpoint-template.pptx" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../skills/powerpoint/renderer/src/zava_renderer/renderer.py" Link="assets/zava_renderer.py" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -15,6 +15,12 @@ param agentName string
 @description('Active hosted Teams gateway agent version.')
 param agentVersion string
 
+@description('Existing hosted-agent to Azure Bot application ID mappings.')
+param existingBotIdMap object = {}
+
+@description('Existing hosted-agent to active version mappings.')
+param existingAgentVersionMap object = {}
+
 @description('Hosted Teams gateway instance identity client ID used as the Azure Bot audience.')
 param botAppId string
 
@@ -83,12 +89,12 @@ var normalizedProjectEndpoint = endsWith(foundryProjectEndpoint, '/')
   #disable-next-line BCP329
   ? substring(foundryProjectEndpoint, 0, length(foundryProjectEndpoint) - 1)
   : foundryProjectEndpoint
-var botIdMap = {
+var botIdMap = union(existingBotIdMap, {
   '${agentName}': botAppId
-}
-var agentVersionMap = {
+})
+var agentVersionMap = union(existingAgentVersionMap, {
   '${agentName}': agentVersion
-}
+})
 var messagingEndpoint = '${apim.properties.gatewayUrl}/teams/${agentName}/api/messages'
 
 resource apim 'Microsoft.ApiManagement/service@2024-05-01' existing = {

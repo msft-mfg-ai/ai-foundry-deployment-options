@@ -92,6 +92,21 @@ public sealed class ActivityInvocationHandler(
         activity.Conversation ??= new ConversationAccount(id: $"invocation-{context.SessionId}");
         activity.From ??= new ChannelAccount("invocation-user", "Invocation user");
         activity.Recipient ??= new ChannelAccount("invocation-bot", "Invocation bot");
+        invocationContexts.Add(
+            activity,
+            new HostedInvocationContext(
+                context.ClientHeaders.GetValueOrDefault(
+                    "x-client-agent-name"),
+                context.ClientHeaders.GetValueOrDefault(
+                    "x-client-agent-version"),
+                context.SessionId,
+                context.InvocationId,
+                context.PlatformContext.UserIdKey
+                    ?? throw new InvalidOperationException(
+                        "Foundry did not provide a protocol user ID."),
+                context.PlatformContext.CallId
+                    ?? throw new InvalidOperationException(
+                        "Foundry did not provide a protocol call ID.")));
 
         var adapter = new RecordingChannelAdapter();
         var turnContext = new TurnContext(adapter, activity);

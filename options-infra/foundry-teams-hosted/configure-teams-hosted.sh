@@ -5,6 +5,7 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$script_dir"
 
 agent_name="${HOSTED_TEAMS_AGENT_NAME:-teams-hosted-agent}"
+env_prefix="${HOSTED_TEAMS_ENV_PREFIX:-HOSTED_TEAMS}"
 runtime_template="teams-hosted-runtime.bicep"
 
 require_env() {
@@ -32,10 +33,10 @@ agent_version=$(printf '%s' "$agent_json" | jq -r '.version // empty')
 hosted_identity_client_id=$(printf '%s' "$agent_json" | jq -r '.instance_identity.client_id // empty')
 agent_principal_id=$(printf '%s' "$agent_json" | jq -r '.instance_identity.principal_id // empty')
 blueprint_client_id=$(printf '%s' "$agent_json" | jq -r '.blueprint.client_id // empty')
-sso_app_id="${SSO_APP_ID:-}"
-sso_app_secret="${SSO_APP_SECRET:-}"
-sso_app_resource="${SSO_APP_RESOURCE:-}"
-sso_scopes="${SSO_SCOPES:-}"
+sso_app_id="${HOSTED_TEAMS_BOT_APP_ID:-${SSO_APP_ID:-}}"
+sso_app_secret="${HOSTED_TEAMS_BOT_APP_SECRET:-${SSO_APP_SECRET:-}}"
+sso_app_resource="${HOSTED_TEAMS_BOT_APP_RESOURCE:-${SSO_APP_RESOURCE:-}}"
+sso_scopes="${HOSTED_TEAMS_BOT_SCOPES:-${SSO_SCOPES:-}}"
 
 if [ -z "$agent_version" ] || [ -z "$hosted_identity_client_id" ] || [ -z "$agent_principal_id" ] || [ -z "$blueprint_client_id" ]; then
   echo "azd did not return version, instance identity, and blueprint metadata for $agent_name." >&2
@@ -82,6 +83,24 @@ gateway_cosmos_assignment_id=$(az cosmosdb sql role assignment list \
   --output tsv)
 gateway_cosmos_assignment="${gateway_cosmos_assignment_id##*/}"
 
+read_agent_map() {
+  name="$1"
+  encoded=$(az apim nv show \
+    --resource-group "$AZURE_RESOURCE_GROUP" \
+    --service-name "$APIM_NAME" \
+    --named-value-id "$name" \
+    --query value \
+    --output tsv 2>/dev/null) || encoded=""
+  if [ -z "$encoded" ]; then
+    printf '{}'
+    return
+  fi
+  printf '%s' "$encoded" | base64 --decode 2>/dev/null || printf '{}'
+}
+
+existing_bot_id_map=$(read_agent_map "teams-agent-bot-ids")
+existing_agent_version_map=$(read_agent_map "teams-agent-versions")
+
 az deployment group create \
   --name "teams-hosted-runtime-${agent_name}-${agent_version}" \
   --resource-group "$AZURE_RESOURCE_GROUP" \
@@ -92,6 +111,8 @@ az deployment group create \
     foundryProjectEndpoint="$FOUNDRY_PROJECT_ENDPOINT" \
     agentName="$agent_name" \
     agentVersion="$agent_version" \
+    existingBotIdMap="$existing_bot_id_map" \
+    existingAgentVersionMap="$existing_agent_version_map" \
     botAppId="$bot_app_id" \
     botName="$bot_name" \
     agentPrincipalId="$agent_principal_id" \
@@ -167,11 +188,11 @@ zip -q -j "${output_dir}/appPackage.zip" \
   "${package_dir}/color.png" \
   "${package_dir}/outline.png"
 
-azd env set HOSTED_TEAMS_BOT_NAME "$bot_name"
-azd env set HOSTED_TEAMS_BOT_APP_ID "$bot_app_id"
-azd env set HOSTED_TEAMS_MESSAGING_ENDPOINT "$messaging_endpoint"
-azd env set HOSTED_TEAMS_SESSION_ADMIN_ENDPOINT "$session_admin_endpoint"
-azd env set HOSTED_TEAMS_SESSION_ADMIN_SUBSCRIPTION "$session_admin_subscription"
+azd env set "${env_prefix}_BOT_NAME" "$bot_name"
+azd env set "${env_prefix}_BOT_APP_ID" "$bot_app_id"
+azd env set "${env_prefix}_MESSAGING_ENDPOINT" "$messaging_endpoint"
+azd env set "${env_prefix}_SESSION_ADMIN_ENDPOINT" "$session_admin_endpoint"
+azd env set "${env_prefix}_SESSION_ADMIN_SUBSCRIPTION" "$session_admin_subscription"
 
 echo "Teams package: ${output_dir}/appPackage.zip"
 echo "Messaging endpoint: ${messaging_endpoint}"
