@@ -33,6 +33,17 @@ param certPfxBase64 string = ''
 @description('Optional. Password protecting certPfxBase64.')
 param certPfxPassword string = ''
 
+@description('Optional. Custom domain bound to the sample MCP container app.')
+param mcpCustomDomain string = ''
+
+@secure()
+@description('Optional. Base64-encoded PFX (cert chain + key) bound to the MCP custom domain.')
+param mcpCertPfxBase64 string = ''
+
+@secure()
+@description('Optional. Password protecting mcpCertPfxBase64.')
+param mcpCertPfxPassword string = ''
+
 @description('Optional. When true, this module creates the Foundry ModelGateway connections (dynamic + optional static) pointing at the LiteLLM container app FQDN. Set to false when a downstream proxy (e.g. nginx in the cert variant) will create the connections instead.')
 param createFoundryConnections bool = true
 
@@ -52,6 +63,7 @@ resource userAssignedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@
 
 var litelllmasterkey = empty(liteLlmMasterKeyOverride) ? take(uniqueString(resourceToken, 'litellm'), 6) : liteLlmMasterKeyOverride
 var customDomainEnabled = !empty(customDomain)
+var mcpCustomDomainEnabled = !empty(mcpCustomDomain)
 var keyVaultSecrets = concat(
   useAzureManagedIdentity ? [] : [{ name: 'openaiapikey', value: openAiApiKey }],
   [{ name: 'litelllmasterkey', value: litelllmasterkey }]
@@ -59,6 +71,9 @@ var keyVaultSecrets = concat(
 
 var custom_domain_cert_valid = customDomainEnabled && (empty(certPfxBase64) || empty(certPfxPassword))
   ? fail('When customDomain is set, certPfxBase64 and certPfxPassword must both be provided.')
+  : true
+var mcp_custom_domain_cert_valid = mcpCustomDomainEnabled && (empty(mcpCertPfxBase64) || empty(mcpCertPfxPassword))
+  ? fail('When mcpCustomDomain is set, mcpCertPfxBase64 and mcpCertPfxPassword must both be provided.')
   : true
 
 module postgressDb '../db/postgress.bicep' = {
@@ -108,12 +123,32 @@ resource liteLlmCustomDomainCert 'Microsoft.App/managedEnvironments/certificates
   }
 }
 
+resource mcpCustomDomainCert 'Microsoft.App/managedEnvironments/certificates@2025-01-01' = if (mcpCustomDomainEnabled) {
+  parent: managedEnvExisting
+  name: 'mcp-${resourceToken}-cert'
+  location: location
+  properties: {
+    password: mcpCertPfxPassword
+    value: any(mcpCertPfxBase64)
+  }
+}
+
 var liteLlmCustomDomains = customDomainEnabled
   ? [
       {
         name: customDomain
         bindingType: 'SniEnabled'
         certificateId: liteLlmCustomDomainCert.id
+      }
+    ]
+  : []
+
+var mcpCustomDomains = mcpCustomDomainEnabled
+  ? [
+      {
+        name: mcpCustomDomain
+        bindingType: 'SniEnabled'
+        certificateId: mcpCustomDomainCert.id
       }
     ]
   : []
@@ -200,6 +235,7 @@ module appMcp '../aca/container-app.bicep' = {
         }
       }
     ]
+    customDomains: mcpCustomDomains
   }
 }
 
@@ -412,6 +448,7 @@ module liteLlmConnectionStatic '../ai/connection-modelgateway-static.bicep' = if
 }
 
 output liteLlmAcaFqdn string = liteLlmApp.outputs.CONTAINER_APP_FQDN
+output mcpAcaFqdn string = appMcp.outputs.CONTAINER_APP_FQDN
 output containerAppsEnvironmentId string = managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_ID
 output containerAppsEnvironmentDefaultDomain string = managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_DEFAULT_DOMAIN
 output containerAppsEnvironmentStaticIp string = managedEnvironment.outputs.CONTAINER_APPS_ENVIRONMENT_STATIC_IP
@@ -422,3 +459,4 @@ output containerAppsEnvironmentPrivateIp string = acaPrivateEndpoint.outputs.pri
 output containerAppsWorkloadProfileName string = managedEnvironment.outputs.CONTAINER_APPS_WORKLOAD_PROFILE_NAME
 output keyVaultName string = keyVault.outputs.KEY_VAULT_NAME
 output certConfigValid bool = custom_domain_cert_valid
+output mcpCertConfigValid bool = mcp_custom_domain_cert_valid

@@ -3,9 +3,9 @@
 //    private endpoints for AI Search, Azure Storage and Cosmos DB
 // 2. The AI Foundry itself
 // 3. Two AI Projects with the capability hosts - in Foundry Standard mode
-// 4. LiteLLM container app fronted by a self-signed cert on `liteLlmDomain`
-// 5. The self-signed root CA stored in Key Vault and registered in Foundry's
-//    trustedCertificates configuration so Foundry can call LiteLLM directly.
+// 4. LiteLLM and MCP container apps fronted by independently signed private certs
+// 5. Each public root CA stored in its own Key Vault secret and registered in
+//    Foundry's trustedCertificates configuration.
 targetScope = 'resourceGroup'
 
 @allowed([
@@ -30,6 +30,21 @@ param liteLlmCertPfxPassword string
 @description('Base64-encoded root CA certificate in PEM format. Stored as a Key Vault secret and registered in Foundry trustedCertificates.')
 param liteLlmRootCaPemBase64 string
 
+@description('Optional FQDN covered by the independently signed MCP leaf certificate.')
+param mcpDomain string = ''
+
+@secure()
+@description('Base64-encoded PFX (leaf cert + key + CA chain) for the MCP custom domain.')
+param mcpCertPfxBase64 string = ''
+
+@secure()
+@description('Password protecting the MCP PFX.')
+param mcpCertPfxPassword string = ''
+
+@secure()
+@description('Base64-encoded MCP root CA certificate in PEM format. Stored as a separate Key Vault secret because Foundry loads one PEM certificate per trustedCertificates entry.')
+param mcpRootCaPemBase64 string = ''
+
 param projectsCount int = 1
 
 var tags = {
@@ -48,10 +63,21 @@ var valid_config = empty(openAiApiBase) || empty(openAiResourceId)
 var valid_cert_config = !empty(liteLlmDomain) && (empty(liteLlmCertPfxBase64) || empty(liteLlmCertPfxPassword) || empty(liteLlmRootCaPemBase64))
   ? fail('LITELLM_DOMAIN is set but cert material is missing. Run the preprovision hook (scripts/preprovision-litellm-cert.sh) to generate it, or clear LITELLM_DOMAIN to deploy without the custom-domain binding.')
   : true
+var valid_mcp_cert_config = !empty(mcpDomain) && (empty(liteLlmDomain) || empty(mcpCertPfxBase64) || empty(mcpCertPfxPassword) || empty(mcpRootCaPemBase64))
+  ? fail('MCP_DOMAIN requires LITELLM_DOMAIN and MCP certificate material, including MCP_ROOT_CA_PEM_BASE64. Run the preprovision hook to generate them.')
+  : true
 
 var resourceToken = toLower(uniqueString(resourceGroup().id, location))
 var phase2 = !empty(liteLlmDomain)
-var trustedCaSecretName = 'litellm-root-ca-pem'
+var mcpCustomDomainEnabled = !empty(mcpDomain)
+var liteLlmTrustedCaSecretName = 'litellm-root-ca-pem'
+var mcpTrustedCaSecretName = 'mcp-root-ca-pem'
+var trustedCaSecretNames = concat(
+  [
+    liteLlmTrustedCaSecretName
+  ],
+  mcpCustomDomainEnabled ? [mcpTrustedCaSecretName] : []
+)
 // Same formula as modules/litellm/lite-llm.bicep when no override is passed —
 // computing here lets us share the key with the direct Foundry
 // connections without taking it through a non-secure module output.
@@ -153,13 +179,24 @@ module keyVault '../modules/kv/key-vault.bicep' = {
     logAnalyticsWorkspaceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
     doRoleAssignments: true
     secrets: phase2
-      ? [
-          {
-            name: trustedCaSecretName
-            value: base64ToString(liteLlmRootCaPemBase64)
-            contentType: 'application/x-pem-file'
-          }
-        ]
+      ? concat(
+          [
+            {
+              name: liteLlmTrustedCaSecretName
+              value: base64ToString(liteLlmRootCaPemBase64)
+              contentType: 'application/x-pem-file'
+            }
+          ],
+          mcpCustomDomainEnabled
+            ? [
+                {
+                  name: mcpTrustedCaSecretName
+                  value: base64ToString(mcpRootCaPemBase64)
+                  contentType: 'application/x-pem-file'
+                }
+              ]
+            : []
+        )
       : []
     publicAccessEnabled: false
     privateEndpointSubnetId: vnet.outputs.VIRTUAL_NETWORK_SUBNETS.peSubnet.resourceId
@@ -183,9 +220,9 @@ module foundry '../modules/ai/ai-foundry.bicep' = if (phase2) {
       {
         keyVaultId: keyVault.outputs.KEY_VAULT_RESOURCE_ID
         certificates: [
-          {
-            name: trustedCaSecretName
-            version: last(split(keyVault.outputs.KEY_VAULT_SECRETS_URIS_WITH_VERSION[0], '/'))
+          for (secretName, index) in trustedCaSecretNames: {
+            name: secretName
+            version: last(split(keyVault.outputs.KEY_VAULT_SECRETS_URIS_WITH_VERSION[index], '/'))
           }
         ]
       }
@@ -331,6 +368,9 @@ module liteLlm '../modules/litellm/lite-llm.bicep' = {
     customDomain: liteLlmDomain
     certPfxBase64: liteLlmCertPfxBase64
     certPfxPassword: liteLlmCertPfxPassword
+    mcpCustomDomain: mcpDomain
+    mcpCertPfxBase64: mcpCertPfxBase64
+    mcpCertPfxPassword: mcpCertPfxPassword
     // Connections are created below after Foundry has registered the root CA.
     createFoundryConnections: false
     // Share the master key with the direct connections without
@@ -413,6 +453,57 @@ module liteLlmDomainPrivateDnsZone 'br/public:avm/res/network/private-dns-zone:0
       }
     ]
   }
+}
+
+module mcpDomainPrivateDnsZone 'br/public:avm/res/network/private-dns-zone:0.8.1' = if (mcpCustomDomainEnabled) {
+  name: 'mcp-domain-private-dns-${resourceToken}'
+  params: {
+    tags: tags
+    name: mcpDomain
+    location: 'global'
+    virtualNetworkLinks: [
+      {
+        virtualNetworkResourceId: vnet.outputs.VIRTUAL_NETWORK_RESOURCE_ID
+        registrationEnabled: false
+      }
+    ]
+    a: [
+      {
+        name: '@'
+        ttl: 300
+        aRecords: [
+          {
+            ipv4Address: liteLlm.outputs.containerAppsEnvironmentPrivateIp
+          }
+        ]
+      }
+    ]
+  }
+}
+
+resource foundryExistingForMcp 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' existing = {
+  name: 'ai-foundry-${resourceToken}'
+}
+
+resource mcpToolConnection 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-preview' = if (mcpCustomDomainEnabled) {
+  parent: foundryExistingForMcp
+  name: 'MCP-private-ca-${resourceToken}'
+  properties: {
+    category: 'RemoteTool'
+    group: 'GenericProtocol'
+    target: 'https://${mcpDomain}/mcp/'
+    authType: 'None'
+    isSharedToAll: true
+    metadata: {
+      type: 'custom_MCP'
+    }
+  }
+  dependsOn: [
+    foundry
+    foundryKeyVaultSecretsUser
+    liteLlm
+    mcpDomainPrivateDnsZone
+  ]
 }
 
 // Foundry ModelGateway connections target the LiteLLM custom domain directly.
@@ -505,27 +596,27 @@ module models_policy_assignment '../modules/policy/models-policy-assignment.bice
   }
 }
 
-output FOUNDRY_PROJECTS_CONNECTION_STRINGS string[] = phase2
-  ? [
-      projects[0].outputs.FOUNDRY_PROJECT_CONNECTION_STRING
-      projects[1].outputs.FOUNDRY_PROJECT_CONNECTION_STRING
-    ]
-  : []
-output FOUNDRY_PROJECT_NAMES string[] = phase2
-  ? [
-      projects[0].outputs.FOUNDRY_PROJECT_NAME
-      projects[1].outputs.FOUNDRY_PROJECT_NAME
-    ]
-  : []
+output FOUNDRY_PROJECTS_CONNECTION_STRINGS string[] = [
+  for i in range(0, phase2 ? projectsCount : 0): projects[i].outputs.FOUNDRY_PROJECT_CONNECTION_STRING
+]
+output FOUNDRY_PROJECT_NAMES string[] = [
+  for i in range(0, phase2 ? projectsCount : 0): projects[i].outputs.FOUNDRY_PROJECT_NAME
+]
 output CONFIG_VALIDATION_RESULT bool = valid_config
 output CERT_CONFIG_VALIDATION_RESULT bool = valid_cert_config
+output MCP_CERT_CONFIG_VALIDATION_RESULT bool = valid_mcp_cert_config
 
 output LITELLM_SWAGGER_URL string = 'http://${publicIpAddress.outputs.ipAddress}'
 output LITELLM_UI_URL string = 'http://${publicIpAddress.outputs.ipAddress}/ui/login/'
 output LITELLM_DOMAIN string = liteLlmDomain
 output LITELLM_FOUNDRY_TARGET_URL string = phase2 ? 'https://${liteLlmDomain}' : ''
 output LITELLM_INTERNAL_FQDN string = liteLlm.outputs.liteLlmAcaFqdn
+output MCP_DOMAIN string = mcpDomain
+output MCP_TOOL_URL string = mcpCustomDomainEnabled ? 'https://${mcpDomain}/mcp/' : ''
+output MCP_INTERNAL_FQDN string = liteLlm.outputs.mcpAcaFqdn
 output LITELLM_KEY string = liteLlmMasterKey
 output PHASE string = phase2
-  ? 'phase-2 (custom domain bound and Foundry private CA trust configured)'
+  ? (mcpCustomDomainEnabled
+      ? 'phase-2 (LiteLLM and MCP custom domains bound; separate Foundry private CA trust entries configured)'
+      : 'phase-2 (LiteLLM custom domain bound and Foundry private CA trust configured)')
   : 'phase-1 (LiteLLM bootstrap only — configure DNS, set LITELLM_DOMAIN, and rerun azd provision)'
