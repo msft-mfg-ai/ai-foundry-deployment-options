@@ -54,6 +54,16 @@ Available named layouts:
 ## Selection rules
 
 - Choose a layout from the content shape and item count, not from the topic.
+- A `cover` slide must use one of the four `Title` layouts.
+- A `section_divider` may use a `Section Header` layout, but those layouts
+  must never be used for substantive content, visual summaries, charts,
+  comparisons, recommendations, or conclusions.
+- An `agenda` slide must use an `Agenda` layout.
+- Substantive content must use a `Content`, `Content Photo`, `Two Content`,
+  `Comparison`, `Number Large`, `Statement`, `Quote`, or `Conclusion` layout
+  as appropriate.
+- A `conclusion` slide must use a `Conclusion` layout unless a one-sentence
+  closing statement clearly fits `Statement`.
 - Use a photo layout only when the image advances the slide's argument.
 - Use `Comparison (Original)` only for two options with comparable attributes.
 - Use `Number Large` variants for one dominant sourced metric, not several
@@ -92,5 +102,9 @@ brand colors, margins, footer style, and spacing rhythm.
 - Do not repeat the same named layout on consecutive slides.
 - Reject a named layout when the content exceeds the capacity defined in
   `deck-spec.md`; do not force extra content into smaller text.
+- After rendering, confirm every title is fully visible with at least
+  0.5 inches of slide-edge clearance. If a title is clipped, touches an edge,
+  or overwhelms a section-style placeholder, shorten it or switch to a
+  content layout and render again.
 - Remove unused shapes and placeholders rather than clearing only their text.
 - Keep citations in a `Source List` slide and put direct resources in `Link Appendix`.

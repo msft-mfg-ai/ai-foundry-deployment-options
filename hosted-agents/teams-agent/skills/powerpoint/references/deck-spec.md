@@ -104,7 +104,13 @@ composition, or split the slide. Never reduce body text below 14 pt.
 ## Compilation rules
 
 1. Validate required fields and allowed values before creating slides.
-2. Map each composition to a named template layout when one exists.
+2. Map each composition to a named template layout when one exists. Enforce
+   these role boundaries:
+   - `cover` uses only a `Title` layout;
+   - `section_divider` uses only a `Section Header` layout;
+   - `agenda` uses only an `Agenda` layout;
+   - substantive roles never use `Section Header` layouts;
+   - `conclusion` uses a `Conclusion` layout or, for one sentence, `Statement`.
 3. Use a custom composition only when the named layouts cannot express the
    specification without weakening the story.
 4. Keep slide IDs stable through repair iterations.

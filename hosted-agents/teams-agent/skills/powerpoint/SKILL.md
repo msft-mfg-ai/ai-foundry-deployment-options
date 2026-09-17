@@ -90,6 +90,11 @@ from scratch unless the user asks for a redesign.
   repeat the same layout on consecutive slides unless repetition is the point.
 - Use layouts because their slot count and geometry match the content, not
   because their names sound related.
+- Treat layout families as constraints: `Title` is for covers, `Section
+  Header` is only for transitions, `Agenda` is only for agendas, and
+  substantive slides must use content, photo, comparison, metric, statement,
+  quote, or conclusion layouts. Never place a visual-summary composition on a
+  section-divider layout.
 - Prefer four strong items over six weak ones. Remove unused shapes and
   placeholders instead of leaving empty boxes.
 - Use charts only for sourced data. Label illustrative or hypothetical values
@@ -158,6 +163,7 @@ from scratch unless the user asks for a redesign.
 - Inspect full-resolution slide images, not only a thumbnail contact sheet.
 - Assume the first render contains problems. Check for:
   - clipped or wrapped titles;
+  - titles positioned like section dividers on substantive content slides;
   - text overflow and fonts below the minimum size;
   - poor contrast;
   - distorted or awkwardly cropped images;
