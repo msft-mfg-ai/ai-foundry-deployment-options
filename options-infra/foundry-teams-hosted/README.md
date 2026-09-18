@@ -576,13 +576,19 @@ The generated Teams packages are:
 - `teams-app/build/teams-hosted-agent/appPackage.zip`
 - `teams-app/build/teams-pptx-renderer-agent/appPackage.zip`
 
-The PowerPoint package intentionally preserves the general-purpose package's
-Teams app ID while changing `bots[0].botId` and `webApplicationInfo` to the
-PowerPoint canary's app registration. Its manifest version is incremented so it
-can be uploaded as an update to the existing Teams app rather than installed as
-a second app.
-
 Generated packages and staged hosted-agent sources are ignored by git.
+
+To repoint an existing Teams app without creating a second app, keep its
+existing Bot application ID and update that Bot registration's messaging
+endpoint to the PowerPoint agent route. Set
+`PPTX_RENDERER_ROUTE_BOT_APP_ID` to the existing Bot application ID before
+deploying so APIM validates the existing Bot Framework JWT audience:
+
+```bash
+azd env set PPTX_RENDERER_ROUTE_BOT_APP_ID "<existing-bot-application-id>"
+teams app update "<existing-teams-app-id>" \
+  --endpoint "$(azd env get-value PPTX_RENDERER_TEAMS_MESSAGING_ENDPOINT)"
+```
 
 The agent calls the local `return_file` tool to select completed user-facing
 deliverables. Code Interpreter may create draft decks, renders, source images,

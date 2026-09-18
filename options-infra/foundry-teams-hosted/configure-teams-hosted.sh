@@ -60,8 +60,7 @@ agent_identity_sso_resource="api://${blueprint_client_id}"
 agent_identity_sso_scopes="${agent_identity_sso_resource}/access_as_user offline_access"
 
 bot_app_id="$sso_app_id"
-teams_app_id="${TEAMS_APP_ID:-$bot_app_id}"
-teams_app_version="${TEAMS_APP_VERSION:-}"
+route_bot_app_id="${HOSTED_TEAMS_ROUTE_BOT_APP_ID:-$bot_app_id}"
 bot_identity_suffix=$(printf '%s' "$bot_app_id" | tr -d '-' | cut -c1-8)
 bot_name="${agent_name}-bot-${bot_identity_suffix}"
 messaging_endpoint="${APIM_GATEWAY_URL%/}/teams/${agent_name}/api/messages"
@@ -116,6 +115,7 @@ az deployment group create \
     existingBotIdMap="$existing_bot_id_map" \
     existingAgentVersionMap="$existing_agent_version_map" \
     botAppId="$bot_app_id" \
+    routeBotAppId="$route_bot_app_id" \
     botName="$bot_name" \
     agentPrincipalId="$agent_principal_id" \
     cosmosAccountName="$COSMOS_ACCOUNT_NAME" \
@@ -160,13 +160,10 @@ mkdir -p "$package_dir"
 if [ -n "$sso_app_id" ] && [ -n "$sso_resource" ]; then
   jq \
     --arg app_id "$bot_app_id" \
-    --arg teams_app_id "$teams_app_id" \
-    --arg teams_app_version "$teams_app_version" \
     --arg display_name "$display_name" \
     --arg sso_app_id "$sso_app_id" \
     --arg sso_resource "$sso_resource" \
-    '.id = $teams_app_id
-     | if $teams_app_version != "" then .version = $teams_app_version else . end
+    '.id = $app_id
      | .name.short = $display_name
      | .name.full = $display_name
      | .bots[0].botId = $app_id
@@ -178,11 +175,8 @@ if [ -n "$sso_app_id" ] && [ -n "$sso_resource" ]; then
 else
   jq \
     --arg app_id "$bot_app_id" \
-    --arg teams_app_id "$teams_app_id" \
-    --arg teams_app_version "$teams_app_version" \
     --arg display_name "$display_name" \
-    '.id = $teams_app_id
-     | if $teams_app_version != "" then .version = $teams_app_version else . end
+    '.id = $app_id
      | .name.short = $display_name
      | .name.full = $display_name
      | .bots[0].botId = $app_id' \

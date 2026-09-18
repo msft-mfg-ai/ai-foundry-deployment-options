@@ -24,6 +24,9 @@ param existingAgentVersionMap object = {}
 @description('Hosted Teams gateway instance identity client ID used as the Azure Bot audience.')
 param botAppId string
 
+@description('Existing Bot application ID accepted for this APIM route. Defaults to botAppId.')
+param routeBotAppId string = ''
+
 @description('Azure Bot resource name.')
 param botName string
 
@@ -90,7 +93,7 @@ var normalizedProjectEndpoint = endsWith(foundryProjectEndpoint, '/')
   ? substring(foundryProjectEndpoint, 0, length(foundryProjectEndpoint) - 1)
   : foundryProjectEndpoint
 var botIdMap = union(existingBotIdMap, {
-  '${agentName}': botAppId
+  '${agentName}': empty(routeBotAppId) ? botAppId : routeBotAppId
 })
 var agentVersionMap = union(existingAgentVersionMap, {
   '${agentName}': agentVersion
