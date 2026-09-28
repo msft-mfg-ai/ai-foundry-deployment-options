@@ -8,7 +8,7 @@ This project implements the unified **APIM AI Gateway** for Azure AI Foundry. It
 - **Access contract enforcement**: Each caller has a blob-backed contract defining TPM, monthly token quota, priority, and allowed models. Contracts are wired through `caller-identity-fragment.bicep`'s `contractsBlobUrl` parameter.
 - **2-tier priority routing**: When `priorityRouting=true` (the default for this sample), `priority == 1` callers route to `{model}-ptu-pool` (PTU pri 1 + PAYG fallback); other priorities route to the default `{model}-pool` (PAYG only). When `priorityRouting=false`, both kinds of backends share a single `{model}-pool` (PTU at pri 200 as overflow).
 - **PTU + PAYG spillover**: PTU backends are priority 1, in-region PAYG priority 50, out-of-region PAYG priority 100. Circuit breakers isolate failover per `(instance, model, location)` backend.
-- **Portal dashboard**: `dashboard/dashboard.bicep` visualizes caller token usage, quota consumption, rate limits, failover counts, and remaining quota from APIM diagnostic headers.
+- **Portal dashboard**: `dashboard/dashboard.bicep` visualizes selected-range token usage, throttling, errors, routing, and failover activity. Monthly quota limits and burn-down reporting belong in `dashboard/monthly-workbook.bicep`.
 
 ## Directory Structure
 
