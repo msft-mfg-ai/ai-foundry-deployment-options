@@ -1,5 +1,7 @@
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using AgentChat.Bots;
 using Azure.AI.AgentServer.Core;
 using Azure.AI.Projects;
@@ -15,13 +17,16 @@ using OpenAI.Responses;
 using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Collections.Concurrent;
+using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Reflection;
+using System.Xml.Linq;
 
 namespace AgentChat.Services;
 
 public sealed class DirectHostedAgent : IAsyncDisposable
 {
+    private const int AgentSessionFormatVersion = 2;
     private const string FoundryScope = "https://ai.azure.com/.default";
     private const int MaxGeneratedFilesPerRun = 5;
     private const int MaxGeneratedFileBytes = 20 * 1024 * 1024;
@@ -31,6 +36,8 @@ public sealed class DirectHostedAgent : IAsyncDisposable
     private const string CodeInterpreterOwnerStateKey =
         "agentchat.code-interpreter.user-id";
     private static readonly AsyncLocal<string?> OutboundFoundryCallId = new();
+    internal static JsonSerializerOptions ImageToolSerializerOptions { get; } =
+        CreateImageToolSerializerOptions();
     private static readonly PropertyInfo HostedCallIdProperty =
         typeof(HostedSessionContext).Assembly
             .GetType(
@@ -51,6 +58,7 @@ public sealed class DirectHostedAgent : IAsyncDisposable
     private readonly TeamsSsoToolContext _teamsSsoToolContext;
     private readonly AgentIdentityOboService _agentIdentityObo;
     private readonly AgentIdentityToolContext _agentIdentityToolContext;
+    private readonly ImageGenerationClient _imageGeneration;
     private readonly SemaphoreSlim _initializationLock = new(1, 1);
     private readonly ConcurrentDictionary<AgentSession, CodeExecutionContext> _codeExecutions =
         new(ReferenceEqualityComparer.Instance);
@@ -63,7 +71,8 @@ public sealed class DirectHostedAgent : IAsyncDisposable
         TokenCredential credential,
         TeamsSsoToolContext teamsSsoToolContext,
         AgentIdentityOboService agentIdentityObo,
-        AgentIdentityToolContext agentIdentityToolContext)
+        AgentIdentityToolContext agentIdentityToolContext,
+        ImageGenerationClient imageGeneration)
     {
         _configuration = configuration;
         _loggerFactory = loggerFactory;
@@ -72,6 +81,7 @@ public sealed class DirectHostedAgent : IAsyncDisposable
         _teamsSsoToolContext = teamsSsoToolContext;
         _agentIdentityObo = agentIdentityObo;
         _agentIdentityToolContext = agentIdentityToolContext;
+        _imageGeneration = imageGeneration;
     }
 
     public bool Enabled => _configuration.GetValue("DirectAgent:Enabled", false);
@@ -89,6 +99,17 @@ public sealed class DirectHostedAgent : IAsyncDisposable
         try
         {
             generation = await GetGenerationAsync(cancellationToken);
+            if (state.DirectAgentSessionVersion != AgentSessionFormatVersion)
+            {
+                if (!string.IsNullOrWhiteSpace(state.DirectAgentSession))
+                {
+                    _logger.LogInformation(
+                        "Starting a new Agent Framework session because the persisted session format changed from version {PreviousVersion} to {CurrentVersion}.",
+                        state.DirectAgentSessionVersion,
+                        AgentSessionFormatVersion);
+                }
+                state.DirectAgentSession = null;
+            }
             session = await RestoreSessionAsync(
                 generation.Agent,
                 state.DirectAgentSession,
@@ -116,7 +137,6 @@ public sealed class DirectHostedAgent : IAsyncDisposable
             throw new InvalidOperationException(
                 "Code Interpreter state already exists for this agent session.");
         }
-
         try
         {
             Exception? streamFailure = null;
@@ -178,6 +198,16 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                 var key = $"{file.ContainerId}/{file.FileId}";
                 containerFiles.TryAdd(key, file);
             }
+            if (codeExecution.SelectedFileIds.Count > 0)
+            {
+                containerFiles = SelectFilesForReturn(
+                        containerFiles.Values,
+                        codeExecution.SelectedFileIds)
+                    .ToDictionary(
+                        file => $"{file.ContainerId}/{file.FileId}",
+                        file => file,
+                        StringComparer.Ordinal);
+            }
 
             if (containerFiles.Count > MaxGeneratedFilesPerRun)
             {
@@ -206,6 +236,7 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                 session,
                 cancellationToken: cancellationToken);
             state.DirectAgentSession = serialized.GetRawText();
+            state.DirectAgentSessionVersion = AgentSessionFormatVersion;
         }
         finally
         {
@@ -391,8 +422,17 @@ public sealed class DirectHostedAgent : IAsyncDisposable
             var projectEndpoint = Required("Foundry:ProjectEndpoint").TrimEnd('/');
             var model = Required("DirectAgent:Model");
             var toolboxName = Required("DirectAgent:ToolboxName");
-            var instructions = _configuration["DirectAgent:Instructions"]
-                ?? "You are a concise Microsoft Teams assistant. Use the configured Toolbox when it can improve the answer.";
+            var instructions =
+                (_configuration["DirectAgent:Instructions"]
+                    ?? "You are a concise Microsoft Teams assistant. Use the configured Toolbox when it can improve the answer.")
+                + """
+
+For multi-step work, create and maintain a concise todo plan. Start executing immediately unless the user explicitly asks to review or approve the plan first. Keep the user informed through tool progress, but do not expose hidden reasoning, raw tool arguments, or raw tool results.
+
+When creating files, distinguish final deliverables from working artifacts. Create exactly one final user-facing file for each requested deliverable unless the user asks for alternatives. Reuse and overwrite the same final filename during revision instead of creating draft and final copies. Supporting assets used inside a presentation are not separate deliverables unless the user requests them.
+
+When a tool creates a final file, tell the user that it is attached. Never expose internal container paths such as /mnt/data, container IDs, file IDs, base64 data, or temporary download URLs.
+""";
 
             var toolboxEndpoint = _configuration["DirectAgent:ToolboxEndpoint"];
             if (string.IsNullOrWhiteSpace(toolboxEndpoint))
@@ -446,7 +486,7 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                     new AIFunctionFactoryOptions
                     {
                         Name = "code",
-                        Description = "Execute Python in a user-isolated Code Interpreter container. The PowerPoint template is available at /mnt/data/template.pptx. Files saved under /mnt/data are returned to the user.",
+                        Description = "Execute Python in a user-isolated Code Interpreter container. The Zava corporate PowerPoint template is available at /mnt/data/template.pptx. Files saved under /mnt/data are working artifacts; call return_file after validating each intentional user-facing deliverable.",
                     });
                 var teamsSsoTool = AIFunctionFactory.Create(
                     (CancellationToken toolCancellationToken) =>
@@ -457,11 +497,69 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                         Name = "inspect_teams_sso_token",
                         Description = "Trigger Microsoft Teams silent SSO and inspect a safe allowlist of claims from the resulting user token. The raw token is never returned.",
                     });
+                var returnFileTool = AIFunctionFactory.Create(
+                    (
+                        string filename,
+                        CancellationToken toolCancellationToken) =>
+                        SelectFileForReturnAsync(
+                            filename,
+                            containerClient,
+                            toolCancellationToken),
+                    new AIFunctionFactoryOptions
+                    {
+                        Name = "return_file",
+                        Description = "Select a generated file as an intentional user-facing deliverable. Call this only after the file is complete and validated. Working files and supporting assets are not returned unless selected.",
+                    });
                 var localTools = new List<AITool>
                 {
                     codeTool,
                     teamsSsoTool,
+                    returnFileTool,
                 };
+                if (ShouldRegisterImageTool(_imageGeneration))
+                {
+                    localTools.Add(
+                        _imageGeneration.SupportsQuality
+                            ? AIFunctionFactory.Create(
+                                (
+                                    string prompt,
+                                    string? filename,
+                                    ImageAspectRatio aspect_ratio,
+                                    ImageQuality quality) =>
+                                    GenerateImageAsync(
+                                        prompt,
+                                        filename,
+                                        _imageGeneration.GetSize(aspect_ratio),
+                                        ImageGenerationClient.GetQuality(quality),
+                                        containerClient,
+                                        templateBytes),
+                                new AIFunctionFactoryOptions
+                                {
+                                    Name = "generate_image",
+                                    Description = "Generate one original image through the AI Gateway and upload it into the current user's Code Interpreter container. Choose aspect_ratio from square, landscape, or portrait and quality from low, medium, or high. Returns an exact /mnt/data path; never returns base64.",
+                                    SerializerOptions =
+                                        ImageToolSerializerOptions,
+                                })
+                            : AIFunctionFactory.Create(
+                                (
+                                    string prompt,
+                                    string? filename,
+                                    ImageAspectRatio aspect_ratio) =>
+                                    GenerateImageAsync(
+                                        prompt,
+                                        filename,
+                                        _imageGeneration.GetSize(aspect_ratio),
+                                        quality: null,
+                                        containerClient,
+                                        templateBytes),
+                                new AIFunctionFactoryOptions
+                                {
+                                    Name = "generate_image",
+                                    Description = "Generate one original image through the MAI Image API on the AI Gateway and upload it into the current user's Code Interpreter container. Choose aspect_ratio from square, landscape, or portrait. Returns an exact /mnt/data path; never returns base64.",
+                                    SerializerOptions =
+                                        ImageToolSerializerOptions,
+                                }));
+                }
                 if (_agentIdentityObo.Enabled)
                 {
                     localTools.Add(
@@ -500,11 +598,22 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                     .Concat(localTools)
                     .ToArray();
 
-                agent = projectClient.AsAIAgent(
-                    new ChatClientAgentOptions
+                agent = responsesClient
+                    .AsIChatClient(model)
+                    .AsHarnessAgent(
+                    new HarnessAgentOptions
                     {
                         Name = _configuration["DirectAgent:Name"] ?? "teams-hosted-agent",
                         Description = "Microsoft Teams hosted agent with direct Foundry inference, Toolbox tools, and Toolbox skills.",
+                        DisableFileMemory = true,
+                        DisableWebSearch = true,
+                        DisableAgentSkillsProvider = true,
+                        DisableToolAutoApproval = true,
+                        DisableOpenTelemetry = true,
+                        AgentModeProviderOptions = new AgentModeProviderOptions
+                        {
+                            DefaultMode = "execute",
+                        },
                         ChatOptions = new ChatOptions
                         {
                             ModelId = model,
@@ -555,6 +664,10 @@ public sealed class DirectHostedAgent : IAsyncDisposable
         }
     }
 
+    internal static bool ShouldRegisterImageTool(
+        ImageGenerationClient imageGeneration) =>
+        imageGeneration.Enabled;
+
     private async Task<string> ExecuteCodeAsync(
         string code,
         string model,
@@ -569,7 +682,6 @@ public sealed class DirectHostedAgent : IAsyncDisposable
             {
                 throw new ArgumentException("Code must not be empty.", nameof(code));
             }
-
             stage = "resolve-run-context";
             var runContext = AIAgent.CurrentRunContext;
             if (runContext?.Session is null
@@ -595,39 +707,13 @@ public sealed class DirectHostedAgent : IAsyncDisposable
             OutboundFoundryCallId.Value = context.CallId;
             try
             {
-                if (context.ContainerId is null)
-                {
-                    stage = "create-container";
-                    var container = await containerClient.CreateContainerAsync(
-                        new CreateContainerBody("teams-hosted-agent"),
-                        cancellationToken);
-                    context.ContainerId = container.Value.Id;
-
-                    stage = "upload-template";
-                    using var multipart = new MultipartFormDataContent();
-                    using var fileContent = new ByteArrayContent(templateBytes);
-                    fileContent.Headers.ContentType = new MediaTypeHeaderValue(
-                        "application/vnd.openxmlformats-officedocument.presentationml.presentation");
-                    multipart.Add(
-                        fileContent,
-                        "file",
-                        PowerPointTemplateFilename);
-                    var uploadBody = await multipart.ReadAsByteArrayAsync(
-                        cancellationToken);
-                    var options = new RequestOptions
-                    {
-                        CancellationToken = cancellationToken,
-                    };
-                    await containerClient.CreateContainerFileAsync(
-                        context.ContainerId,
-                        BinaryContent.Create(BinaryData.FromBytes(uploadBody)),
-                        multipart.Headers.ContentType!.ToString(),
-                        options);
-                    PersistContainerId(
-                        runContext.Session,
-                        context.UserId,
-                        context.ContainerId);
-                }
+                stage = "ensure-container";
+                await EnsureContainerAsync(
+                    runContext.Session,
+                    context,
+                    new ContainerFileOperations(containerClient),
+                    templateBytes,
+                    cancellationToken);
 
                 var executableCode = $$"""
                     from pathlib import Path
@@ -649,40 +735,71 @@ public sealed class DirectHostedAgent : IAsyncDisposable
 
                     {{code}}
                     """;
-                var responseOptions = new CreateResponseOptions(
-                    model,
-                    [ResponseItem.CreateUserMessageItem(executableCode)])
+                CreateResponseOptions CreateCodeResponseOptions(
+                    string containerId)
                 {
-                    Instructions =
-                        "Execute the supplied Python code exactly with Code Interpreter. Do not rewrite, summarize, or omit it. Return concise execution output and any error details.",
-                    ToolChoice = ResponseToolChoice.CreateRequiredChoice(),
-                    ParallelToolCallsEnabled = false,
-                };
-                responseOptions.Tools.Add(
-                    ResponseTool.CreateCodeInterpreterTool(
-                        new CodeInterpreterToolContainer(context.ContainerId)));
+                    var options = new CreateResponseOptions(
+                        model,
+                        [ResponseItem.CreateUserMessageItem(executableCode)])
+                    {
+                        Instructions =
+                            "Execute the supplied Python code exactly with Code Interpreter. Do not rewrite, summarize, or omit it. Return concise execution output and any error details.",
+                        ToolChoice = ResponseToolChoice.CreateRequiredChoice(),
+                        ParallelToolCallsEnabled = false,
+                    };
+                    options.Tools.Add(
+                        ResponseTool.CreateCodeInterpreterTool(
+                            new CodeInterpreterToolContainer(containerId)));
+                    return options;
+                }
 
                 stage = "execute-response";
                 ClientResult<ResponseResult> response;
                 try
                 {
                     response = await responsesClient.CreateResponseAsync(
-                        responseOptions,
+                        CreateCodeResponseOptions(context.ContainerId!),
                         cancellationToken);
                 }
                 catch (ClientResultException ex)
-                    when (reusedPersistedContainer && ex.Status == 404)
+                    when (reusedPersistedContainer
+                        && IsExpiredContainerError(ex.Status, ex.Message))
                 {
+                    _logger.LogWarning(
+                        "The persisted Code Interpreter container expired; creating a replacement and replaying the code tool once.");
                     ClearPersistedContainerId(runContext.Session);
-                    throw new InvalidOperationException(
-                        "The Code Interpreter working session expired. Its previous files are no longer available; start a new presentation before continuing.",
-                        ex);
+                    context.ContainerId = null;
+                    stage = "replace-expired-container";
+                    await EnsureContainerAsync(
+                        runContext.Session,
+                        context,
+                        new ContainerFileOperations(containerClient),
+                        templateBytes,
+                        cancellationToken);
+                    stage = "replay-response";
+                    try
+                    {
+                        response = await responsesClient.CreateResponseAsync(
+                            CreateCodeResponseOptions(context.ContainerId!),
+                            cancellationToken);
+                    }
+                    catch (ClientResultException replayException)
+                        when (IsExpiredContainerError(
+                            replayException.Status,
+                            replayException.Message))
+                    {
+                        ClearPersistedContainerId(runContext.Session);
+                        context.ContainerId = null;
+                        throw new InvalidOperationException(
+                            "The replacement Code Interpreter container also expired. Retry the request later.",
+                            replayException);
+                    }
                 }
                 stage = "collect-files";
                 CollectGeneratedResponseFiles(
                     response.Value,
                     context,
-                    context.ContainerId);
+                    context.ContainerId!);
                 await PromoteGeneratedFilesAsync(
                     containerClient,
                     context,
@@ -704,6 +821,159 @@ public sealed class DirectHostedAgent : IAsyncDisposable
             throw;
         }
     }
+
+    private async Task<StagedImageResult> GenerateImageAsync(
+        string prompt,
+        string? filename,
+        string? size,
+        string? quality,
+        ContainerClient containerClient,
+        byte[] templateBytes)
+    {
+        var runContext = AIAgent.CurrentRunContext;
+        if (runContext?.Session is null
+            || !_codeExecutions.TryGetValue(runContext.Session, out var context))
+        {
+            throw new InvalidOperationException(
+                "Image generation can only run during an active agent session.");
+        }
+        context.CallId ??=
+            GetHostedCallId()
+            ?? FoundryAgentRequestContext.Current.CallId;
+        if (string.IsNullOrWhiteSpace(context.CallId))
+        {
+            throw new InvalidOperationException(
+                "A Foundry call ID is required for image container isolation.");
+        }
+
+        var cancellationToken = context.CancellationToken;
+        var image = await _imageGeneration.GenerateAsync(
+            prompt,
+            filename,
+            size,
+            quality,
+            cancellationToken);
+        var reusedPersistedContainer = context.ContainerId is not null;
+        await context.Lock.WaitAsync(cancellationToken);
+        var previousCallId = OutboundFoundryCallId.Value;
+        OutboundFoundryCallId.Value = context.CallId;
+        try
+        {
+            try
+            {
+                return await StageGeneratedImageAsync(
+                    runContext.Session,
+                    context,
+                    new ContainerFileOperations(containerClient),
+                    templateBytes,
+                    image,
+                    cancellationToken);
+            }
+            catch (ClientResultException ex)
+                when (reusedPersistedContainer
+                    && IsExpiredContainerError(ex.Status, ex.Message))
+            {
+                _logger.LogWarning(
+                    "The persisted Code Interpreter container expired while staging an image; creating a replacement and replaying the upload once.");
+                ClearPersistedContainerId(runContext.Session);
+                context.ContainerId = null;
+                try
+                {
+                    return await StageGeneratedImageAsync(
+                        runContext.Session,
+                        context,
+                        new ContainerFileOperations(containerClient),
+                        templateBytes,
+                        image,
+                        cancellationToken);
+                }
+                catch (ClientResultException replayException)
+                    when (IsExpiredContainerError(
+                        replayException.Status,
+                        replayException.Message))
+                {
+                    ClearPersistedContainerId(runContext.Session);
+                    context.ContainerId = null;
+                    throw new InvalidOperationException(
+                        "The replacement Code Interpreter container also expired. Retry the request later.",
+                        replayException);
+                }
+            }
+        }
+        finally
+        {
+            OutboundFoundryCallId.Value = previousCallId;
+            context.Lock.Release();
+        }
+    }
+
+    internal static async Task<StagedImageResult> StageGeneratedImageAsync(
+        AgentSession session,
+        CodeExecutionContext context,
+        IContainerFileOperations containerFiles,
+        byte[] templateBytes,
+        GeneratedImage image,
+        CancellationToken cancellationToken)
+    {
+        await EnsureContainerAsync(
+            session,
+            context,
+            containerFiles,
+            templateBytes,
+            cancellationToken);
+        var fileId = await containerFiles.UploadAsync(
+            context.ContainerId!,
+            image.Filename,
+            image.MediaType,
+            image.Data,
+            cancellationToken);
+        context.GeneratedFiles.TryAdd(
+            fileId,
+            new ContainerFileReference(
+                context.ContainerId!,
+                fileId,
+                image.Filename));
+        return new StagedImageResult(
+            $"/mnt/data/{image.Filename}",
+            image.MediaType,
+            image.Width,
+            image.Height);
+    }
+
+    internal static async Task EnsureContainerAsync(
+        AgentSession session,
+        CodeExecutionContext context,
+        IContainerFileOperations containerFiles,
+        byte[] templateBytes,
+        CancellationToken cancellationToken)
+    {
+        if (context.ContainerId is not null)
+        {
+            return;
+        }
+
+        var containerId = await containerFiles.CreateAsync(cancellationToken);
+        _ = await containerFiles.UploadAsync(
+            containerId,
+            PowerPointTemplateFilename,
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            templateBytes,
+            cancellationToken);
+        context.ContainerId = containerId;
+        PersistContainerId(
+            session,
+            context.UserId,
+            context.ContainerId);
+    }
+
+    internal static bool IsExpiredContainerError(
+        int status,
+        string? message) =>
+        status == 404
+        || (status == 400
+            && message?.Contains(
+                "container is expired",
+                StringComparison.OrdinalIgnoreCase) == true);
 
     private async IAsyncEnumerable<AgentResponseUpdate>
         RunWithCodeExecutionContextStreamingAsync(
@@ -767,13 +1037,10 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                 yield return update;
             }
 
-            if (context.GeneratedFiles.Count > MaxGeneratedFilesPerRun)
-            {
-                throw new InvalidDataException(
-                    $"The agent generated {context.GeneratedFiles.Count} files; the maximum per request is {MaxGeneratedFilesPerRun}.");
-            }
-
-            foreach (var file in context.GeneratedFiles.Values)
+            var responseFiles = SelectResponseFiles(
+                context.GeneratedFiles.Values,
+                context.SelectedFileIds);
+            foreach (var file in responseFiles)
             {
                 var text =
                     $"Generated file: [{file.Filename}](sandbox:/mnt/data/{Uri.EscapeDataString(file.Filename)})";
@@ -927,7 +1194,7 @@ public sealed class DirectHostedAgent : IAsyncDisposable
                 generatedFile.Name);
             var uploadBody = await multipart.ReadAsByteArrayAsync(
                 cancellationToken);
-            await containerClient.CreateContainerFileAsync(
+            await containerClient.UploadContainerFileAsync(
                 file.ContainerId,
                 BinaryContent.Create(BinaryData.FromBytes(uploadBody)),
                 multipart.Headers.ContentType!.ToString(),
@@ -941,6 +1208,140 @@ public sealed class DirectHostedAgent : IAsyncDisposable
     internal static bool IsSupportedGeneratedArtifact(string filename)
         => Path.GetExtension(filename).ToLowerInvariant()
             is ".pptx" or ".pdf" or ".png" or ".jpg" or ".jpeg";
+
+    private static JsonSerializerOptions CreateImageToolSerializerOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
+        };
+        options.Converters.Add(
+            new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower));
+        return options;
+    }
+
+    internal static string SelectFileForReturn(
+        string filename,
+        CodeExecutionContext context)
+    {
+        var safeFilename = ValidateSelectedFilename(filename);
+
+        var file = context.GeneratedFiles.Values.LastOrDefault(candidate =>
+            string.Equals(
+                candidate.Filename,
+                safeFilename,
+                StringComparison.Ordinal));
+        if (file is null)
+        {
+            throw new FileNotFoundException(
+                $"Generated file '{safeFilename}' is not available in the current workspace.");
+        }
+
+        context.SelectedFileIds.Add(file.FileId);
+        return $"Selected '{safeFilename}' as a final deliverable.";
+    }
+
+    private static string ValidateSelectedFilename(string filename)
+    {
+        var safeFilename = Path.GetFileName(filename);
+        if (string.IsNullOrWhiteSpace(safeFilename)
+            || !string.Equals(
+                safeFilename,
+                filename.Trim(),
+                StringComparison.Ordinal)
+            || !IsSupportedGeneratedArtifact(safeFilename))
+        {
+            throw new InvalidDataException(
+                "Select a supported generated filename without a directory path.");
+        }
+        return safeFilename;
+    }
+
+    internal static IReadOnlyList<ContainerFileReference> SelectFilesForReturn(
+        IEnumerable<ContainerFileReference> generatedFiles,
+        IReadOnlySet<string> selectedFileIds)
+    {
+        var selected = generatedFiles
+            .Where(file => selectedFileIds.Contains(file.FileId))
+            .ToArray();
+        if (selected.Length != selectedFileIds.Count)
+        {
+            throw new InvalidDataException(
+                "One or more selected generated files are unavailable.");
+        }
+        return selected;
+    }
+
+    internal static IReadOnlyList<ContainerFileReference> SelectResponseFiles(
+        IEnumerable<ContainerFileReference> generatedFiles,
+        IReadOnlySet<string> selectedFileIds)
+    {
+        var responseFiles = selectedFileIds.Count > 0
+            ? SelectFilesForReturn(generatedFiles, selectedFileIds)
+            : generatedFiles.ToArray();
+        if (responseFiles.Count > MaxGeneratedFilesPerRun)
+        {
+            throw new InvalidDataException(
+                $"The agent selected {responseFiles.Count} files; the maximum per request is {MaxGeneratedFilesPerRun}.");
+        }
+        return responseFiles;
+    }
+
+    private async Task<string> SelectFileForReturnAsync(
+        string filename,
+        ContainerClient containerClient,
+        CancellationToken cancellationToken)
+    {
+        var runContext = AIAgent.CurrentRunContext;
+        if (runContext?.Session is null
+            || !_codeExecutions.TryGetValue(runContext.Session, out var context))
+        {
+            throw new InvalidOperationException(
+                "Generated-file selection is unavailable outside an active agent session.");
+        }
+
+        var safeFilename = ValidateSelectedFilename(filename);
+        if (!context.GeneratedFiles.Values.Any(file =>
+                string.Equals(
+                    file.Filename,
+                    safeFilename,
+                    StringComparison.Ordinal)))
+        {
+            if (string.IsNullOrWhiteSpace(context.ContainerId))
+            {
+                throw new FileNotFoundException(
+                    $"Generated file '{safeFilename}' is not available in the current workspace.");
+            }
+
+            var options = new ContainerFileCollectionOptions(
+                context.ContainerId)
+            {
+                Order = ContainerFileCollectionOrder.Descending,
+                PageSizeLimit = 100,
+            };
+            await foreach (var file in containerClient.GetContainerFilesAsync(
+                options,
+                cancellationToken))
+            {
+                if (!string.Equals(
+                        Path.GetFileName(file.Path),
+                        safeFilename,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                context.GeneratedFiles[file.Id] =
+                    new ContainerFileReference(
+                        context.ContainerId,
+                        file.Id,
+                        safeFilename);
+                break;
+            }
+        }
+
+        return SelectFileForReturn(filename, context);
+    }
 
     internal static string? NormalizeFirstName(string? displayName)
     {
@@ -1302,7 +1703,7 @@ public sealed class DirectHostedAgent : IAsyncDisposable
         var mediaType = extension switch
         {
             ".pptx" when HasZipSignature(data) =>
-                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                ValidatePowerPointPackage(data),
             ".pdf" when data.AsSpan().StartsWith("%PDF"u8) =>
                 "application/pdf",
             ".png" when data.AsSpan().StartsWith(
@@ -1321,6 +1722,113 @@ public sealed class DirectHostedAgent : IAsyncDisposable
             safeFilename,
             mediaType,
             data);
+    }
+
+    private static string ValidatePowerPointPackage(byte[] data)
+    {
+        try
+        {
+            using var archive = new ZipArchive(
+                new MemoryStream(data, writable: false),
+                ZipArchiveMode.Read);
+            var presentationEntry = archive.GetEntry("ppt/presentation.xml")
+                ?? throw new InvalidDataException(
+                    "The PowerPoint package is missing ppt/presentation.xml.");
+            var relationshipsEntry = archive.GetEntry(
+                    "ppt/_rels/presentation.xml.rels")
+                ?? throw new InvalidDataException(
+                    "The PowerPoint package is missing its presentation relationships.");
+
+            XNamespace presentationNamespace =
+                "http://schemas.openxmlformats.org/presentationml/2006/main";
+            XNamespace officeRelationshipNamespace =
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+            XNamespace packageRelationshipNamespace =
+                "http://schemas.openxmlformats.org/package/2006/relationships";
+
+            using var presentationStream = presentationEntry.Open();
+            var presentation = XDocument.Load(presentationStream);
+            var activeSlideIds = presentation
+                .Descendants(presentationNamespace + "sldId")
+                .Select(element =>
+                    (string?)element.Attribute(
+                        officeRelationshipNamespace + "id"))
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Cast<string>()
+                .ToArray();
+            if (activeSlideIds.Length == 0
+                || activeSlideIds.Distinct(StringComparer.Ordinal).Count()
+                    != activeSlideIds.Length)
+            {
+                throw new InvalidDataException(
+                    "The PowerPoint package must contain uniquely referenced slides.");
+            }
+
+            using var relationshipsStream = relationshipsEntry.Open();
+            var relationships = XDocument.Load(relationshipsStream);
+            var slideRelationships = relationships
+                .Descendants(packageRelationshipNamespace + "Relationship")
+                .Where(element =>
+                    ((string?)element.Attribute("Type"))?.EndsWith(
+                        "/slide",
+                        StringComparison.Ordinal) == true)
+                .Select(element => new
+                {
+                    Id = (string?)element.Attribute("Id"),
+                    Target = (string?)element.Attribute("Target"),
+                })
+                .ToArray();
+            var relationshipsById = slideRelationships
+                .Where(relationship =>
+                    !string.IsNullOrWhiteSpace(relationship.Id))
+                .ToDictionary(
+                    relationship => relationship.Id!,
+                    relationship => relationship.Target,
+                    StringComparer.Ordinal);
+            if (slideRelationships.Length != activeSlideIds.Length
+                || activeSlideIds.Any(id =>
+                    !relationshipsById.ContainsKey(id)))
+            {
+                throw new InvalidDataException(
+                    "The PowerPoint package contains missing or orphaned slide relationships.");
+            }
+            if (slideRelationships
+                .Select(relationship => relationship.Target)
+                .Any(string.IsNullOrWhiteSpace)
+                || slideRelationships
+                    .Select(relationship => relationship.Target!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count() != slideRelationships.Length)
+            {
+                throw new InvalidDataException(
+                    "The PowerPoint package contains duplicate slide targets.");
+            }
+
+            foreach (var relationship in slideRelationships)
+            {
+                var target = relationship.Target!.Replace('\\', '/');
+                if (target.StartsWith(
+                        "../",
+                        StringComparison.Ordinal)
+                    || archive.GetEntry($"ppt/{target}") is null)
+                {
+                    throw new InvalidDataException(
+                        "The PowerPoint package references an unavailable slide.");
+                }
+            }
+
+            return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+        }
+        catch (InvalidDataException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidDataException(
+                "The generated PowerPoint package is invalid.",
+                ex);
+        }
     }
 
     private static bool HasZipSignature(ReadOnlySpan<byte> data)
@@ -1371,12 +1879,83 @@ public sealed class DirectHostedAgent : IAsyncDisposable
         _initializationLock.Dispose();
     }
 
-    private sealed record ContainerFileReference(
+    internal sealed record ContainerFileReference(
         string ContainerId,
         string FileId,
         string Filename);
 
-    private sealed class CodeExecutionContext(
+    internal sealed record StagedImageResult(
+        string Path,
+        string MediaType,
+        int Width,
+        int Height);
+
+    internal interface IContainerFileOperations
+    {
+        Task<string> CreateAsync(CancellationToken cancellationToken);
+
+        Task<string> UploadAsync(
+            string containerId,
+            string filename,
+            string mediaType,
+            byte[] data,
+            CancellationToken cancellationToken);
+    }
+
+    private sealed class ContainerFileOperations(ContainerClient client)
+        : IContainerFileOperations
+    {
+        public async Task<string> CreateAsync(
+            CancellationToken cancellationToken)
+        {
+            var container = await client.CreateContainerAsync(
+                new ContainerCreationOptions("teams-hosted-agent"),
+                cancellationToken);
+            return container.Value.Id;
+        }
+
+        public async Task<string> UploadAsync(
+            string containerId,
+            string filename,
+            string mediaType,
+            byte[] data,
+            CancellationToken cancellationToken)
+        {
+            using var multipart = new MultipartFormDataContent();
+            using var fileContent = new ByteArrayContent(data);
+            fileContent.Headers.ContentType =
+                new MediaTypeHeaderValue(mediaType);
+            multipart.Add(fileContent, "file", filename);
+            var uploadBody = await multipart.ReadAsByteArrayAsync(
+                cancellationToken);
+            var file = await client.UploadContainerFileAsync(
+                containerId,
+                BinaryContent.Create(BinaryData.FromBytes(uploadBody)),
+                multipart.Headers.ContentType!.ToString(),
+                new RequestOptions
+                {
+                    CancellationToken = cancellationToken,
+                });
+            return GetUploadedContainerFileId(
+                file.GetRawResponse().Content);
+        }
+    }
+
+    internal static string GetUploadedContainerFileId(BinaryData content)
+    {
+        using var document = JsonDocument.Parse(content);
+        if (document.RootElement.TryGetProperty("id", out var idElement)
+            && idElement.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(idElement.GetString()))
+        {
+            return idElement.GetString()!;
+        }
+
+        throw new InvalidDataException(
+            "The Container File API response did not contain a file ID.");
+    }
+
+    internal sealed class CodeExecutionContext(
         CancellationToken cancellationToken,
         string? callId,
         string userId,
@@ -1390,6 +1969,8 @@ public sealed class DirectHostedAgent : IAsyncDisposable
         public Dictionary<string, ContainerFileReference> GeneratedFiles { get; } =
             new(StringComparer.Ordinal);
         public HashSet<string> PromotedFileIds { get; } =
+            new(StringComparer.Ordinal);
+        public HashSet<string> SelectedFileIds { get; } =
             new(StringComparer.Ordinal);
     }
 

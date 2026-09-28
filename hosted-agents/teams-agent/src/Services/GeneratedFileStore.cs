@@ -1,6 +1,8 @@
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
+using System.Net;
 using AgentChat.Bots;
+using Microsoft.Azure.Cosmos;
+using Microsoft.Agents.Storage;
 
 namespace AgentChat.Services;
 
@@ -13,7 +15,8 @@ public sealed record CachedGeneratedFile(
 public sealed record GeneratedFileDownload(
     string Name,
     string MediaType,
-    byte[] Content);
+    long Size,
+    Stream Content);
 
 public sealed record CompletedGeneratedFile(
     string Name,
@@ -23,38 +26,84 @@ public sealed record CompletedGeneratedFile(
 
 public sealed record GeneratedFileClaim(
     GeneratedFileDownload? Download,
-    CompletedGeneratedFile? Completed);
+    CompletedGeneratedFile? Completed,
+    string? ClaimId);
+
+public enum GeneratedFileClaimStatus
+{
+    Claimed,
+    Completed,
+    UploadInProgress,
+    NotFoundOrExpired,
+    OwnerMismatch,
+}
+
+public sealed record GeneratedFileClaimAttempt(
+    GeneratedFileClaimStatus Status,
+    GeneratedFileClaim? Claim = null);
+
+public enum GeneratedFileDiscardStatus
+{
+    Discarded,
+    UploadInProgress,
+    NotAvailable,
+    OwnerMismatch,
+}
+
+public sealed record GeneratedFileStorage(IStorage Storage);
+
+public interface IGeneratedFileContentStore
+{
+    Task SaveAsync(
+        string token,
+        ReadOnlyMemory<byte> content,
+        CancellationToken cancellationToken);
+    Task<Stream> OpenReadAsync(
+        string token,
+        CancellationToken cancellationToken);
+    Task DeleteAsync(
+        string token,
+        CancellationToken cancellationToken);
+}
 
 public sealed class GeneratedFileStore
 {
     private const long DefaultMaxFileBytes = 25L * 1024 * 1024;
-    private const long DefaultMaxCachedBytes = 100L * 1024 * 1024;
+    private const int MaxConcurrencyRetries = 3;
     private static readonly TimeSpan DefaultLifetime = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan DefaultUploadLease = TimeSpan.FromMinutes(5);
 
-    private readonly ConcurrentDictionary<string, CacheEntry> _files =
-        new(StringComparer.Ordinal);
+    private readonly IStorage _storage;
+    private readonly IGeneratedFileContentStore _content;
+    private readonly ILogger<GeneratedFileStore> _logger;
     private readonly long _maxFileBytes;
-    private readonly long _maxCachedBytes;
     private readonly TimeSpan _lifetime;
-    private readonly object _gate = new();
-    private long _cachedBytes;
+    private readonly TimeSpan _uploadLease;
 
-    public GeneratedFileStore(IConfiguration configuration)
+    public GeneratedFileStore(
+        GeneratedFileStorage storage,
+        IGeneratedFileContentStore content,
+        IConfiguration configuration,
+        ILogger<GeneratedFileStore> logger)
     {
+        _storage = storage.Storage;
+        _content = content;
+        _logger = logger;
         _maxFileBytes = configuration.GetValue(
             "Files:MaxFileBytes",
             DefaultMaxFileBytes);
-        _maxCachedBytes = configuration.GetValue(
-            "Files:MaxCachedBytes",
-            DefaultMaxCachedBytes);
         _lifetime = TimeSpan.FromMinutes(configuration.GetValue(
             "Files:ConsentLifetimeMinutes",
             DefaultLifetime.TotalMinutes));
+        _uploadLease = TimeSpan.FromSeconds(configuration.GetValue(
+            "Files:UploadLeaseSeconds",
+            DefaultUploadLease.TotalSeconds));
     }
 
-    public CachedGeneratedFile Add(
+    public async Task<CachedGeneratedFile> AddAsync(
         UserConversationKey owner,
-        GeneratedFileContent file)
+        GeneratedFileContent file,
+        CancellationToken cancellationToken)
     {
         if (file.Data.Length == 0 || file.Data.Length > _maxFileBytes)
         {
@@ -64,180 +113,313 @@ public sealed class GeneratedFileStore
 
         var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32))
             .ToLowerInvariant();
-        var bytes = file.Data.ToArray();
-        var entry = new CacheEntry(
-            owner,
-            file.Name,
-            file.MediaType,
-            bytes,
-            DateTimeOffset.UtcNow.Add(_lifetime));
+        var expiresAt = DateTimeOffset.UtcNow.Add(_lifetime);
+        var bytes = file.Data;
 
-        lock (_gate)
+        try
         {
-            RemoveExpiredLocked();
-            if (_cachedBytes + bytes.LongLength > _maxCachedBytes)
+            await _content.SaveAsync(
+                token,
+                bytes,
+                cancellationToken);
+            await _storage.WriteAsync(
+                new Dictionary<string, GeneratedFileManifest>
+                {
+                    [ManifestKey(token)] = new()
+                    {
+                        ETag = "*",
+                        OwnerUserId = owner.UserId,
+                        OwnerConversationId = owner.ConversationId,
+                        Name = file.Name,
+                        MediaType = file.MediaType,
+                        Size = bytes.Length,
+                        ExpiresAt = expiresAt,
+                    },
+                },
+                cancellationToken);
+        }
+        catch
+        {
+            try
             {
-                throw new InvalidOperationException(
-                    "The generated-file cache is full. Try again in a few minutes.");
+                await _content.DeleteAsync(
+                    token,
+                    CancellationToken.None);
             }
-            if (!_files.TryAdd(token, entry))
+            catch (Exception ex)
             {
-                throw new InvalidOperationException(
-                    "Could not allocate a generated-file consent token.");
+                _logger.LogWarning(
+                    ex,
+                    "Could not clean up partially persisted generated file {Token}.",
+                    token);
             }
-            _cachedBytes += bytes.LongLength;
+            throw;
         }
 
         return new CachedGeneratedFile(
             token,
             file.Name,
             file.MediaType,
-            bytes.LongLength);
+            bytes.Length);
     }
 
-    public bool TryClaim(
+    public async Task<GeneratedFileClaimAttempt> TryClaimAsync(
         string token,
         UserConversationKey owner,
-        out GeneratedFileClaim claim)
+        CancellationToken cancellationToken)
     {
-        lock (_gate)
+        for (var attempt = 0; attempt < MaxConcurrencyRetries; attempt++)
         {
-            claim = null!;
-            if (!_files.TryGetValue(token, out var entry))
+            var manifest = await ReadManifestAsync(
+                token,
+                cancellationToken);
+            if (manifest is null
+                || manifest.ExpiresAt <= DateTimeOffset.UtcNow
+                || manifest.IsDiscarded)
             {
-                return false;
+                return new(
+                    GeneratedFileClaimStatus.NotFoundOrExpired);
             }
-            if (entry.ExpiresAt <= DateTimeOffset.UtcNow)
+            if (!manifest.IsOwnedBy(owner))
             {
-                RemoveLocked(token, entry);
-                return false;
+                return new(
+                    GeneratedFileClaimStatus.OwnerMismatch);
             }
-            if (entry.Owner != owner)
+            if (manifest.Completed is not null)
             {
-                return false;
+                return new(
+                    GeneratedFileClaimStatus.Completed,
+                    new GeneratedFileClaim(
+                        Download: null,
+                        manifest.Completed,
+                        ClaimId: null));
             }
-            if (entry.Completed is not null)
+            if (manifest.UploadClaimExpiresAt > DateTimeOffset.UtcNow)
             {
-                claim = new GeneratedFileClaim(
-                    Download: null,
-                    entry.Completed);
-                return true;
-            }
-            if (entry.IsUploading)
-            {
-                return false;
+                return new(
+                    GeneratedFileClaimStatus.UploadInProgress);
             }
 
-            _files[token] = entry with { IsUploading = true };
-            claim = new GeneratedFileClaim(
-                new GeneratedFileDownload(
-                    entry.Name,
-                    entry.MediaType,
-                    entry.Content),
-                Completed: null);
-            return true;
+            var claimId = Convert.ToHexString(
+                    RandomNumberGenerator.GetBytes(16))
+                .ToLowerInvariant();
+            manifest.UploadClaimId = claimId;
+            manifest.UploadClaimExpiresAt =
+                DateTimeOffset.UtcNow.Add(_uploadLease);
+            try
+            {
+                await WriteManifestAsync(
+                    token,
+                    manifest,
+                    cancellationToken);
+            }
+            catch (EtagException) when (
+                attempt + 1 < MaxConcurrencyRetries)
+            {
+                continue;
+            }
+            catch (CosmosException ex) when (
+                ex.StatusCode == HttpStatusCode.PreconditionFailed
+                && attempt + 1 < MaxConcurrencyRetries)
+            {
+                continue;
+            }
+
+            try
+            {
+                var content = await _content.OpenReadAsync(
+                    token,
+                    cancellationToken);
+                return new(
+                    GeneratedFileClaimStatus.Claimed,
+                    new GeneratedFileClaim(
+                        new GeneratedFileDownload(
+                            manifest.Name,
+                            manifest.MediaType,
+                            manifest.Size,
+                            content),
+                        Completed: null,
+                        claimId));
+            }
+            catch
+            {
+                await ReleaseAsync(
+                    token,
+                    owner,
+                    claimId,
+                    cancellationToken);
+                throw;
+            }
         }
+
+        return new(GeneratedFileClaimStatus.UploadInProgress);
     }
 
-    public void Complete(
+    public async Task CompleteAsync(
         string token,
         UserConversationKey owner,
-        CompletedGeneratedFile completed)
+        string claimId,
+        CompletedGeneratedFile completed,
+        CancellationToken cancellationToken)
     {
-        lock (_gate)
+        var manifest = await ReadManifestAsync(token, cancellationToken);
+        if (manifest is null
+            || !manifest.IsOwnedBy(owner)
+            || !string.Equals(
+                manifest.UploadClaimId,
+                claimId,
+                StringComparison.Ordinal))
         {
-            if (_files.TryGetValue(token, out var entry)
-                && entry.Owner == owner
-                && entry.IsUploading)
+            return;
+        }
+
+        manifest.UploadClaimExpiresAt = null;
+        manifest.UploadClaimId = null;
+        manifest.Completed = completed;
+        manifest.ExpiresAt = DateTimeOffset.UtcNow.Add(_lifetime);
+        await WriteManifestAsync(token, manifest, cancellationToken);
+        try
+        {
+            await _content.DeleteAsync(
+                token,
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Could not delete staged blob for {Token}; the storage lifecycle policy will remove it.",
+                token);
+        }
+    }
+
+    public async Task ReleaseAsync(
+        string token,
+        UserConversationKey owner,
+        string claimId,
+        CancellationToken cancellationToken)
+    {
+        var manifest = await ReadManifestAsync(token, cancellationToken);
+        if (manifest is null
+            || !manifest.IsOwnedBy(owner)
+            || !string.Equals(
+                manifest.UploadClaimId,
+                claimId,
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        manifest.UploadClaimExpiresAt = null;
+        manifest.UploadClaimId = null;
+        await WriteManifestAsync(token, manifest, cancellationToken);
+    }
+
+    public async Task<GeneratedFileDiscardStatus> DiscardAsync(
+        string token,
+        UserConversationKey owner,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < MaxConcurrencyRetries; attempt++)
+        {
+            var manifest = await ReadManifestAsync(
+                token,
+                cancellationToken);
+            if (manifest is null
+                || manifest.IsDiscarded
+                || manifest.ExpiresAt <= DateTimeOffset.UtcNow)
             {
-                _cachedBytes -= entry.Content.LongLength;
-                _files[token] = entry with
-                {
-                    Content = [],
-                    ExpiresAt = DateTimeOffset.UtcNow.Add(_lifetime),
-                    IsUploading = false,
-                    Completed = completed,
-                };
+                return GeneratedFileDiscardStatus.NotAvailable;
             }
-        }
-    }
-
-    public void Release(string token, UserConversationKey owner)
-    {
-        lock (_gate)
-        {
-            if (_files.TryGetValue(token, out var entry)
-                && entry.Owner == owner
-                && entry.IsUploading)
+            if (!manifest.IsOwnedBy(owner))
             {
-                _files[token] = entry with { IsUploading = false };
+                return GeneratedFileDiscardStatus.OwnerMismatch;
             }
-        }
-    }
-
-    public void Discard(string token, UserConversationKey owner)
-    {
-        lock (_gate)
-        {
-            if (_files.TryGetValue(token, out var entry)
-                && entry.Owner == owner
-                && !entry.IsUploading)
+            if (manifest.UploadClaimExpiresAt > DateTimeOffset.UtcNow)
             {
-                RemoveLocked(token, entry);
+                return GeneratedFileDiscardStatus.UploadInProgress;
             }
-        }
-    }
 
-    public void RemoveExpired()
-    {
-        lock (_gate)
-        {
-            RemoveExpiredLocked();
-        }
-    }
-
-    private void RemoveExpiredLocked()
-    {
-        var now = DateTimeOffset.UtcNow;
-        foreach (var entry in _files)
-        {
-            if (!entry.Value.IsUploading
-                && entry.Value.ExpiresAt <= now)
+            manifest.IsDiscarded = true;
+            try
             {
-                RemoveLocked(entry.Key, entry.Value);
+                await WriteManifestAsync(
+                    token,
+                    manifest,
+                    cancellationToken);
             }
+            catch (EtagException) when (
+                attempt + 1 < MaxConcurrencyRetries)
+            {
+                continue;
+            }
+            catch (CosmosException ex) when (
+                ex.StatusCode == HttpStatusCode.PreconditionFailed
+                && attempt + 1 < MaxConcurrencyRetries)
+            {
+                continue;
+            }
+
+            await _content.DeleteAsync(token, cancellationToken);
+            await _storage.DeleteAsync(
+                [ManifestKey(token)],
+                cancellationToken);
+            return GeneratedFileDiscardStatus.Discarded;
         }
+
+        return GeneratedFileDiscardStatus.UploadInProgress;
     }
 
-    private void RemoveLocked(string token, CacheEntry entry)
+    private async Task<GeneratedFileManifest?> ReadManifestAsync(
+        string token,
+        CancellationToken cancellationToken)
     {
-        if (_files.TryRemove(
-            new KeyValuePair<string, CacheEntry>(token, entry)))
-        {
-            _cachedBytes -= entry.Content.LongLength;
-        }
+        var key = ManifestKey(token);
+        var items = await _storage.ReadAsync<GeneratedFileManifest>(
+            [key],
+            cancellationToken);
+        return items.TryGetValue(key, out var manifest)
+            ? manifest
+            : null;
     }
 
-    private sealed record CacheEntry(
-        UserConversationKey Owner,
-        string Name,
-        string MediaType,
-        byte[] Content,
-        DateTimeOffset ExpiresAt,
-        bool IsUploading = false,
-        CompletedGeneratedFile? Completed = null);
-}
+    private Task WriteManifestAsync(
+        string token,
+        GeneratedFileManifest manifest,
+        CancellationToken cancellationToken)
+        => _storage.WriteAsync(
+            new Dictionary<string, GeneratedFileManifest>
+            {
+                [ManifestKey(token)] = manifest,
+            },
+            cancellationToken);
 
-public sealed class GeneratedFileCleanupService(
-    GeneratedFileStore files) : BackgroundService
-{
-    protected override async Task ExecuteAsync(
-        CancellationToken stoppingToken)
+    private static string ManifestKey(string token)
+        => $"generated-file-{token}-manifest";
+
+    public sealed class GeneratedFileManifest : IStoreItem
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
-        while (await timer.WaitForNextTickAsync(stoppingToken))
-        {
-            files.RemoveExpired();
-        }
+        public string ETag { get; set; } = "*";
+        public string OwnerUserId { get; set; } = string.Empty;
+        public string OwnerConversationId { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string MediaType { get; set; } = string.Empty;
+        public long Size { get; set; }
+        public DateTimeOffset ExpiresAt { get; set; }
+        public bool IsDiscarded { get; set; }
+        public string? UploadClaimId { get; set; }
+        public DateTimeOffset? UploadClaimExpiresAt { get; set; }
+        public CompletedGeneratedFile? Completed { get; set; }
+
+        public bool IsOwnedBy(UserConversationKey owner)
+            => string.Equals(
+                    OwnerUserId,
+                    owner.UserId,
+                    StringComparison.Ordinal)
+                && string.Equals(
+                    OwnerConversationId,
+                    owner.ConversationId,
+                    StringComparison.Ordinal);
     }
+
 }

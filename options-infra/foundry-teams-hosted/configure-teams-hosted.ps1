@@ -95,6 +95,7 @@ az deployment group create `
     botName=$botName `
     agentPrincipalId=$agentPrincipalId `
     cosmosAccountName=$env:COSMOS_ACCOUNT_NAME `
+    generatedFilesStorageAccountName=$env:GENERATED_FILES_STORAGE_ACCOUNT_NAME `
     apimFoundryUserRoleAssignmentName=$apimFoundryUserAssignment `
     apimAgentConsumerRoleAssignmentName=$apimAgentConsumerAssignment `
     gatewayCosmosRoleAssignmentName=$gatewayCosmosAssignment `

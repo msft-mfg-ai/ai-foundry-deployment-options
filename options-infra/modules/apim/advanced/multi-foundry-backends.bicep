@@ -69,9 +69,10 @@ var allDeployments = flatten(map(
       // Weight only matters within the same priority tier and is rarely used.
       weight: instance.?weight ?? 1
       location: instance.location
-      endpoint: instance.endpoint
+      endpoint: dep.?apiEndpoint ?? instance.endpoint
       isApim: instance.?isApim ?? false
       modelFormat: dep.?modelFormat ?? 'OpenAI'
+      apiProfile: dep.?apiProfile ?? ''
     })
 ))
 
@@ -84,6 +85,12 @@ resource backends 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' 
     properties: {
       description: '${dep.isPtu ? 'PTU' : 'Paygo'} backend: ${dep.instanceName} → ${dep.modelName} (${dep.location})'
       // URL path depends on (isApim, modelFormat):
+      //   • Direct GPT Image: discovery supplies the account's openai host;
+      //     backend base is `{openAiEndpoint}openai` and policy appends the
+      //     deployment-scoped `/deployments/{model}/images/generations`.
+      //   • Direct MAI Image: discovery supplies the account's services.ai
+      //     host; backend base is the account root and policy appends
+      //     `/mai/v1/images/generations`.
       //   • Direct Foundry/Cognitive Services account: backend exposes `/openai/deployments/{m}/...`
       //     → URL = `{endpoint}openai`
       //   • Chained APIM upstream serving OpenAI-style deployments:
@@ -96,7 +103,9 @@ resource backends 'Microsoft.ApiManagement/service/backends@2024-06-01-preview' 
         ? (toLower(dep.modelFormat) == 'anthropic'
             ? '${dep.endpoint}inference'
             : '${dep.endpoint}inference/openai')
-        : '${dep.endpoint}openai'
+        : dep.apiProfile == 'mai-v1-image'
+          ? dep.endpoint
+          : '${dep.endpoint}openai'
       protocol: 'http'
       credentials: {
         #disable-next-line BCP037

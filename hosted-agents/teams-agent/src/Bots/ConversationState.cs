@@ -14,6 +14,15 @@ public class ConversationState : IStoreItem
     /// <summary>Serialized Agent Framework session for direct model and Toolbox execution.</summary>
     public string? DirectAgentSession { get; set; }
 
+    /// <summary>Serialization contract version for <see cref="DirectAgentSession"/>.</summary>
+    public int DirectAgentSessionVersion { get; set; }
+
+    /// <summary>
+    /// Safe todo titles and harness-generated IDs used to render progress
+    /// consistently across agent invocations.
+    /// </summary>
+    public List<AgentTodoProgressState> DirectAgentTodoProgress { get; set; } = [];
+
     /// <summary>
     /// Original user request to retry after Foundry completes OAuth consent.
     /// No access or refresh token is stored by the bot.
@@ -49,4 +58,13 @@ public class ConversationState : IStoreItem
 
     /// <summary>IStoreItem eTag for optimistic concurrency.</summary>
     public string ETag { get; set; } = "*";
+}
+
+public sealed class AgentTodoProgressState
+{
+    public string? Id { get; set; }
+
+    public string Title { get; set; } = "";
+
+    public bool Completed { get; set; }
 }
