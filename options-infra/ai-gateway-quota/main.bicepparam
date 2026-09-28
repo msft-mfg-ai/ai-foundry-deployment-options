@@ -145,3 +145,4 @@ param priorityRouting = true
 // Cost collection is opt-in because it creates cross-scope role assignments.
 param deployCostIngestion = bool(readEnvironmentVariable('DEPLOY_COST_INGESTION', 'false'))
 param costIngestionPublicNetworkAccess = bool(readEnvironmentVariable('COST_INGESTION_PUBLIC_NETWORK_ACCESS', 'true'))
+param manageCostIngestionRoleAssignments = bool(readEnvironmentVariable('MANAGE_COST_INGESTION_ROLE_ASSIGNMENTS', 'true'))

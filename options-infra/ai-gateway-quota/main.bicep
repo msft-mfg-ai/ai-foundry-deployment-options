@@ -38,6 +38,9 @@ param deployCostIngestion bool = false
 @description('Enable public network access on cost-ingestion Data Collection Endpoints. Disable only when private ingestion connectivity is configured separately.')
 param costIngestionPublicNetworkAccess bool = true
 
+@description('Create or reconcile Cost Ingestion role assignments. Set false when updating an existing authorized pipeline without role-assignment write permission.')
+param manageCostIngestionRoleAssignments bool = true
+
 // -- Variables ----------------------------------------------------------------
 
 var tags = {
@@ -228,6 +231,7 @@ module aiCostTable '../modules/dashboard/cost-ingestion-table.bicep' = {
         logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
         foundryResourceIds: [instance.resourceId]
         dataCollectionEndpointPublicNetworkAccess: costIngestionPublicNetworkAccess
+        manageRoleAssignments: manageCostIngestionRoleAssignments
         tags: tags
       }
       dependsOn: [
@@ -244,6 +248,7 @@ module aiCostTable '../modules/dashboard/cost-ingestion-table.bicep' = {
       logAnalyticsWorkspaceResourceId: logAnalytics.outputs.LOG_ANALYTICS_WORKSPACE_RESOURCE_ID
       foundryResourceIds: [selfFoundry!.outputs.FOUNDRY_RESOURCE_ID]
       dataCollectionEndpointPublicNetworkAccess: costIngestionPublicNetworkAccess
+      manageRoleAssignments: manageCostIngestionRoleAssignments
       tags: tags
     }
     dependsOn: [

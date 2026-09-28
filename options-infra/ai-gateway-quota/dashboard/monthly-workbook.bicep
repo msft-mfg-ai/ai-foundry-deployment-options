@@ -8,15 +8,15 @@
 // Sections:
 //   1. Caller Quota      (Quota Overview, Remaining Quota, Burn-Down, Daily)
 //   2. Models            (Model Usage by Caller, Token Usage Over Time, non-LLM)
-//   3. Foundries         (per-Foundry tokens, per-Foundry over time, per-model
-//                         est. cost, cost by Foundry)
+//   3. Foundries         (per-Foundry tokens, per-Foundry over time, exact
+//                         billed cost by Cost Management meter)
 //   4. Backends          (Backend Distribution, Backend Requests Over Time)
 //   5. Reliability       (429s, Errors, Spillover Summary, Spillover Over Time)
 //   6. Billed Cost       (real Cost Management data via AICostData_CL —
 //                         Total MTD, by Foundry, by Project tag, by Meter,
 //                         Daily trend. Requires DEPLOY_COST_INGESTION=true.)
 //   7. Hybrid Cost       (near-real-time cost from LLM log tokens ×
-//                         Cost-Mgmt-derived per-Foundry blended rate.
+//                         Cost-Mgmt-derived Foundry blended rate.
 //                         Includes reconciliation vs Sections 3 & 6.)
 //
 // Deployed as `Microsoft.Insights/workbooks` — accessed via Azure Monitor >
@@ -25,8 +25,8 @@
 // COST SOURCE NOTE
 // All cost figures are sourced from `AICostData_CL` (Azure Cost Management
 // data ingested daily by the Cost Ingestion Logic App). No hand-curated rate
-// table — Section 3 shows the actual billed cost per (Foundry, ModelFamily)
-// derived from the Cost Mgmt meter names, and per-caller cost is allocated
+// table — Section 3 shows the actual billed cost per (Foundry, Meter)
+// without maintaining a model-name mapping, and per-caller cost is allocated
 // proportionally by each caller's share of the Foundry's LLM tokens.
 // Requires DEPLOY_COST_INGESTION=true and at least one successful
 // Logic App run (or a `scripts/backfill-cost-ingestion.sh` run).
@@ -250,57 +250,19 @@ llmLogDedup
 | summarize TotalTokens = sum(TotalTokens) by bin(TimeGenerated, 1d), FoundryAccount
 | order by TimeGenerated asc''', '__FOUNDRY_JOIN__', foundryJoinFrag), '__LLM_LOG__', llmLogFrag)
 
-// Cost by Foundry & Model (grid) — real billed cost from AICostData_CL,
-// joined with token counts from LlmLog for context. Meter names are mapped
-// to model family via case() on well-known substrings; anything unmapped
-// falls through as the raw meter name. Non-LLM meters (speech, whisper) are
-// preserved so the totals reconcile to Section 6.
-var qFoundryCost = replace(replace(replace('''let monthStart = todatetime("{SelectedMonth}");
+// Cost by Foundry & Meter (grid) — exact Cost Management dimensions.
+// Meter is the billing source of truth, so new models appear automatically
+// without a workbook code change.
+var qFoundryCost = replace('''let monthStart = todatetime("{SelectedMonth}");
 let monthEnd = datetime_add("month", 1, monthStart);
 __COST_DATA__
-__FOUNDRY_JOIN__
-__LLM_LOG__
-let billed = costData
-    | extend MeterLower = tolower(Meter)
-    | extend ModelFamily = case(
-        MeterLower has "5.4 nano" or MeterLower has "5.4-nano", "gpt-5.4-nano",
-        MeterLower has "5.4 mini" or MeterLower has "5.4-mini", "gpt-5.4-mini",
-        MeterLower has "5.4", "gpt-5.4",
-        MeterLower has "4.1 nano" or MeterLower has "4.1-nano", "gpt-4.1-nano",
-        MeterLower has "4.1 mini" or MeterLower has "4.1-mini", "gpt-4.1-mini",
-        MeterLower has "4.1", "gpt-4.1",
-        MeterLower has "embedding-3-large", "text-embedding-3-large",
-        MeterLower has "embedding-3-small", "text-embedding-3-small",
-        MeterLower has "whisper", "whisper",
-        MeterLower has "speech", "speech",
-        Meter)
-    | summarize BilledUsd = round(sum(BilledCost), 4) by FoundryAccount = tolower(FoundryResource), ModelFamily;
-let tokens = llmLogDedup
-    | where isnotempty(DeploymentName)
-    | join kind=inner backendMap on CorrelationId
-    | extend ModelKey = tolower(coalesce(iff(ModelName != "", ModelName, ""), DeploymentName))
-    | extend ModelFamily = case(
-        ModelKey startswith "gpt-4.1-nano",           "gpt-4.1-nano",
-        ModelKey startswith "gpt-4.1-mini",           "gpt-4.1-mini",
-        ModelKey startswith "gpt-4.1",                "gpt-4.1",
-        ModelKey startswith "gpt-5.4-nano",           "gpt-5.4-nano",
-        ModelKey startswith "gpt-5.4-mini",           "gpt-5.4-mini",
-        ModelKey startswith "gpt-5.4",                "gpt-5.4",
-        ModelKey startswith "text-embedding-3-large", "text-embedding-3-large",
-        ModelKey startswith "text-embedding-3-small", "text-embedding-3-small",
-        ModelKey)
-    | summarize
-        TotalTokens = sum(TotalTokens),
-        Requests = dcount(CorrelationId)
-        by FoundryAccount = tolower(FoundryAccount), ModelFamily;
-billed
-| join kind=fullouter tokens on FoundryAccount, ModelFamily
-| project FoundryAccount = coalesce(FoundryAccount, FoundryAccount1),
-          ModelFamily    = coalesce(ModelFamily, ModelFamily1),
-          TotalTokens    = coalesce(TotalTokens, tolong(0)),
-          Requests       = coalesce(Requests, tolong(0)),
-          BilledUsd      = coalesce(BilledUsd, 0.0)
-| order by BilledUsd desc''', '__FOUNDRY_JOIN__', foundryJoinFrag), '__LLM_LOG__', llmLogFrag), '__COST_DATA__', costDataFrag)
+costData
+| summarize
+    BilledUsd = round(sum(BilledCost), 4),
+    UsageQuantity = round(sum(UsageQuantity), 4),
+    BillingDays = dcount(BillingDate)
+    by FoundryResource, Meter, ServiceName, Currency
+| order by BilledUsd desc''', '__COST_DATA__', costDataFrag)
 
 // Cost per Caller (grid) — allocates each Foundry's billed cost
 // proportionally by the caller's share of the Foundry's LLM tokens.
@@ -509,15 +471,12 @@ costData
 | extend UsdPerUnit = round(BilledUsd / Units, 4)
 | order by BilledUsd desc''', '__COST_DATA__', costDataFrag)
 
-// Foundry-level blended rate: sum(cost) / sum(qty) → effective USD per 1M
-// tokens across all meters used by that Foundry. Robust — no Meter↔Model
-// name matching required. This remains an estimate when one Foundry serves
-// models or meters with materially different rates.
+// Foundry-level blended rate across compatible 1M-token meters only.
 var qHybridFoundryRate = replace('''let monthStart = todatetime("{SelectedMonth}");
 let monthEnd = datetime_add("month", 1, monthStart);
 __COST_DATA__
 costData
-| where UsageQuantity > 0
+| where UsageQuantity > 0 and tolower(Meter) has "1m tokens"
 | summarize BilledUsd = round(sum(BilledCost), 4),
             Units     = round(sum(UsageQuantity), 4),
             DistinctMeters = dcount(Meter)
@@ -525,14 +484,16 @@ costData
 | extend BlendedUsdPer1MTokens = round(BilledUsd / Units, 4)
 | order by BilledUsd desc''', '__COST_DATA__', costDataFrag)
 
-// Hybrid real-time cost: LLM log tokens (near-real-time) × Foundry blended
-// rate (derived from current-month bill). Per-Foundry × Model breakdown.
+// Hybrid real-time cost: LLM log tokens (near-real-time) × a Foundry-level
+// blended rate derived from every compatible current-month 1M-token meter.
+// This remains dynamic for new models and intentionally avoids claiming an
+// exact meter-to-deployment attribution that Cost Management does not expose.
 var qHybridCostByModel = replace(replace(replace('''let monthStart = todatetime("{SelectedMonth}");
 let monthEnd = datetime_add("month", 1, monthStart);
 __COST_DATA__
 let blended = materialize(
     costData
-    | where UsageQuantity > 0
+    | where UsageQuantity > 0 and tolower(Meter) has "1m tokens"
     | summarize BilledUsd = sum(BilledCost), Units = sum(UsageQuantity)
         by FoundryKey = tolower(FoundryResource)
     | extend UsdPer1MTokens = BilledUsd / Units
@@ -544,6 +505,7 @@ llmLogDedup
 | where isnotempty(DeploymentName)
 | join kind=inner backendMap on CorrelationId
 | extend ModelBase = tolower(replace_regex(ModelName, @"-\\d{4}-\\d{2}-\\d{2}$", ""))
+| extend ModelBase = iff(isempty(ModelBase), tolower(DeploymentName), ModelBase)
 | extend FoundryKey = tolower(FoundryAccount)
 | summarize Requests = dcount(CorrelationId),
             PromptTokens = sum(PromptTokens),
@@ -555,6 +517,7 @@ llmLogDedup
 | project Foundry = FoundryKey,
           Model   = ModelBase,
           Requests, PromptTokens, CompletionTokens, TotalTokens,
+          RateAvailable = isnotnull(UsdPer1MTokens),
           BlendedUsdPer1MTokens = round(coalesce(UsdPer1MTokens, 0.0), 4),
           HybridCostUsd
 | order by HybridCostUsd desc''', '__FOUNDRY_JOIN__', foundryJoinFrag), '__LLM_LOG__', llmLogFrag), '__COST_DATA__', costDataFrag)
@@ -755,7 +718,7 @@ var workbookContent = {
     // =========================================================================
     // SECTION 3 — Foundries (NEW; not in dashboard)
     // =========================================================================
-    { type: 1, content: { json: '---\n## 3️⃣ Foundries\n\nToken & cost breakdown per AI Foundry account that APIM routes to. Foundry account is derived from the backend hostname (`{foundry}.cognitiveservices.azure.com`).\n\n> **Cost** is sourced directly from `AICostData_CL` (real Azure Cost Management billing data). Meter names are mapped to model families via substring match (e.g. `5.4 nano Inp Gl 1M Tokens` → `gpt-5.4-nano`). Non-LLM meters like whisper and speech-to-text appear as-is. Requires the Cost Ingestion Logic App to have run.' }, name: 'sec-foundries' }
+    { type: 1, content: { json: '---\n## 3️⃣ Foundries\n\nToken & cost breakdown per AI Foundry account that APIM routes to. Foundry account is derived from the backend hostname (`{foundry}.cognitiveservices.azure.com`).\n\n> **Cost** is sourced directly from `AICostData_CL` (real Azure Cost Management billing data) and grouped by the exact Cost Management meter name. No model-name mapping is maintained, so new model meters appear automatically. Non-LLM meters like whisper and speech-to-text appear as-is. Requires the Cost Ingestion Logic App to have run.' }, name: 'sec-foundries' }
     {
       type: 3
       content: {
@@ -777,7 +740,7 @@ var workbookContent = {
         version: 'KqlItem/1.0'
         query: qFoundryCost
         size: 0
-        title: '💵 Billed Cost by Foundry & Model (USD)'
+        title: '💵 Billed Cost by Foundry & Meter (USD)'
         queryType: 0
         resourceType: 'microsoft.operationalinsights/workspaces'
         crossComponentResources: [ logAnalyticsWorkspaceId ]
@@ -935,7 +898,7 @@ var workbookContent = {
     // =========================================================================
     // SECTION 6 — Billed Cost (real Cost Management data)
     // =========================================================================
-    { type: 1, content: { json: '---\n## 6️⃣ Billed Cost\n\nReal billed cost pulled daily from Azure Cost Management by the Cost Ingestion Logic Apps into the `AICostData_CL` custom table. Collection is scoped to Foundries wired to this APIM deployment.\n\n> **Project attribution** relies on the Foundry `project` tag (Preview — Azure-direct models only). Rows without the tag land as `(untagged)` — this includes Marketplace models today.\n\n> **Same source as Section 3.** Section 3 breaks the same billed cost down by Foundry × ModelFamily; this section adds Project, Meter and daily-trend views on the same data.' }, name: 'sec-billed' }
+    { type: 1, content: { json: '---\n## 6️⃣ Billed Cost\n\nReal billed cost pulled daily from Azure Cost Management by the Cost Ingestion Logic Apps into the `AICostData_CL` custom table. Collection is scoped to Foundries wired to this APIM deployment.\n\n> **Project attribution** relies on the Foundry `project` tag (Preview — Azure-direct models only). Rows without the tag land as `(untagged)` — this includes Marketplace models today.\n\n> **Same source as Section 3.** Section 3 breaks the same billed cost down by Foundry × Cost Management Meter; this section adds Project and daily-trend views on the same data.' }, name: 'sec-billed' }
     {
       type: 3
       content: {
@@ -1032,7 +995,7 @@ var workbookContent = {
     // =========================================================================
     // SECTION 7 — Hybrid Cost (LLM log tokens × Cost-Mgmt-derived rates)
     // =========================================================================
-    { type: 1, content: { json: '---\n## 7️⃣ Hybrid Cost (Real-Time with Actual Rates)\n\nNear-real-time cost combining `ApiManagementGatewayLlmLog` (per-request tokens, ~seconds latency) with the effective **USD per 1M tokens** rate *derived* from `AICostData_CL` (rate = BilledCost ÷ UsageQuantity for the selected month).\n\n> **Why not `AzureMetrics.TokenTransaction`?** Cognitive Services emits it with dimensions (`ModelDeploymentName`, `TokenType`) but the standard LAW `AzureMetrics` table strips those to aggregates only. LLM log has full granularity.\n\n> **Section 3 vs Section 6 vs Section 7.**  Section 3 = billed cost broken down by Foundry × ModelFamily (24h lag).  Section 6 = billed cost broken down by Project, Meter, and daily trend (same source, different cuts).  Section 7 = extrapolates cost mid-day from LlmLog tokens × current-month blended rate (seconds latency, useful for burn-rate alerts).\n\n> **Requires** `DEPLOY_COST_INGESTION=true`. Foundry token meters price per **1M tokens**, so `UsdPerUnit` from Cost Mgmt = USD per 1M tokens directly (no unit conversion needed for the join).' }, name: 'sec-hybrid' }
+    { type: 1, content: { json: '---\n## 7️⃣ Hybrid Cost (Real-Time with Actual Rates)\n\nNear-real-time cost combining `ApiManagementGatewayLlmLog` (per-request tokens, ~seconds latency) with an effective **USD per 1M tokens** blended rate derived independently for each Foundry from compatible `1M Tokens` meters in `AICostData_CL`.\n\n> **Why not `AzureMetrics.TokenTransaction`?** Cognitive Services emits it with dimensions (`ModelDeploymentName`, `TokenType`) but the standard LAW `AzureMetrics` table strips those to aggregates only. LLM log has full granularity.\n\n> **Section 3 vs Section 6 vs Section 7.** Section 3 = exact billed cost broken down by Foundry × Cost Management Meter (24h lag). Section 6 = billed cost broken down by Project, Meter, and daily trend (same source, different cuts). Section 7 = estimates cost mid-day from LLM-log tokens × the current-month Foundry blended rate. The estimate supports new models automatically and does not claim exact meter-to-deployment attribution.\n\n> **Requires** `DEPLOY_COST_INGESTION=true`. Only meters explicitly billed in **1M tokens** participate in the hybrid estimate. Legacy token meters and non-LLM meters remain visible in Derived Rates with their native billing units but are excluded from the token-rate calculation.' }, name: 'sec-hybrid' }
     {
       type: 3
       content: {
@@ -1069,7 +1032,7 @@ var workbookContent = {
         version: 'KqlItem/1.0'
         query: qHybridCostByModel
         size: 0
-        title: '💰 Hybrid Real-Time Cost (LLM log tokens × blended rate)'
+        title: '💰 Hybrid Real-Time Cost (LLM log tokens × Foundry blended rate)'
         queryType: 0
         resourceType: 'microsoft.operationalinsights/workspaces'
         crossComponentResources: [ logAnalyticsWorkspaceId ]

@@ -58,6 +58,9 @@ param _deploymentTime string = utcNow()
 @description('Tags applied to every resource created by this module.')
 param tags object = {}
 
+@description('Create or reconcile the Logic App role assignments. Set false when updating an existing authorized pipeline with an identity that cannot write role assignments.')
+param manageRoleAssignments bool = true
+
 // ---------------------------------------------------------------------------
 // Derived names & LAW parsing
 // ---------------------------------------------------------------------------
@@ -360,7 +363,7 @@ resource logic 'Microsoft.Logic/workflows@2019-05-01' = {
 // Role assignments
 // ---------------------------------------------------------------------------
 // Monitoring Metrics Publisher @ DCR — MI can POST to the DCE ingestion endpoint
-resource raMetricsPublisher 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource raMetricsPublisher 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (manageRoleAssignments) {
   name: guid(dcr.id, logic.id, monitoringMetricsPublisherRoleId)
   scope: dcr
   properties: {
@@ -373,7 +376,7 @@ resource raMetricsPublisher 'Microsoft.Authorization/roleAssignments@2022-04-01'
 // Cost Management Reader @ resource group — MI can call the CM Query API
 // scoped to this RG (all target Foundries live in the same RG as this Logic
 // App, so RG-scope is sufficient and avoids a sub-scope grant).
-resource raCostManagementReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource raCostManagementReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (manageRoleAssignments) {
   name: guid(resourceGroup().id, logic.id, costManagementReaderRoleId)
   scope: resourceGroup()
   properties: {

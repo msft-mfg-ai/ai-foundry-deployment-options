@@ -208,6 +208,7 @@ Enable collectors before `azd up`:
 ```bash
 azd env set DEPLOY_COST_INGESTION true
 azd env set COST_INGESTION_PUBLIC_NETWORK_ACCESS true
+azd env set MANAGE_COST_INGESTION_ROLE_ASSIGNMENTS true
 ```
 
 One collector is deployed in each Foundry resource group. Each Logic App uses
@@ -215,6 +216,10 @@ managed identity and receives:
 
 - **Cost Management Reader** on that Foundry resource group.
 - **Monitoring Metrics Publisher** on its Data Collection Rule.
+
+Set `MANAGE_COST_INGESTION_ROLE_ASSIGNMENTS=false` only when updating an
+already-authorized pipeline with a deployment identity that cannot create or
+reconcile role assignments.
 
 This per-Foundry design supports BYO resources across resource groups and
 subscriptions without subscription-wide Cost Management grants. Entries marked
