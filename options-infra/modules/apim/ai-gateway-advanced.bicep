@@ -53,6 +53,12 @@ param eventHubName string = ''
 @description('Store contracts in Azure Blob Storage. Advanced config update endpoints require blob storage; false is no longer supported by this orchestrator.')
 param useStorageAccount bool = true
 
+@description('Optional user principal ID that uploads the initial contracts blob from an azd postprovision hook.')
+param contractUploaderPrincipalId string = ''
+
+@description('Upload the initial contracts blob with an Azure deployment script. Disable when azd postprovision performs the upload.')
+param useDeploymentScriptForContractUpload bool = true
+
 @description('Tenant IDs whose Entra ID tokens are accepted as inbound auth. Defaults to the current subscription tenant. The first tenant is also used by the access-contract caller fragment.')
 param acceptedTenantIds string[] = []
 
@@ -78,6 +84,38 @@ var connectionPerProject = createFoundryConnections && !empty(aiFoundryProjectNa
 var validStorageMode = useStorageAccount ? true : fail('ai-gateway-advanced.bicep now requires useStorageAccount=true because advanced config endpoints read and update the contracts blob.')
 var effectiveAcceptedTenantIds = empty(acceptedTenantIds) ? [tenant().tenantId] : acceptedTenantIds
 var acceptedTenantId = first(effectiveAcceptedTenantIds)
+var allDeployments = flatten(map(foundryInstances, instance => instance.deployments))
+var uniqueDeploymentNames = reduce(
+  allDeployments,
+  [],
+  (names, deployment) => contains(names, deployment.modelName)
+    ? names
+    : concat(names, [deployment.modelName])
+)
+var staticDeployments = map(
+  uniqueDeploymentNames,
+  modelName => {
+    name: modelName
+    properties: {
+      model: {
+        name: modelName
+        version: first(filter(allDeployments, deployment => deployment.modelName == modelName)).?modelVersion ?? ''
+        format: first(filter(allDeployments, deployment => deployment.modelName == modelName)).?modelFormat ?? 'OpenAI'
+      }
+      provisioningState: 'Succeeded'
+    }
+    sku: {
+      name: 'Gateway'
+      capacity: first(filter(allDeployments, deployment => deployment.modelName == modelName)).?skuCapacity ?? 0
+    }
+  }
+)
+var rawDeploymentsListJson = string({ value: staticDeployments })
+var deploymentsListJsonEncoded = replace(
+  replace(replace(replace(rawDeploymentsListJson, '&', '&amp;'), '<', '&lt;'), '>', '&gt;'),
+  '"',
+  '&quot;'
+)
 
 // Replaces the `{JWT_VALIDATION}` token in policy-per-model.xml. Each accepted
 // tenant contributes BOTH the v1 (`sts.windows.net`) and v2
@@ -203,6 +241,8 @@ module contractStorage 'advanced/contract-storage.bicep' = if (validStorageMode)
     resourceSuffix: resourceToken
     contractMapJson: contractMapJson
     apimPrincipalId: apimService.outputs.principalId
+    contractUploaderPrincipalId: contractUploaderPrincipalId
+    useDeploymentScriptUpload: useDeploymentScriptForContractUpload
   }
 }
 
@@ -252,6 +292,7 @@ resource apimRef 'Microsoft.ApiManagement/service@2024-06-01-preview' existing =
 
 module callerIdentityFragment 'caller-identity-fragment.bicep' = {
   name: 'caller-identity-fragment'
+  dependsOn: [apimService]
   params: {
     apiManagementName: apiManagementName
     contractsBlobUrl: contractStorage.outputs.blobUrl
@@ -261,6 +302,7 @@ module callerIdentityFragment 'caller-identity-fragment.bicep' = {
 
 module perModelRoutingFragment 'per-model-routing-fragment.bicep' = {
   name: 'per-model-routing-fragment'
+  dependsOn: [apimService]
   params: {
     apiManagementName: apiManagementName
     foundryInstances: foundryInstances
@@ -271,10 +313,10 @@ module perModelRoutingFragment 'per-model-routing-fragment.bicep' = {
 // ============================================================================
 // -- Inference API (with shared per-model policy)
 // ============================================================================
-// Uses v2/inference-api module for API creation, OpenAPI spec, diagnostics,
-// and model discovery. Backend pools are created by foundryBackends module
-// (per-model pools), so we pass an empty aiServicesConfig to avoid duplicate
-// backend creation.
+// Uses v2/inference-api for API creation, OpenAPI spec, and diagnostics.
+// Backend pools are created by foundryBackends, so aiServicesConfig is empty.
+// Runtime ARM discovery cannot represent this multi-resource topology; static
+// discovery operations are compiled from foundryInstances below.
 module inferenceApi 'v2/inference-api.bicep' = {
   name: 'inference-api-deployment'
   dependsOn: [
@@ -292,9 +334,40 @@ module inferenceApi 'v2/inference-api.bicep' = {
     inferenceAPIPath: 'inference'
     requireSubscriptionKey: false
     configureCircuitBreaker: false
-    enableModelDiscovery: true
+    enableModelDiscovery: false
     appInsightsInstrumentationKey: appInsightsInstrumentationKey
     appInsightsId: appInsightsResourceId
+  }
+}
+
+var listDeploymentsPolicyXml = replace(
+  replace(
+    loadTextContent('policy-list-deployments.xml'),
+    '{DEPLOYMENTS_LIST_JSON}',
+    deploymentsListJsonEncoded
+  ),
+  '{JWT_VALIDATION}',
+  jwtValidationXml
+)
+var getDeploymentPolicyXml = replace(
+  replace(
+    loadTextContent('policy-get-deployment.xml'),
+    '{DEPLOYMENTS_LIST_JSON}',
+    deploymentsListJsonEncoded
+  ),
+  '{JWT_VALIDATION}',
+  jwtValidationXml
+)
+
+module inferenceDiscovery 'static-discovery-operations.bicep' = {
+  name: 'inference-discovery-ops'
+  dependsOn: [inferenceApi]
+  params: {
+    apimServiceName: apiManagementName
+    apiName: inferenceApi.outputs.apiName
+    listDeploymentsPolicyXml: listDeploymentsPolicyXml
+    getDeploymentPolicyXml: getDeploymentPolicyXml
+    resourceSuffix: 'advanced'
   }
 }
 
@@ -304,7 +377,7 @@ module inferenceApi 'v2/inference-api.bicep' = {
 
 module advancedPolicies 'advanced/advanced-policies.bicep' = {
   name: 'advanced-policies'
-  dependsOn: [inferenceApi]
+  dependsOn: [inferenceApi, inferenceDiscovery]
   params: {
     apimServiceName: apiManagementName
     apiName: inferenceApi.outputs.apiName
@@ -387,7 +460,9 @@ output apimGatewayUrl string = apimService.outputs.gatewayUrl
 output inferenceApiUrl string = '${apimService.outputs.gatewayUrl}/${inferenceApi.outputs.apiPath}'
 output configViewerUrl string = '${apimService.outputs.gatewayUrl}/${inferenceApi.outputs.apiPath}/ai-gateway/config.json'
 output contractsBlobUrl string = contractStorage.outputs.blobUrl
+output contractsStorageAccountName string = contractStorage.outputs.storageAccountName
 output contractMapJson string = contractMapJson
+output contractsUploadMode string = useDeploymentScriptForContractUpload ? 'deploymentScript' : 'azd'
 output poolNames array = foundryBackends.outputs.poolNames
 output hasPtuDeployments bool = foundryBackends.outputs.hasPtuDeployments
 output useStorageAccount bool = useStorageAccount

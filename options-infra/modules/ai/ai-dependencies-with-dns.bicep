@@ -15,6 +15,8 @@ param peSubnetName string
 param azureStorageName string = 'projstorage${resourceToken}'
 param aiSearchName string = 'project-search-${resourceToken}'
 param cosmosDBName string = 'project-cosmosdb-${resourceToken}'
+@description('Optional location override for a newly created Cosmos DB account.')
+param cosmosDBLocation string = ''
 
 @description('Semantic ranker tier for a newly created AI Search service.')
 @allowed([
@@ -43,6 +45,7 @@ module ai_dependencies '../ai-dependencies/standard-dependent-resources.bicep' =
     azureStorageName: azureStorageName
     aiSearchName: aiSearchName
     cosmosDBName: cosmosDBName
+    cosmosDBLocation: cosmosDBLocation
 
     // AI Search Service parameters
     aiSearchResourceId: aiSearchId
@@ -117,4 +120,3 @@ output AI_DEPENDECIES types.aiDependenciesType = {
     subscriptionId: ai_dependencies.outputs.COSMOS_DB_SUBSCRIPTION_ID
   }
 }
-

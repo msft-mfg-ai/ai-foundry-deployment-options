@@ -26,8 +26,8 @@ param aiFoundryProjectName string?
 param targetUrl string = 'https://your-model-gateway.example.com/v1'
 param gatewayName string = 'example-gateway'
 
-// Connection configuration (ModelGateway only supports ApiKey)
-@allowed(['ApiKey', 'ProjectManagedIdentity'])
+// Connection configuration
+@allowed(['ApiKey', 'OAuth2', 'ProjectManagedIdentity'])
 param authType string = 'ApiKey'
 param isSharedToAll bool = true
 
@@ -38,6 +38,19 @@ param connectionName string = '' // Optional: specify custom connection name
 // optional/ignored under ProjectManagedIdentity).
 @secure()
 param apiKey string = ''
+
+@description('OAuth2 client ID. Required when authType is OAuth2.')
+param clientId string = ''
+
+@secure()
+@description('OAuth2 client secret. Required when authType is OAuth2.')
+param clientSecret string = ''
+
+@description('OAuth2 token endpoint. Required when authType is OAuth2.')
+param tokenUrl string = ''
+
+@description('OAuth2 scopes requested by Foundry. At least one is required when authType is OAuth2.')
+param scopes string[] = []
 
 @description('Audience for the bearer token under ProjectManagedIdentity auth (ignored under ApiKey). Defaults to https://cognitiveservices.azure.com.')
 param audience string = 'https://cognitiveservices.azure.com'
@@ -131,6 +144,10 @@ module modelGatewayConnection 'modelgateway-connection-common.bicep' = {
     audience: audience
     isSharedToAll: isSharedToAll
     apiKey: apiKey
+    clientId: clientId
+    clientSecret: clientSecret
+    tokenUrl: tokenUrl
+    scopes: scopes
     metadata: modelGatewayMetadata
   }
 }

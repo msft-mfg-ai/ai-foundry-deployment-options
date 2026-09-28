@@ -35,6 +35,8 @@ Defined in `azure.yaml`:
 2. **Bicep deploy** — creates Entra app regs, Log Analytics, Event Hub, APIM, contract blob, dashboard, backend pools, fragments, and role assignments.
 3. **postprovision** — runs `scripts/add_app_reg_secrets.sh`, then regenerates `.env` from `azd env get-values`.
 
+Model discovery is static at runtime: Bicep compiles the preprovision results into `/deployments` operations. Keep `enableModelDiscovery=false` for the quota inference API. The shared dynamic mode proxies one `aiServicesConfig` resource through ARM and is documented for single-resource gateways, not this multi-Foundry/chained-APIM sample.
+
 ## Access contracts — central abstraction
 
 Contracts live in `main.bicepparam` and are typed by `../modules/apim/advanced/types.bicep` (`accessContractType`). One contract per caller team:

@@ -1,0 +1,62 @@
+<fragment>
+    <set-variable name="keycloak-access-token" value="@{
+        var authorization = context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;, &quot;&quot;);
+        return authorization.StartsWith(&quot;Be&quot; + &quot;arer &quot;, StringComparison.OrdinalIgnoreCase)
+            ? authorization.Substring(7)
+            : string.Empty;
+    }" />
+    <choose>
+        <when condition="@(string.IsNullOrEmpty((string)context.Variables[&quot;keycloak-access-token&quot;]))">
+            <return-response>
+                <set-status code="401" reason="Unauthorized" />
+                <set-header name="WWW-Authenticate" exists-action="override">
+                    <value>@(&quot;Be&quot; + &quot;arer error=\&quot;invalid_token\&quot;&quot;)</value>
+                </set-header>
+            </return-response>
+        </when>
+    </choose>
+    <send-request mode="new" response-variable-name="keycloak-introspection-response" timeout="20" ignore-error="true">
+        <set-url>{keycloak-introspection-url}</set-url>
+        <set-method>POST</set-method>
+        <set-header name="Content-Type" exists-action="override">
+            <value>application/x-www-form-urlencoded</value>
+        </set-header>
+        <set-body>@{
+            var token = (string)context.Variables[&quot;keycloak-access-token&quot;];
+            return &quot;client_id=&quot; + Uri.EscapeDataString(&quot;{keycloak-client-id}&quot;)
+                + &quot;&amp;client_secret=&quot; + Uri.EscapeDataString(&quot;{{keycloak-client-secret}}&quot;)
+                + &quot;&amp;token=&quot; + Uri.EscapeDataString(token)
+                + &quot;&amp;token_type_hint=access_token&quot;;
+        }</set-body>
+    </send-request>
+    <choose>
+        <when condition="@{
+            var response = context.Variables[&quot;keycloak-introspection-response&quot;] as IResponse;
+            if (response == null || response.StatusCode != 200) {
+                return true;
+            }
+            try {
+                var payload = response.Body.As&lt;Newtonsoft.Json.Linq.JObject&gt;();
+                var active = payload[&quot;active&quot;]?.Value&lt;bool&gt;() == true;
+                var authorizedParty = payload[&quot;azp&quot;]?.ToString() == &quot;{keycloak-client-id}&quot;;
+                var scopes = (payload[&quot;scope&quot;]?.ToString() ?? string.Empty)
+                    .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                var scopeAllowed = scopes.Contains(&quot;{keycloak-scope}&quot;);
+                var audienceClaim = payload[&quot;aud&quot;];
+                var audienceAllowed = audienceClaim is Newtonsoft.Json.Linq.JArray
+                    ? ((Newtonsoft.Json.Linq.JArray)audienceClaim).Any(v => v.ToString() == &quot;{keycloak-audience}&quot;)
+                    : audienceClaim?.ToString() == &quot;{keycloak-audience}&quot;;
+                return !(active &amp;&amp; authorizedParty &amp;&amp; scopeAllowed &amp;&amp; audienceAllowed);
+            } catch {
+                return true;
+            }
+        }">
+            <return-response>
+                <set-status code="401" reason="Unauthorized" />
+                <set-header name="WWW-Authenticate" exists-action="override">
+                    <value>@(&quot;Be&quot; + &quot;arer error=\&quot;invalid_token\&quot;&quot;)</value>
+                </set-header>
+            </return-response>
+        </when>
+    </choose>
+</fragment>

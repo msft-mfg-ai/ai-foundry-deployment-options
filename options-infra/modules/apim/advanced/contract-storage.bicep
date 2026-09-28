@@ -17,14 +17,38 @@ param location string
 param tags object = {}
 param resourceSuffix string
 
-@description('Pre-compiled contracts JSON string (from parent module)')
+@description('Pre-compiled contracts JSON string from the parent module.')
 param contractMapJson string
 
 @description('APIM managed identity principal ID — granted Storage Blob Data Reader')
 param apimPrincipalId string
 
+@description('Optional user principal ID that uploads the initial contracts blob from an azd postprovision hook.')
+param contractUploaderPrincipalId string = ''
+
+@description('Upload the initial contracts blob with an Azure CLI deployment script. Disable when an azd postprovision hook performs the upload.')
+param useDeploymentScriptUpload bool = true
+
 // -- Storage Account (AVM) ----------------------------------------------------
 var storageAccountName = take('stcontracts${resourceSuffix}', 24)
+var uploaderRoleAssignments = empty(contractUploaderPrincipalId)
+  ? []
+  : [
+      {
+        principalId: contractUploaderPrincipalId
+        principalType: 'User'
+        roleDefinitionIdOrName: 'Storage Blob Data Contributor'
+      }
+    ]
+var deploymentScriptRoleAssignments = useDeploymentScriptUpload
+  ? [
+      {
+        principalId: scriptIdentity!.properties.principalId
+        principalType: 'ServicePrincipal'
+        roleDefinitionIdOrName: 'Storage Blob Data Contributor'
+      }
+    ]
+  : []
 
 module storageAccount 'br/public:avm/res/storage/storage-account:0.32.0' = {
   name: 'contract-storage-account'
@@ -44,18 +68,17 @@ module storageAccount 'br/public:avm/res/storage/storage-account:0.32.0' = {
     }
     supportsHttpsTrafficOnly: true
     allowSharedKeyAccess: false
-    roleAssignments: [
-      {
-        principalId: apimPrincipalId
-        principalType: 'ServicePrincipal'
-        roleDefinitionIdOrName: 'Storage Blob Data Reader'
-      }
-      {
-        principalId: scriptIdentity.properties.principalId
-        principalType: 'ServicePrincipal'
-        roleDefinitionIdOrName: 'Storage Blob Data Contributor'
-      }
-    ]
+    roleAssignments: concat(
+      [
+        {
+          principalId: apimPrincipalId
+          principalType: 'ServicePrincipal'
+          roleDefinitionIdOrName: 'Storage Blob Data Reader'
+        }
+      ],
+      uploaderRoleAssignments,
+      deploymentScriptRoleAssignments
+    )
     blobServices: {
       containers: [
         {
@@ -67,9 +90,14 @@ module storageAccount 'br/public:avm/res/storage/storage-account:0.32.0' = {
   }
 }
 
-// -- Deploy contract config as a blob -----------------------------------------
-// Uses deploymentScript to upload the JSON blob (Bicep can't create blobs natively)
-resource uploadScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
+// -- Optional deployment-script upload ---------------------------------------
+resource scriptIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = if (useDeploymentScriptUpload) {
+  name: 'id-contract-upload-${resourceSuffix}'
+  location: location
+  tags: tags
+}
+
+resource uploadScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = if (useDeploymentScriptUpload) {
   name: 'upload-contracts-${resourceSuffix}'
   location: location
   tags: tags
@@ -77,7 +105,7 @@ resource uploadScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
-      '${scriptIdentity.id}': {}
+      '${scriptIdentity!.id}': {}
     }
   }
   properties: {
@@ -103,13 +131,6 @@ resource uploadScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
       echo "Uploaded contracts to $STORAGE_ACCOUNT/$CONTAINER_NAME/$BLOB_NAME"
     '''
   }
-}
-
-// -- User-Assigned Identity for deployment script -----------------------------
-resource scriptIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-contract-upload-${resourceSuffix}'
-  location: location
-  tags: tags
 }
 
 // -- Outputs ------------------------------------------------------------------

@@ -1,0 +1,27 @@
+name: Validate AI Gateway Keycloak
+
+on:
+  pull_request:
+    paths:
+      - 'options-infra/ai-gateway-keycloack/**'
+      - 'options-infra/modules/**'
+      - '.github/workflows/bicep-ai-gateway-keycloack.yml'
+      - '.github/workflows/bicep-validate-reusable.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'options-infra/ai-gateway-keycloack/**'
+      - 'options-infra/modules/**'
+      - '.github/workflows/bicep-ai-gateway-keycloack.yml'
+      - '.github/workflows/bicep-validate-reusable.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    uses: ./.github/workflows/bicep-validate-reusable.yml
+    with:
+      bicep-file: main.bicep
+      working-directory: options-infra/ai-gateway-keycloack

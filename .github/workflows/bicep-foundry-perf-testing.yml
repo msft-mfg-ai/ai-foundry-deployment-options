@@ -1,0 +1,26 @@
+name: 'Bicep: foundry-perf-testing'
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'options-infra/foundry-perf-testing/**'
+      - 'hosted-agents/perf-support-agent/**'
+      - 'options-infra/scripts/sync-hosted-agents.*'
+      - 'options-infra/modules/**'
+      - '.github/workflows/bicep-validate-reusable.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'options-infra/foundry-perf-testing/**'
+      - 'hosted-agents/perf-support-agent/**'
+      - 'options-infra/scripts/sync-hosted-agents.*'
+      - 'options-infra/modules/**'
+      - '.github/workflows/bicep-validate-reusable.yml'
+
+jobs:
+  validate:
+    uses: ./.github/workflows/bicep-validate-reusable.yml
+    with:
+      bicep-file: main.bicep
+      working-directory: options-infra/foundry-perf-testing

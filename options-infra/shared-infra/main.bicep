@@ -251,7 +251,7 @@ module SampleMcp '../modules/aca/container-app.bicep' = {
       settings: []
     }
     ingressTargetPort: 8080
-    existingImage: 'ghcr.io/karpikpl/simple-testing-mcp:sha-cdd72b5'
+    existingImage: 'ghcr.io/karpikpl/simple-testing-mcp:sha-3bd8f8c'
     userAssignedManagedIdentityClientId: identity.outputs.clientId
     userAssignedManagedIdentityResourceId: identity.outputs.resourceId
     ingressExternal: true

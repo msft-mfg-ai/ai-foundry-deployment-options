@@ -8,8 +8,8 @@
 //
 // What this deploys:
 //   1. enable-agent-activity-protocol  — PATCHes the agent endpoint to add
-//      `activity` to protocols and `BotServiceRbac` to authorization schemes
-//      so Bot Service tokens are accepted by Foundry. Returns the agent's
+//      `activity` to protocols and `BotServiceTenant` to authorization schemes
+//      so tenant users can call the agent after admin approval. Returns the agent's
 //      ServiceIdentity appId / blueprint appId / agent_guid for downstream
 //      wiring.
 //   2. bot-service                     — Azure Bot Service (SKU = S1, MUST
@@ -75,7 +75,7 @@ var tags = {
 var resourceToken = toLower(uniqueString(resourceGroup().id, location, agentName))
 
 // ---------------------------------------------------------------------------
-// 1. Enable activityprotocol + BotServiceRbac on the existing agent
+// 1. Enable activityprotocol + BotServiceTenant on the existing agent
 // ---------------------------------------------------------------------------
 var foundryRg = empty(aiFoundryResourceGroupName) ? resourceGroup().name : aiFoundryResourceGroupName
 
@@ -91,7 +91,7 @@ module enableActivity '../modules/ai/foundry-agent.bicep' = {
     aiFoundryProjectName: aiFoundryProjectName
     agentName: agentName
     // Existing agent — do NOT create. The module always runs the PATCH
-    // for activityprotocol + BotServiceRbac (required for Teams).
+    // for activityprotocol + BotServiceTenant, matching Tenant publish scope.
     createAgent: false
     resourceSuffix: resourceToken
   }
@@ -130,7 +130,7 @@ module botService '../modules/bot/bot-service.bicep' = {
     disableLocalAuth: false
     // Use the agent's auto-created ServiceIdentity SP appId as msaAppId.
     // BF channels mint tokens with aud = msaAppId; Foundry's activityprotocol
-    // (with the BotServiceRbac auth scheme enabled by `enableActivity` above)
+    // (with the BotServiceTenant auth scheme enabled by `enableActivity` above)
     // validates aud against the same appId, so they match.
     msaAppType: 'SingleTenant'
     msaAppId: enableActivity.outputs.agentIdentityAppId

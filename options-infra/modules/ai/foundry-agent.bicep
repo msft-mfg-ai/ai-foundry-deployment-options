@@ -13,11 +13,13 @@
 // Flow:
 //   1. (optional) POST `/agents/{name}/versions` with a `kind: prompt`
 //      definition (when `createAgent` is true).
-//   2. PATCH `/agents/{name}` to add `activity` to protocols and
-//      `BotServiceRbac` to authorization_schemes. Always runs — the PATCH is
-//      additive (it adds, doesn't remove `responses` or `Entra`), idempotent,
-//      and required when wiring the agent to Azure Bot Service / Microsoft
-//      Teams. Harmless for agents that only ever use the Responses API SDK.
+//   2. PATCH `/agents/{name}` to add `activity` to protocols and the selected
+//      Bot Service authorization scheme. `BotServiceTenant` is the default for
+//      tenant-wide publishing; use `BotServiceRbac` only with Shared scope.
+//      Always runs — the PATCH is additive (it adds, doesn't remove `responses`
+//      or `Entra`), idempotent, and required when wiring the agent to Azure Bot
+//      Service / Microsoft Teams. Harmless for agents that only ever use the
+//      Responses API SDK.
 //   3. GET `/agents/{name}` and emit identity fields (instance_identity,
 //      blueprint, agent_guid, latest version) as outputs.
 //
@@ -67,6 +69,13 @@ param agentMetadata object = {}
 // ---------------------------------------------------------------------------
 @description('Foundry Agents API version used for the API calls (POST /versions, PATCH, GET).')
 param apiVersion string = 'v1'
+
+@description('Authorization scheme for Bot Service calls. BotServiceTenant matches Tenant publish scope; use BotServiceRbac only when publishing with Shared scope.')
+@allowed([
+  'BotServiceTenant'
+  'BotServiceRbac'
+])
+param botServiceAuthorizationScheme string = 'BotServiceTenant'
 
 @description('Suffix used to make the UAMI + deploymentScript names unique within the resource group.')
 param resourceSuffix string
@@ -156,7 +165,8 @@ resource agentScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
       agentName,
       apiVersion,
       string(createAgent),
-      createBodyJson
+      createBodyJson,
+      botServiceAuthorizationScheme
     )
     environmentVariables: [
       { name: 'FOUNDRY_NAME', value: aiFoundryName }
@@ -165,6 +175,7 @@ resource agentScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
       { name: 'API_VERSION', value: apiVersion }
       { name: 'CREATE_AGENT', value: createAgent ? 'true' : 'false' }
       { name: 'CREATE_BODY', value: createBodyJson }
+      { name: 'BOT_SERVICE_AUTHORIZATION_SCHEME', value: botServiceAuthorizationScheme }
     ]
     scriptContent: '''
       set -e
@@ -200,13 +211,13 @@ resource agentScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
       fi
 
       # -------------------------------------------------------------------
-      # Step 3/4: PATCH to enable activityprotocol + BotServiceRbac.
+      # Step 3/4: PATCH to enable activityprotocol + Bot Service auth.
       # The PATCH is additive (adds `activity` alongside `responses`, and
-      # `BotServiceRbac` alongside `Entra`), idempotent, and required for
-      # Azure Bot Service / Teams integration. Harmless when not used.
+      # the selected Bot Service scheme alongside `Entra`), idempotent, and
+      # required for Azure Bot Service / Teams integration.
       # -------------------------------------------------------------------
       PATCH_URL="${BASE_URL}?api-version=${API_VERSION}"
-      PATCH_BODY='{"agent_endpoint":{"protocols":["responses","activity"],"authorization_schemes":[{"type":"Entra","isolation_key_source":{"kind":"Entra"}},{"type":"BotServiceRbac"}]}}'
+      PATCH_BODY="{\"agent_endpoint\":{\"protocols\":[\"responses\",\"activity\"],\"authorization_schemes\":[{\"type\":\"Entra\",\"isolation_key_source\":{\"kind\":\"Entra\"}},{\"type\":\"${BOT_SERVICE_AUTHORIZATION_SCHEME}\"}]}}"
       echo "[agent] Step 3/4: PATCH ${PATCH_URL}"
       echo "[agent] body: $PATCH_BODY"
       az rest --method patch \

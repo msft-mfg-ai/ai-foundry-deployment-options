@@ -1,0 +1,20 @@
+name: 'Bicep: custom-dns'
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'options-infra/custom-dns/**'
+      - '.github/workflows/bicep-validate-reusable.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'options-infra/custom-dns/**'
+      - '.github/workflows/bicep-validate-reusable.yml'
+
+jobs:
+  validate:
+    uses: ./.github/workflows/bicep-validate-reusable.yml
+    with:
+      bicep-file: main.bicep
+      working-directory: options-infra/custom-dns

@@ -2,19 +2,19 @@
 <#
 .SYNOPSIS
   Multi-agent Teams publish: POSTs /microsoft365/publish per agent and writes
-  N x 2 Teams sideload zips into ./teams-app/build/.
+  N x 3 Teams sideload zips into ./teams-app/build/.
 
 .DESCRIPTION
   Windows mirror of publish-teams-agent.sh. Reads the multi-agent contract
   emitted by main.bicep:
     AGENT_PUBLISH_INFO    JSON array of {agentName, agentGuid, blueprintAppId}
-    TEAMS_MANIFESTS       JSON array of {agentName, direct, proxy}
+    TEAMS_MANIFESTS       JSON array of {agentName, direct, proxy, tab}
     FOUNDRY_NAME, FOUNDRY_RESOURCE_GROUP, PROJECT_NAME, LOCATION
     AZURE_SUBSCRIPTION_ID
 
   Per agent:
     1. POST /microsoft365/publish (idempotent — "version already exists" OK).
-    2. Write 2 zips: teams-app-<agent>-<direct|proxy>.zip
+    2. Write 3 zips: teams-app-<agent>-<direct|proxy|tab>.zip
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -130,7 +130,7 @@ foreach ($e in $entries) {
         continue
     }
 
-    foreach ($kind in @('direct', 'proxy')) {
+    foreach ($kind in @('direct', 'proxy', 'tab')) {
         $manifestObj = $match.$kind
         if (-not $manifestObj) { continue }
 

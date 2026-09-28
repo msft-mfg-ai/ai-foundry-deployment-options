@@ -129,20 +129,50 @@ if (-not $existingScopes) {
   Write-Host "    oauth2PermissionScopes already configured"
 }
 
+# Teams silent SSO requires both implicit issuance switches.
+$implicit = az ad app show --id $appId `
+  --query '[web.implicitGrantSettings.enableIdTokenIssuance, web.implicitGrantSettings.enableAccessTokenIssuance]' `
+  -o json | ConvertFrom-Json
+if ($implicit.Count -lt 2 -or -not $implicit[0] -or -not $implicit[1]) {
+  $implicitBody = @{
+    web = @{
+      implicitGrantSettings = @{
+        enableIdTokenIssuance = $true
+        enableAccessTokenIssuance = $true
+      }
+    }
+  } | ConvertTo-Json -Depth 5 -Compress
+  az rest --method PATCH `
+    --url "https://graph.microsoft.com/v1.0/applications(appId='$appId')" `
+    --headers "Content-Type=application/json" `
+    --body $implicitBody | Out-Null
+  Write-Host "    enabled implicit grant for Teams silent SSO"
+} else {
+  Write-Host "    implicit grant already enabled"
+}
+
 # Required delegated permissions + Teams SSO token typing. Preserve existing
 # permissions/claims and only patch when something is missing.
 Write-Host "→ Ensuring optional claims and delegated API permissions are configured..."
 $graphResourceAppId = '00000003-0000-0000-c000-000000000000'
 $graphUserReadScopeId = 'e1fe6dd8-ba31-4d61-89e7-88639da4683d'
-$aiResourceAppId = az ad sp list --filter "servicePrincipalNames/any(s:s eq 'https://ai.azure.com')" --query "[0].appId" -o tsv
-$aiScopeId = ''
-if ($aiResourceAppId) {
-  $aiScopeId = az ad sp show --id $aiResourceAppId --query "oauth2PermissionScopes[?value=='user_impersonation'].id | [0]" -o tsv
-  if (-not $aiScopeId) {
-    Write-Warning "Could not find 'user_impersonation' scope on Foundry SP — add it manually"
+$downstreamScope = if ($env:SSO_DOWNSTREAM_SCOPE) { $env:SSO_DOWNSTREAM_SCOPE } else { 'https://ai.azure.com/user_impersonation' }
+$downstreamScopeValue = $downstreamScope.Substring($downstreamScope.LastIndexOf('/') + 1)
+$downstreamResourceAppId = $env:SSO_DOWNSTREAM_CLIENT_ID
+if (-not $downstreamResourceAppId) {
+  $downstreamResourceAppId = az ad sp list `
+    --filter "servicePrincipalNames/any(s:s eq 'https://ai.azure.com')" `
+    --query '[0].appId' -o tsv
+}
+$downstreamScopeId = ''
+if ($downstreamResourceAppId) {
+  $downstreamScopeId = az ad sp show --id $downstreamResourceAppId `
+    --query "oauth2PermissionScopes[?value=='$downstreamScopeValue'].id | [0]" -o tsv
+  if (-not $downstreamScopeId) {
+    Write-Warning "Could not find '$downstreamScopeValue' on downstream service principal $downstreamResourceAppId"
   }
 } else {
-  Write-Warning "Azure AI Foundry SP (https://ai.azure.com) not found in this tenant — grant consent manually"
+  Write-Warning 'Downstream service principal was not found — grant its delegated permission manually'
 }
 
 $appState = az rest --method GET `
@@ -190,7 +220,7 @@ function Ensure-ScopePermission($resourceAppId, $scopeId) {
   }
 }
 Ensure-ScopePermission $graphResourceAppId $graphUserReadScopeId
-Ensure-ScopePermission $aiResourceAppId $aiScopeId
+Ensure-ScopePermission $downstreamResourceAppId $downstreamScopeId
 if ($changed) { $patch['requiredResourceAccess'] = $requiredResourceAccess }
 
 if ($patch.Count -gt 0) {
@@ -226,4 +256,6 @@ $clientSecret = az ad app credential reset `
 
 azd env set SSO_APP_ID $appId
 azd env set SSO_APP_SECRET $clientSecret
-Write-Host "✓ SSO_APP_ID and SSO_APP_SECRET written to azd env"
+azd env set SSO_APP_RESOURCE $identifierUri
+azd env set SSO_SCOPES "$downstreamScope offline_access"
+Write-Host "✓ SSO app id, secret, resource, and delegated scopes written to azd env"

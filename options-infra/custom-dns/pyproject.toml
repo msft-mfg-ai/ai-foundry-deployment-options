@@ -1,0 +1,9 @@
+[project]
+name = "foundry-custom-dns"
+version = "0.1.0"
+description = "Deploy and configure Technitium DNS Server for an existing Foundry VNet"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.uv]
+package = false

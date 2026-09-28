@@ -22,8 +22,9 @@ implemented **three** ways:
 | 2 | **Hosted agent** | Foundry container | `AIProjectClient.get_openai_client()` |
 | 3 | **Custom agent** | ACA container | `AzureOpenAIClient` → `/openai/v1/` via UAMI |
 
-Variants 2 and 3 share a single C# class library (`support-agent-shared`) so
-the only difference between them is the request entrypoint.
+Variants 2 and 3 share the C# source in
+[`../../hosted-agents/perf-support-agent`](../../hosted-agents/perf-support-agent),
+so the only difference between them is the request entrypoint.
 
 ## Topology
 
@@ -57,7 +58,7 @@ The `azd up` flow:
 3. `deploy` — azd builds/pushes each service container:
    - `mcp-server` → ACA `mcp-server` app
    - `support-agent-custom` → ACA `support-agent-custom` app
-   - `support-agent-hosted` → registered as a Foundry hosted agent
+   - the four `support-agent-hosted-*` services → registered as Foundry hosted agents
 4. `postprovision` — prints endpoints + next-step commands
 
 After that, seed the declarative prompt agent (`scripts/seed-prompt-agent.sh`)

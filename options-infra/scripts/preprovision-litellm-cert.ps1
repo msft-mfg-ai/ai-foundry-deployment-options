@@ -87,7 +87,7 @@ subjectAltName=DNS:$($env:LITELLM_DOMAIN)
     azd env set LITELLM_CERT_PFX_PASSWORD $pfxPassword
     azd env set LITELLM_ROOT_CA_PEM_BASE64 $b64Ca
 
-    Write-Host "✓ Self-signed cert generated and stored in azd env (3 vars)."
+    Write-Host "✓ Self-signed cert generated for ACA and Foundry private CA trust."
     Write-Host "  Leaf CN/SAN : $($env:LITELLM_DOMAIN)"
     Write-Host "  Root CA CN  : LiteLLM Dev Root CA $($env:AZURE_ENV_NAME)"
 }

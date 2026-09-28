@@ -32,6 +32,11 @@ hooks:
       shell: pwsh
       run: |
         Write-Host ""
+        Write-Host "Uploading access contracts..."
+        & ./scripts/upload_contracts.ps1
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+        Write-Host ""
         Write-Host "Creating client secrets for team app registrations..."
         & ./scripts/add_app_reg_secrets.ps1
 
@@ -63,6 +68,11 @@ hooks:
       shell: sh
       run: |
         set -e
+
+        echo ""
+        echo "📄 Uploading access contracts..."
+        chmod +x ./scripts/upload_contracts.sh
+        ./scripts/upload_contracts.sh
 
         echo ""
         echo "🔑 Creating client secrets for team app registrations..."

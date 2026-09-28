@@ -5,12 +5,18 @@ on:
     branches: [main]
     paths:
       - 'options-infra/ai-gateway-pe-testing/**'
+      - 'hosted-agents/byom-canary/**'
+      - 'hosted-agents/copilot-canary/**'
+      - 'options-infra/scripts/sync-hosted-agents.*'
       - 'options-infra/modules/**'
       - '.github/workflows/bicep-validate-reusable.yml'
   pull_request:
     branches: [main]
     paths:
       - 'options-infra/ai-gateway-pe-testing/**'
+      - 'hosted-agents/byom-canary/**'
+      - 'hosted-agents/copilot-canary/**'
+      - 'options-infra/scripts/sync-hosted-agents.*'
       - 'options-infra/modules/**'
       - '.github/workflows/bicep-validate-reusable.yml'
 

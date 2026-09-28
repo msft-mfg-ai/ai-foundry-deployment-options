@@ -1,0 +1,43 @@
+name: foundry-custom-dns
+
+infra:
+  provider: bicep
+  path: .
+  module: main
+
+hooks:
+  preprovision:
+    windows:
+      shell: pwsh
+      run: uv run python scripts/custom_dns.py discover
+      interactive: true
+      continueOnError: false
+    posix:
+      shell: sh
+      run: uv run python scripts/custom_dns.py discover
+      interactive: true
+      continueOnError: false
+
+  postprovision:
+    windows:
+      shell: pwsh
+      run: uv run python scripts/custom_dns.py configure
+      interactive: true
+      continueOnError: false
+    posix:
+      shell: sh
+      run: uv run python scripts/custom_dns.py configure
+      interactive: true
+      continueOnError: false
+
+  predown:
+    windows:
+      shell: pwsh
+      run: uv run python scripts/custom_dns.py cleanup
+      interactive: true
+      continueOnError: false
+    posix:
+      shell: sh
+      run: uv run python scripts/custom_dns.py cleanup
+      interactive: true
+      continueOnError: false

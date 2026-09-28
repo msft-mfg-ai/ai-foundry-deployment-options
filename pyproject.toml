@@ -19,6 +19,8 @@ members = [
 exclude = [
     "agents_v2",
     "agents_v2_maf",
+    "hosted-agents/copilot-canary",
+    "hosted-agents/toolbox-agent",
     "subscription-manager",
     "options-infra/foundry-search/scripts",
     "options-infra/foundry-rag-search/scripts",
@@ -32,4 +34,3 @@ exclude = [
     "options-infra/foundry-sk-agents/apps/sk-agents",
     "options-infra/ai-gateway-quota/scripts"
 ]
-

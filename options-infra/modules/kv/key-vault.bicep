@@ -104,3 +104,4 @@ module vault 'br/public:avm/res/key-vault/vault:0.13.3' = {
 output KEY_VAULT_RESOURCE_ID string = vault.outputs.resourceId
 output KEY_VAULT_NAME string = vault.outputs.name
 output KEY_VAULT_SECRETS_URIS string[] = map(vault.outputs.secrets, s => s.uri)
+output KEY_VAULT_SECRETS_URIS_WITH_VERSION string[] = map(vault.outputs.secrets, s => s.uriWithVersion)

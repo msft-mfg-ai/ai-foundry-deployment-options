@@ -5,12 +5,16 @@ on:
     branches: [main]
     paths:
       - 'options-infra/foundry-byo-vnet-no-dependencies/**'
+      - 'hosted-agents/vnet-mcp-agent/**'
+      - 'options-infra/scripts/sync-hosted-agents.*'
       - 'options-infra/modules/**'
       - '.github/workflows/bicep-validate-reusable.yml'
   pull_request:
     branches: [main]
     paths:
       - 'options-infra/foundry-byo-vnet-no-dependencies/**'
+      - 'hosted-agents/vnet-mcp-agent/**'
+      - 'options-infra/scripts/sync-hosted-agents.*'
       - 'options-infra/modules/**'
       - '.github/workflows/bicep-validate-reusable.yml'
 

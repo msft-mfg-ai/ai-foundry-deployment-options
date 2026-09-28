@@ -30,10 +30,10 @@ in < 3 seconds — a broken FastMCP kwarg (e.g. `stateless_http` moving off
 the constructor) will crash locally exactly the way it crashes in ACA, and
 you'll catch it before pushing a `NotRunning` revision.
 
-### C# services (`services/support-agent-custom`, `services/support-agent-hosted`, shared `services/support-agent-shared`)
+### C# services (`../../hosted-agents/perf-support-agent/custom`, `../../hosted-agents/perf-support-agent/hosted`, shared `../../hosted-agents/perf-support-agent/shared`)
 
 ```sh
-cd services/support-agent-custom
+cd ../../hosted-agents/perf-support-agent/custom
 dotnet build -c Release --nologo
 # For a full runtime smoke, set the env vars from `azd env get-values` and
 # `dotnet run` locally against the deployed MCP + Foundry.

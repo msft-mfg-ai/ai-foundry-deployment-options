@@ -29,3 +29,6 @@ addopts = "-v -s --tb=short -ra"
 testpaths = ["."]
 python_files = ["test_*.py"]
 asyncio_mode = "auto"
+markers = [
+    "observability: tests that wait for Azure Monitor diagnostic log ingestion",
+]
